@@ -1,0 +1,186 @@
+<devicedata>
+	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Hearth &amp; Home Technologies or Control4</copyright>
+	<creator>Custom Driver Project</creator>
+	<manufacturer>Hearth &amp; Home Technologies</manufacturer>
+	<name>IntelliFire Fireplace (Wi-Fi Module)</name>
+	<model>IFT-WFM (Off / Pilot / Flame, variable flame height)</model>
+	<created>08/15/2026 12:00 PM</created>
+	<modified>08/15/2026 12:00 PM</modified>
+	<version>100</version>
+	<small image_source="c4z">icons/intellifire_sm.png</small>
+	<large image_source="c4z">icons/intellifire_lg.png</large>
+	<control>lua_gen</control>
+	<controlmethod>ip</controlmethod>
+	<driver>DriverWorks</driver>
+	<templatedescription>IntelliFire Wi-Fi Fireplace Module - HTTP/JSON Local Control (Off/Pilot/Flame + Level)</templatedescription>
+	<search_types>
+		<type>IntelliFire:fireplace:IFT-WFM</type>
+	</search_types>
+
+	<!--
+		NOTE ON PROXY CHOICE: there is no native Control4 "fireplace" proxy.
+		This driver models the unit as a single light_v2 proxy: ON/OFF maps to
+		the main flame, and SET_LEVEL/RAMP_TO_LEVEL maps to flame height
+		(0-100% -> height 0-4). The third "pilot only" state that this
+		fireplace supports doesn't fit a two-state ON/OFF + level control
+		naturally, so it's exposed separately as a Composer command/action
+		(same pattern this project's Haiku driver uses for Whoosh mode).
+	-->
+	<proxies qty="1">
+		<proxy proxybindingid="5001" name="IntelliFire Fireplace" image_source="c4z" small_image="icons/intellifire_sm.png" large_image="icons/intellifire_lg.png">light_v2</proxy>
+	</proxies>
+
+	<connections>
+		<connection>
+			<id>5001</id>
+			<facing>6</facing>
+			<connectionname>FIREPLACE</connectionname>
+			<type>2</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>LIGHT_V2</classname>
+				</class>
+			</classes>
+		</connection>
+		<connection>
+			<id>6001</id>
+			<facing>1</facing>
+			<connectionname>Network</connectionname>
+			<type>4</type>
+			<consumer>True</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>True</linelevel>
+			<classes>
+				<class>
+					<classname>TCP</classname>
+					<ports>
+						<port>
+							<number>80</number>
+							<auto_connect>True</auto_connect>
+							<monitor_connection>True</monitor_connection>
+							<keep_connection>False</keep_connection>
+						</port>
+					</ports>
+				</class>
+			</classes>
+		</connection>
+	</connections>
+
+	<!--
+		NOTE: No <capabilities> block, same reasoning as this project's Haiku
+		driver - the confirmed DriverWorks capability keys (via light_sample.c4i)
+		apply to light_v2's dimmer/on-off behavior, which this driver already
+		follows. Nothing fireplace-specific to add without guessing.
+	-->
+
+	<config>
+		<power_management_method>AlwaysOn</power_management_method>
+		<power_command_delay>0</power_command_delay>
+		<power_delay>0</power_delay>
+		<power_command_needed>False</power_command_needed>
+		<documentation file="www\documentation.rtf" />
+		<script file="driver.lua" />
+
+		<commands>
+			<command>
+				<name>Set Pilot</name>
+				<description>Turn the standing pilot on or off (independent of main flame)</description>
+				<params>
+					<param>
+						<name>State</name>
+						<type>LIST</type>
+						<items>
+							<item>ON</item>
+							<item>OFF</item>
+						</items>
+					</param>
+				</params>
+			</command>
+		</commands>
+
+		<actions>
+			<action>
+				<name> - Pilot On</name>
+				<command>ACTION_PILOT_ON</command>
+			</action>
+			<action>
+				<name> - Pilot Off</name>
+				<command>ACTION_PILOT_OFF</command>
+			</action>
+			<action>
+				<name> - Refresh Status</name>
+				<command>ACTION_REFRESH_STATUS</command>
+			</action>
+			<action>
+				<name> - Print Debug Info</name>
+				<command>ACTION_PRINT_DEBUG</command>
+			</action>
+		</actions>
+
+		<properties>
+			<property>
+				<name>Fireplace IP Address</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>0.0.0.0</default>
+			</property>
+			<property>
+				<name>API User ID</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<!--
+				NOTE: type is STRING, not PASSWORD/masked. The reference
+				Haiku_SenseME_driver.xml in this project only uses STRING and
+				LIST for property types - no masked/secret type appears there,
+				so PASSWORD was not carried over unverified. Newer Control4 OS
+				versions may support a masked property type; if DriverEditor's
+				property-type autocomplete offers one, it's worth switching to
+				for this field, but confirm it in the editor first.
+			-->
+			<property>
+				<name>API Key</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Poll Interval (seconds)</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>20</default>
+			</property>
+			<property>
+				<name>Log Mode</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Off</default>
+				<items>
+					<item>Off</item>
+					<item>Print</item>
+					<item>Log</item>
+					<item>Print and Log</item>
+				</items>
+			</property>
+			<property>
+				<name>Connection Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Unknown</default>
+			</property>
+		</properties>
+	</config>
+
+	<composer_categories>
+		<category>Comfort</category>
+	</composer_categories>
+	<navigator_categories>
+		<category>Comfort</category>
+	</navigator_categories>
+</devicedata>
