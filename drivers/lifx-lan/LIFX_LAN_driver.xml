@@ -1,0 +1,135 @@
+<devicedata>
+  <version>12</version>
+  <modified>10/19/2026 06:55 PM</modified>
+  <name>LIFX LAN Light</name>
+  <model>LIFX LAN Light</model>
+  <creator>Nick Adamany</creator>
+  <manufacturer>LIFX</manufacturer>
+  <small>devices_sm/c4.gif</small>
+  <large>devices_lg/c4.gif</large>
+  <control>lua_gen</control>
+  <controlmethod>ip</controlmethod>
+  <driver>DriverWorks</driver>
+  <created>10/19/2026 06:00 PM</created>
+  <connections>
+    <connection>
+      <id>5001</id>
+      <facing>6</facing>
+      <connectionname>Light</connectionname>
+      <type>2</type>
+      <consumer>False</consumer>
+      <audiosource>False</audiosource>
+      <videosource>False</videosource>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>LIGHT_V2</classname>
+        </class>
+      </classes>
+    </connection>
+  </connections>
+  <proxies qty="1">
+    <proxy proxybindingid="5001" name="LIFX Light" primary="True">light_v2</proxy>
+  </proxies>
+  <capabilities>
+    <dimmer>True</dimmer>
+    <ramp_level>True</ramp_level>
+    <on_off>True</on_off>
+    <min_max>True</min_max>
+    <click_rates>False</click_rates>
+    <hold_rates>False</hold_rates>
+    <cold_start>False</cold_start>
+    <has_leds>False</has_leds>
+    <set_level>True</set_level>
+    <supports_target>True</supports_target>
+    <supports_color>True</supports_color>
+    <supports_color_correlated_temperature>True</supports_color_correlated_temperature>
+    <color_correlated_temperature_min>2500</color_correlated_temperature_min>
+    <color_correlated_temperature_max>9000</color_correlated_temperature_max>
+    <brightness_rate_min>0</brightness_rate_min>
+    <brightness_rate_max>60000</brightness_rate_max>
+    <color_rate_min>0</color_rate_min>
+    <color_rate_max>60000</color_rate_max>
+    <hide_proxy_properties>true</hide_proxy_properties>
+    <hide_proxy_events>false</hide_proxy_events>
+    <supports_broadcast_scenes>False</supports_broadcast_scenes>
+    <supports_multichannel_scenes>False</supports_multichannel_scenes>
+    <reduced_als_support>False</reduced_als_support>
+    <advanced_scene_support>False</advanced_scene_support>
+    <load_group_support>False</load_group_support>
+    <buttons_are_virtual>True</buttons_are_virtual>
+  </capabilities>
+  <config>
+    <script file="driver.lua"/>
+    <documentation>LIFX LAN Light: local UDP (port 56700) control of a single LIFX bulb. One driver instance per bulb. Run the "Discover Bulbs" action, pick the bulb from "Select Bulb", done. If discovery cannot cross your network, type the bulb's IP into "Bulb IP". Turn on "Debug Mode" and watch the Lua output tab if anything misbehaves.</documentation>
+    <properties>
+      <property>
+        <name>Driver Version</name>
+        <type>STRING</type>
+        <readonly>true</readonly>
+        <default></default>
+      </property>
+      <property>
+        <name>Status</name>
+        <type>STRING</type>
+        <readonly>true</readonly>
+        <default>Not configured</default>
+      </property>
+      <property>
+        <name>Bulb Model</name>
+        <type>STRING</type>
+        <readonly>true</readonly>
+        <default>Unknown</default>
+      </property>
+      <property>
+        <name>Select Bulb</name>
+        <type>LIST</type>
+        <items>
+          <item>(run Discover Bulbs)</item>
+        </items>
+        <default>(run Discover Bulbs)</default>
+      </property>
+      <property>
+        <name>Bulb MAC</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>Bulb IP</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>Broadcast Address</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>Poll Seconds</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>5</minimum>
+        <maximum>300</maximum>
+        <default>15</default>
+      </property>
+      <property>
+        <name>Debug Mode</name>
+        <type>LIST</type>
+        <items>
+          <item>Off</item>
+          <item>On</item>
+        </items>
+        <default>Off</default>
+      </property>
+    </properties>
+    <actions>
+      <action>
+        <name>Discover Bulbs</name>
+        <command>DiscoverBulbs</command>
+      </action>
+      <action>
+        <name>Identify Bulb (blink)</name>
+        <command>IdentifyBulb</command>
+      </action>
+    </actions>
+  </config>
+</devicedata>

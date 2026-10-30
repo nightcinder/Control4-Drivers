@@ -1,0 +1,62 @@
+{\rtf1\ansi\ansicpg1252\deff0\nouicompat
+{\fonttbl{\f0\fswiss\fcharset0 Calibri;}{\f1\fmodern\fcharset0 Consolas;}}
+{\colortbl;\red0\green0\blue0;\red0\green102\blue153;\red90\green90\blue90;}
+\viewkind4\uc1
+\pard\sa200\sl276\slmult1\b\fs32\cf2 LIFX Bulb Driver\b0\fs22\cf1\par
+\fs20\cf3 Unofficial \emdash  local LAN protocol only \emdash  not affiliated with LIFX or Control4\cf1\fs22\par
+\par
+
+\b\fs26 Overview\b0\fs22\par
+This driver controls LIFX Wi-Fi bulbs directly over your local network, using LIFX's own UDP LAN protocol (port 56700). It does not use the LIFX cloud API, so it keeps working during internet outages and has no dependency on a LIFX account. Each physical bulb needs its own driver instance in Composer.\par
+\par
+
+\b\fs26 Requirements\b0\fs22\par
+\pard{\pntext\f0\bullet\tab}{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\bullet}}\fi-360\li720 The bulb must already be connected to your Wi-Fi network (set up once via the LIFX app).\par
+{\pntext\f0\bullet\tab}The EA-1 (or other Control4 controller) must be on the same subnet as the bulb for auto-discovery and broadcast features to work. Manual IP mode works across routed subnets.\par
+{\pntext\f0\bullet\tab}The bulb's IP should ideally be a DHCP reservation so it doesn't change after setup.\par
+\pard\sa200\sl276\slmult1\par
+
+\b\fs26 Setup\b0\fs22\par
+\pard{\pntext\f0\bullet\tab}{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\bullet}}\fi-360\li720 Add one driver instance per bulb.\par
+{\pntext\f0\bullet\tab}Set \b Address Mode\b0  to \b Auto (discover)\b0  if the controller and bulb are on the same subnet, or \b Manual\b0  if you already know the bulb's IP (or need to control it across subnets).\par
+{\pntext\f0\bullet\tab}In Manual mode, set \b Bulb IP Address\b0  and leave \b Bulb Serial (MAC)\b0  blank \emdash  it fills in automatically from the bulb's first reply. Clearing this field later is the supported way to point the driver at a different physical bulb.\par
+{\pntext\f0\bullet\tab}Set \b Bulb Type\b0  to match the real hardware: \b Color (RGBW)\b0  for full-color bulbs, \b Tunable White\b0  for day/dusk or warm-to-cool bulbs with no RGB, or \b Dimmable Only\b0  for plain white bulbs. This controls what controls Navigator shows \emdash  setting it wrong will offer UI the bulb can't actually do anything with.\par
+{\pntext\f0\bullet\tab}Confirm \b Connection Status\b0  reaches \b ONLINE\b0  within one poll interval (20 seconds by default, plus a few seconds of startup jitter).\par
+\pard\sa200\sl276\slmult1\par
+
+\b\fs26 Properties\b0\fs22\par
+\pard{\pntext\f0\bullet\tab}{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\bullet}}\fi-360\li720 \b Address Mode\b0  \emdash  Auto (discover) or Manual.\par
+{\pntext\f0\bullet\tab}\b Bulb IP Address\b0  \emdash  current or manually-set IP.\par
+{\pntext\f0\bullet\tab}\b Bulb Serial (MAC)\b0  \emdash  the bulb's LIFX serial; auto-populates, clear to re-learn.\par
+{\pntext\f0\bullet\tab}\b Bulb Label\b0  (read-only) \emdash  the name set in the LIFX app.\par
+{\pntext\f0\bullet\tab}\b Bulb Type\b0  \emdash  Color (RGBW) / Tunable White / Dimmable Only \emdash  must match the physical bulb.\par
+{\pntext\f0\bullet\tab}\b Min Kelvin\b0  /\b  Max Kelvin\b0  \emdash  color-temperature range for tunable-white control (defaults 1500\emdash 9000K; narrow this to your bulb's actual supported range if known).\par
+{\pntext\f0\bullet\tab}\b Default Ramp Rate (ms)\b0  \emdash  transition time used for commands that don't specify their own.\par
+{\pntext\f0\bullet\tab}\b Poll Interval (seconds)\b0  \emdash  how often the driver refreshes state from the bulb (default 20s).\par
+{\pntext\f0\bullet\tab}\b Firmware Version\b0  /\b  Product ID\b0  (read-only) \emdash  reported by the bulb.\par
+{\pntext\f0\bullet\tab}\b Log Mode\b0  \emdash  Off / Print / Log / Print and Log \emdash  set to Print and Log while troubleshooting.\par
+{\pntext\f0\bullet\tab}\b Connection Status\b0  (read-only) \emdash  Unknown / ONLINE / OFFLINE.\par
+\pard\sa200\sl276\slmult1\par
+
+\b\fs26 Actions / Commands\b0\fs22\par
+\pard{\pntext\f0\bullet\tab}{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\bullet}}\fi-360\li720 \b Discover Bulbs\b0  \emdash  broadcasts a LIFX discovery request on the local subnet.\par
+{\pntext\f0\bullet\tab}\b Re-resolve IP\b0  \emdash  runs a slower unicast subnet sweep to re-learn a bulb's IP if broadcast discovery can't recover it.\par
+{\pntext\f0\bullet\tab}\b Identify (breathe)\b0  \emdash  blinks the bulb briefly so it can be visually located.\par
+{\pntext\f0\bullet\tab}\b Refresh State\b0  \emdash  immediately queries current color/power state.\par
+{\pntext\f0\bullet\tab}\b Print Debug Info\b0  \emdash  prints internal driver state to the debug console.\par
+\pard\sa200\sl276\slmult1\par
+
+\b\fs26 Known limitations\b0\fs22\par
+\pard{\pntext\f0\bullet\tab}{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\bullet}}\fi-360\li720 Bulbs that are day/dusk (tunable-white-only) or dimmable-only have no RGB hardware. Set \b Bulb Type\b0  accordingly \emdash  the color wheel will not produce a visible color change on these bulbs regardless of driver state, because the hardware itself can't do it.\par
+{\pntext\f0\bullet\tab}Auto-discovery learns a bulb's serial from a broadcast reply, but not its IP address directly \emdash  the driver falls back to a unicast sweep (\b Re-resolve IP\b0 ) to resolve the IP. This is a limitation of what the discovery reply exposes, not a driver bug.\par
+{\pntext\f0\bullet\tab}This driver is LAN-only by design. It will not work if the bulb has been removed from the local network or is only reachable via the LIFX cloud.\par
+\pard\sa200\sl276\slmult1\par
+
+\b\fs26 Troubleshooting\b0\fs22\par
+\pard{\pntext\f0\bullet\tab}{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\bullet}}\fi-360\li720 \b Bulb never comes ONLINE:\b0  confirm the bulb responds in the LIFX app first, confirm it's on the same subnet as the controller (for Auto mode), and try \b Discover Bulbs\b0  or \b Re-resolve IP\b0 .\par
+{\pntext\f0\bullet\tab}\b Repointed the driver at a different physical bulb and it stopped responding:\b0  clear \b Bulb Serial (MAC)\b0  after changing \b Bulb IP Address\b0  so the driver re-learns the new bulb's identity \emdash  commands are addressed to a specific serial and a real LIFX bulb silently ignores commands addressed to someone else's serial.\par
+{\pntext\f0\bullet\tab}\b No response at all, no errors in the log:\b0  set \b Log Mode\b0  to \b Print and Log\b0  and use \b Print Debug Info\b0  to check connection status, poll counters, and the last known IP/serial.\par
+\pard\sa200\sl276\slmult1\par
+
+\fs18\cf3 This driver is not affiliated with, endorsed by, or supported by LIFX or Control4. Support is provided on a best-effort basis by the driver's author.\cf1\fs22\par
+}

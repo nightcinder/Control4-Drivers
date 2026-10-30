@@ -1,0 +1,261 @@
+<devicedata>
+	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with LIFX or Control4</copyright>
+	<creator>Custom Driver Project</creator>
+	<manufacturer>LIFX</manufacturer>
+	<name>LIFX Bulb</name>
+	<model>LIFX Wi-Fi LED Bulb (LAN Protocol)</model>
+	<created>08/16/2026 12:00 PM</created>
+	<modified>08/17/2026 7:55 PM</modified>
+	<version>107</version>
+	<small image_source="c4z">icons/lifx_sm.png</small>
+	<large image_source="c4z">icons/lifx_lg.png</large>
+	<control>lua_gen</control>
+	<controlmethod>ip</controlmethod>
+	<driver>DriverWorks</driver>
+	<templatedescription>LIFX Wi-Fi Bulb - Local LAN Protocol Control (UDP 56700, no cloud dependency)</templatedescription>
+	<search_types>
+		<type>LIFX:light:bulb</type>
+	</search_types>
+
+	<proxies qty="1">
+		<proxy proxybindingid="5001" name="LIFX Bulb" image_source="c4z" small_image="icons/lifx_sm.png" large_image="icons/lifx_lg.png">light_v2</proxy>
+	</proxies>
+
+	<capabilities>
+		<dimmer>True</dimmer>
+		<set_level>True</set_level>
+		<ramp_level>True</ramp_level>
+		<on_off>True</on_off>
+		<min_max>True</min_max>
+		<click_rates>False</click_rates>
+		<hold_rates>False</hold_rates>
+		<cold_start>False</cold_start>
+		<has_leds>False</has_leds>
+		<supports_color>True</supports_color>
+		<supports_color_correlated_temperature>True</supports_color_correlated_temperature>
+		<color_correlated_temperature_min>1500</color_correlated_temperature_min>
+		<color_correlated_temperature_max>9000</color_correlated_temperature_max>
+		<color_rate_min>0</color_rate_min>
+		<color_rate_max>10000</color_rate_max>
+		<supports_target>True</supports_target>
+		<supports_broadcast_scenes>False</supports_broadcast_scenes>
+		<supports_multichannel_scenes>False</supports_multichannel_scenes>
+		<hide_proxy_properties>true</hide_proxy_properties>
+		<hide_proxy_events>false</hide_proxy_events>
+		<reduced_als_support>False</reduced_als_support>
+		<advanced_scene_support>False</advanced_scene_support>
+		<load_group_support>False</load_group_support>
+		<buttons_are_virtual>True</buttons_are_virtual>
+	</capabilities>
+
+	<!--
+		NOTE: the capability block above declares that this driver supports
+		color, which is necessary for Navigator to show the color wheel/CCT
+		UI at all. The live SET_COLOR_TARGET parameter contract (both the
+		parameter names and the C4:ColorHSVtoXY/ColorXYtoHSV conversion
+		mechanism) is now confirmed via real Navigator testing - see
+		"Color layer" section of driver.lua and architecture doc Section 10.3
+		(closed 2026-08-17). Set "Bulb Type" to "Tunable White" or
+		"Dimmable Only" per-instance to match bulbs that lack RGB hardware -
+		this is a per-bulb hardware fact, not a driver limitation.
+	-->
+
+	<connections>
+		<connection>
+			<id>5001</id>
+			<facing>6</facing>
+			<connectionname>LIGHT</connectionname>
+			<type>2</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>LIGHT_V2</classname>
+				</class>
+			</classes>
+		</connection>
+		<connection>
+			<id>6001</id>
+			<facing>1</facing>
+			<connectionname>Network</connectionname>
+			<type>4</type>
+			<consumer>True</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>True</linelevel>
+			<classes>
+				<class>
+					<classname>UDP</classname>
+					<ports>
+						<port>
+							<number>56700</number>
+							<auto_connect>True</auto_connect>
+							<monitor_connection>True</monitor_connection>
+							<keep_connection>True</keep_connection>
+						</port>
+					</ports>
+				</class>
+			</classes>
+		</connection>
+	</connections>
+
+	<config>
+		<power_management_method>AlwaysOn</power_management_method>
+		<power_command_delay>0</power_command_delay>
+		<power_delay>0</power_delay>
+		<power_command_needed>False</power_command_needed>
+		<documentation file="www\documentation.rtf" />
+		<script file="driver.lua" />
+
+		<commands>
+			<command>
+				<name>Discover Bulbs</name>
+				<description>Broadcast a LIFX discovery request (GetService) on the local subnet</description>
+			</command>
+			<command>
+				<name>Re-resolve IP</name>
+				<description>Run a timer-driven unicast sweep of the subnet to re-learn this bulb's IP address (fallback for when broadcast discovery cannot recover the sender's address)</description>
+			</command>
+			<command>
+				<name>Identify (breathe)</name>
+				<description>Blink the bulb briefly so it can be visually identified</description>
+			</command>
+			<command>
+				<name>Refresh State</name>
+				<description>Immediately query the bulb's current color/power state</description>
+			</command>
+			<command>
+				<name>Print Debug Info</name>
+				<description>Print current driver state to the debug console</description>
+			</command>
+		</commands>
+
+		<actions>
+			<action>
+				<name> - Discover Bulbs</name>
+				<command>ACTION_DISCOVER</command>
+			</action>
+			<action>
+				<name> - Re-resolve IP</name>
+				<command>ACTION_REDISCOVER</command>
+			</action>
+			<action>
+				<name> - Identify (breathe)</name>
+				<command>ACTION_IDENTIFY</command>
+			</action>
+			<action>
+				<name> - Refresh State</name>
+				<command>ACTION_REFRESH</command>
+			</action>
+			<action>
+				<name> - Print Debug Info</name>
+				<command>ACTION_PRINT_DEBUG</command>
+			</action>
+		</actions>
+
+		<properties>
+			<property>
+				<name>Address Mode</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Auto (discover)</default>
+				<items>
+					<item>Auto (discover)</item>
+					<item>Manual</item>
+				</items>
+			</property>
+			<property>
+				<name>Bulb IP Address</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>0.0.0.0</default>
+			</property>
+			<property>
+				<name>Bulb Serial (MAC)</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Bulb Label</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Bulb Type</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Color (RGBW)</default>
+				<items>
+					<item>Color (RGBW)</item>
+					<item>Tunable White</item>
+					<item>Dimmable Only</item>
+				</items>
+			</property>
+			<property>
+				<name>Min Kelvin</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>1500</default>
+			</property>
+			<property>
+				<name>Max Kelvin</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>9000</default>
+			</property>
+			<property>
+				<name>Default Ramp Rate (ms)</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>500</default>
+			</property>
+			<property>
+				<name>Poll Interval (seconds)</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>20</default>
+			</property>
+			<property>
+				<name>Firmware Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Product ID</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Log Mode</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Off</default>
+				<items>
+					<item>Off</item>
+					<item>Print</item>
+					<item>Log</item>
+					<item>Print and Log</item>
+				</items>
+			</property>
+			<property>
+				<name>Connection Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Unknown</default>
+			</property>
+		</properties>
+	</config>
+
+	<composer_categories>
+		<category>Lighting</category>
+	</composer_categories>
+	<navigator_categories>
+		<category>Lighting</category>
+	</navigator_categories>
+</devicedata>

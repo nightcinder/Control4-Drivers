@@ -1,0 +1,29 @@
+{\rtf1\ansi\ansicpg1252\deff0\nouicompat{\fonttbl{\f0\fswiss\fcharset0 Arial;}}
+{\colortbl ;\red0\green0\blue0;}
+\viewkind4\uc1\pard\sa200\sl276\slmult1\f0\fs28\b Moen Smart Shower (U by Moen) - Standalone Driver\b0\fs22\par
+\par
+Unofficial / community driver. Not affiliated with or supported by Moen, Fortune Brands, or Control4.\par
+\par
+\b Overview\b0\par
+This driver controls a Moen Smart Shower / U by Moen digital shower valve directly from the Control4 controller: it authenticates to Moen's cloud, polls status over REST, and sends on/off, temperature, outlet, and preset commands over Moen's real-time Pusher WebSocket channel. No external bridge machine is required for this version.\par
+\par
+\b Setup\b0\par
+1. Add the driver to your project and bind it to a room.\par
+2. In the driver's Properties, enter your U by Moen account email and password (the same account used by the Alexa/Android U by Moen app).\par
+3. Leave "Device Serial Number Override" blank to auto-select the account's shower, or enter a specific serial if the account has more than one.\par
+4. Confirm "Cloud Status" reads Authenticated and "Pusher Status" reads Connected / subscribed within about a minute.\par
+5. Check "Outlet 1-4 Position" properties against the driver's Print Debug Info action output if your shower has a different outlet layout than positions 1-4.\par
+\par
+\b Proxies\b0\par
+- Shower: main run/temperature control (light_v2). ON/OFF starts or stops the shower; the dimmer level maps to target temperature between the "Target Temp Min/Max (F)" properties.\par
+- Shower - Outlet 1 through 4: individual outlet on/off (light_v2, no dimming). Mapped to real outlet "position" numbers via the Outlet N Position properties.\par
+\par
+\b Commands / Actions\b0\par
+- Activate Preset (Position 1-4): activates a saved Moen shower preset.\par
+- Resume Paused Shower: resumes water flow after a preset paused it at temperature.\par
+- Refresh Status: polls Moen's cloud immediately instead of waiting for the next scheduled poll.\par
+- Print Debug Info: dumps current state to the driver log.\par
+\par
+\b Support\b0\par
+This is an unofficial community project. See the driver's Lua source header comments for the full technical rationale, confirmed API details, and known limitations.\par
+}

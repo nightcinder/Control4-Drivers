@@ -1,0 +1,30 @@
+{\rtf1\ansi\deff0
+{\fonttbl{\f0 Arial;}}
+\f0\fs22
+\b Big Ass Fans Haiku (SenseME) - Unofficial Control4 Driver\b0\par
+\par
+This is a community-built driver, not provided or certified by Big Ass Fans or Control4.\par
+It talks to the fan directly over the local network using the SenseME UDP protocol\par
+(broadcast/unicast ASCII commands on UDP port 31415). No cloud connection is required or used.\par
+\par
+\b Setup\b0\par
+1. Ensure the fan and the Control4 controller are on the same subnet/VLAN and that UDP 31415 is not blocked.\par
+2. Give the fan a static/reserved IP (DHCP reservation) and enter it in the "Fan IP Address" property - this is required. \par
+3. Run the "Rediscover Fan" action/command to broadcast a discovery request; the driver will auto-populate the "Fan Name (SenseME App Name)" and "Fan MAC Address" properties from the fan's reply. (Note: the reply's source IP is not available to this driver, so IP address itself must still be entered manually - see step 2.)\par
+4. If the fan does not have a light kit, set "Has Light Kit" to No to hide/ignore the light proxy behavior.\par
+5. "Max Fan Speed (0-7)" should match your fan model's top discrete speed step (most Haiku fans are 0-7).\par
+\par
+\b Properties\b0\par
+- Fan IP Address: static/reserved IP of the fan on your LAN (recommended: DHCP reservation).\par
+- Fan Name (SenseME App Name): the exact name configured in the SenseME app; used as the addressing token in every command.\par
+- Fan MAC Address: read-only, populated by discovery.\par
+- Has Light Kit: enables/disables the light proxy behavior.\par
+- Max Fan Speed (0-7): used to translate Control4's 0-100% speed/level to the fan's discrete steps.\par
+- Poll Interval (seconds): how often the driver requests a full status refresh (in addition to the real-time push updates the fan sends on its own).\par
+- Log Mode: driver debug logging destination.\par
+\par
+\b Notes / Limitations\b0\par
+- This protocol is unofficial and undocumented by the manufacturer; it was derived from public network-traffic analysis by third parties (see driver.lua header for references). Firmware updates to the fan could change behavior.\par
+- Occupancy/motion sensor state is not currently exposed.\par
+- Verify the exact FAN / LIGHT_V2 proxy command and notification names in DriverEditor for your installed OS version before deploying to a live system; these are implemented per Control4's standard conventions but DriverEditor's autocomplete against your local proxy definitions is the authoritative source.\par
+}

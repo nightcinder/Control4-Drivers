@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rooms JSON Editor</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one working column. Each room is a card: schedule, brightness, lights split Lutron / LIFX, then away, scenes, wake-up. A sticky bar at the bottom holds the copy button. */
+:root {
+  --bg: #f6f5f2;
+  --surface: #ffffff;
+  --fg: #1d1c1a;
+  --muted: #6b6860;
+  --line: #dcd9d1;
+  --accent: #b45f06;
+  --accent-fg: #ffffff;
+  --lutron: #3d5a80;
+  --lifx: #8a4f9e;
+  --ok: #2e7d4f;
+  --warn: #a15c00;
+  --bad: #b3261e;
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161513; --surface: #1f1e1b; --fg: #ecebe6; --muted: #9b978c; --line: #353330;
+    --accent: #e8a24a; --accent-fg: #1a1203; --lutron: #8fb0d9; --lifx: #c79ad9;
+    --ok: #6cc48d; --warn: #e5b05a; --bad: #f0877f; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161513; --surface: #1f1e1b; --fg: #ecebe6; --muted: #9b978c; --line: #353330;
+  --accent: #e8a24a; --accent-fg: #1a1203; --lutron: #8fb0d9; --lifx: #c79ad9;
+  --ok: #6cc48d; --warn: #e5b05a; --bad: #f0877f; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 15px; line-height: 1.5; margin: 0;
+  padding-block: 28px 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 820px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; padding-bottom: 28px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0; text-wrap: balance; }
+.sub { color: var(--muted); font-size: 13px; margin: 4px 0 0; max-width: 62ch; }
+h2 { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin: 0 0 6px; }
+h3 { font-size: 15px; margin: 0; font-weight: 600; }
+.chip { font-family: var(--font-mono); font-size: 12px; padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); white-space: nowrap; }
+.chip.ok { color: var(--ok); border-color: currentColor; }
+.chip.warn { color: var(--warn); border-color: currentColor; }
+.chip.bad { color: var(--bad); border-color: currentColor; }
+.room { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 6px 18px 16px; }
+.room-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; padding: 12px 0 4px; }
+.group { margin-top: 14px; min-width: 0; }
+.rows { display: grid; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 14px; padding: 8px 0; border-top: 1px solid var(--line); }
+.row:first-of-type { border-top: 0; }
+.lbl { min-width: 0; overflow-wrap: anywhere; }
+.lbl small { display: block; color: var(--muted); font-size: 12px; line-height: 1.35; }
+.field { display: inline-flex; align-items: center; gap: 6px; justify-self: end; }
+.field .unit { color: var(--muted); font-size: 13px; min-width: 2.2ch; }
+input[type=number], input[type=text], select {
+  font-family: var(--font-mono); font-size: 14px; padding: 6px 8px; background: var(--bg); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 4px; }
+input[type=number] { width: 78px; text-align: right; }
+input[type=text] { width: 168px; }
+input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
+.light { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; margin-top: 8px; background: var(--bg); }
+.light-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.light-head input[type=text] { font-family: var(--font-ui); font-weight: 500; width: 190px; background: var(--surface); }
+.badge { font-family: var(--font-mono); font-size: 11px; padding: 1px 7px; border-radius: 3px; border: 1px solid currentColor; }
+.badge.lutron { color: var(--lutron); }
+.badge.lifx { color: var(--lifx); }
+.lid { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.kind-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin: 14px 0 0; }
+.kind-title .rule { flex: 1; height: 1px; background: var(--line); }
+.wins { margin-top: 6px; display: grid; gap: 6px; }
+.win { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.win .w-label { color: var(--muted); font-size: 13px; }
+.none { color: var(--muted); font-size: 13px; }
+.scene { border-top: 1px solid var(--line); padding: 8px 0; }
+.scene:first-of-type { border-top: 0; }
+.scene-name { font-weight: 500; margin-bottom: 4px; }
+.scene-levels { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.scene-levels label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.scene-levels input[type=number] { width: 64px; }
+.days { display: flex; flex-wrap: wrap; gap: 6px 12px; justify-self: end; }
+.days label { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
+button { font-family: var(--font-ui); font-size: 13px; font-weight: 500; padding: 6px 12px; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg); }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-size: 14px; padding: 8px 16px; }
+button.small { padding: 3px 9px; font-size: 12px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; }
+summary { cursor: pointer; font-weight: 500; }
+textarea { width: 100%; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5; padding: 12px; color: var(--fg);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px; resize: vertical; margin-top: 10px; }
+#pretty { min-height: 320px; white-space: pre; overflow: auto; }
+#mini { min-height: 90px; word-break: break-all; }
+.msg { font-size: 13px; color: var(--muted); }
+.msg.bad { color: var(--bad); }
+.note { font-size: 13px; color: var(--muted); margin: 0; max-width: 70ch; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; }
+.sticky {
+  position: sticky; bottom: 0; background: var(--surface); border-top: 1px solid var(--line);
+  margin-inline: calc(-1 * max(16px, env(safe-area-inset-left, 0px)));
+  padding: 10px max(16px, env(safe-area-inset-right, 0px)) 10px max(16px, env(safe-area-inset-left, 0px));
+}
+.sticky-in { max-width: 820px; margin: 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.sticky-in .spacer { flex: 1; }
+.add-wrap { margin-top: 12px; display: grid; gap: 6px; }
+.add-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+#rooms .room + .room { margin-top: 16px; }
+@media (max-width: 520px) {
+  .row { grid-template-columns: 1fr; }
+  .field, .days { justify-self: start; }
+  input[type=text] { width: 100%; max-width: 240px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+</style>
+
+<main>
+  <header>
+    <h1>Rooms JSON Editor</h1>
+    <p class="sub">Daylight Lighting Scheduler v1.7.0 (editor 1.1.0). Change settings below, then press Copy at the bottom and paste into the Rooms JSON property in Composer. Click Set there to save.</p>
+  </header>
+
+  <div id="rooms"></div>
+
+  <details>
+    <summary>Raw JSON (advanced)</summary>
+    <textarea id="pretty" spellcheck="false" aria-label="Rooms JSON, formatted"></textarea>
+    <div class="bar"><button id="reset" type="button">Reset everything to live config</button><span class="msg" id="err"></span></div>
+    <p class="note" style="margin-top:10px">Light names are labels kept only on this page. They are not part of the JSON. They were matched from the device list and window layout, so check them against the IDs Composer shows when you hover a light.</p>
+  </details>
+
+  <details>
+    <summary>Single-line version</summary>
+    <textarea id="mini" readonly spellcheck="false" aria-label="Rooms JSON, single line"></textarea>
+    <p class="note" style="margin-top:8px">Saved in Composer on Oct 29, 2026, 8:43 PM, after the Upstairs cap was restored. A copy of this page and a plain rooms.json are kept identical in the GitHub repo nightcinder/Control4-Drivers under tools/rooms-json-editor. If this page is ever unavailable, open that index.html on your computer.</p>
+  </details>
+</main>
+
+<textarea id="cp" aria-hidden="true" tabindex="-1" style="position:fixed;left:-9999px;top:0;width:1px;height:1px"></textarea>
+<div class="sticky">
+  <div class="sticky-in">
+    <button id="copy" class="primary" type="button">Copy single line</button>
+    <span class="msg" id="copied" aria-live="polite"></span>
+    <span class="spacer"></span>
+    <span class="chip" id="chip-valid">valid JSON</span>
+    <span class="chip" id="chip-diff">matches live</span>
+  </div>
+</div>
+
+<script>
+(function () {
+  var LIVE = '[{"name":"Downstairs","type":"mixed","follow":true,"on":"sunset-15","off":"23:45","off_ramp_min":30,"away":{"light":480,"level":30,"off":"22:30"},"scenes":{"Max":{"levels":{"480":100,"478":100,"476":100}},"Evening":{"levels":{"480":50,"478":50,"476":50}},"Dinner":{"levels":{"480":50,"478":75,"476":50}},"Off":{"off":true}},"window_gain":0.4,"facing_deg":0,"lights":[{"id":331,"kind":"lutron","scale":0.55,"windows":[{"facing":0,"gain":0.5}]},{"id":333,"kind":"lutron","scale":0.55,"windows":[{"facing":0,"gain":0.6}]},{"id":335,"kind":"lutron","scale":0.55,"windows":[{"facing":0,"gain":0.4},{"facing":90,"gain":0.2}]},{"id":480,"kind":"lifx","windows":[{"facing":0,"gain":0.6}]},{"id":478,"kind":"lifx","windows":[{"facing":0,"gain":0.6},{"facing":90,"gain":0.4},{"facing":270,"gain":0.2}]},{"id":476,"kind":"lifx","windows":[{"facing":180,"gain":0.8},{"facing":90,"gain":0.4}]}]},{"name":"Upstairs","type":"mixed","window_gain":0.5,"max_level":40,"on_daylight":0.3,"off":"22:30","lights":[{"id":337,"kind":"lutron"},{"id":482,"kind":"lifx"}],"wake":{"enabled":false,"at":"sunrise-15","stop":"sunrise+30","ramp_min":30,"level":35,"days":["mon","tue","wed","thu","fri"]}}]';
+  var LIVE_MINI = JSON.stringify(JSON.parse(LIVE));
+  var DEFAULT_NAMES = { 331: 'TV Lights', 333: 'Fireplace Lights', 335: 'Dining Lights', 480: 'Living Room Lamp', 478: 'Lounge Lamp', 476: 'Den Lamp', 337: 'Ceiling Lights', 482: 'Table Lamp' };
+  var COMPASS = [[0, 'North (0°)'], [90, 'East (90°)'], [180, 'South (180°)'], [270, 'West (270°)']];
+  var DAYS = [['mon', 'Mon'], ['tue', 'Tue'], ['wed', 'Wed'], ['thu', 'Thu'], ['fri', 'Fri'], ['sat', 'Sat'], ['sun', 'Sun']];
+  var KEY = 'rooms-json-draft-v2', NKEY = 'rooms-json-names-v2';
+  var data = JSON.parse(LIVE);
+  var names = JSON.parse(JSON.stringify(DEFAULT_NAMES));
+  var $ = function (id) { return document.getElementById(id); };
+  var pretty = $('pretty'), mini = $('mini');
+
+  try { var s = localStorage.getItem(KEY); if (s) { var p = JSON.parse(s); if (Array.isArray(p)) { data = p; } } } catch (e) {}
+  try { var n = localStorage.getItem(NKEY); if (n) { var q = JSON.parse(n); for (var k in q) { names[k] = q[k]; } } } catch (e) {}
+
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) { e.className = cls; } if (text !== undefined) { e.textContent = text; } return e; }
+  function lightName(l) { return names[l.id] || ('Light ' + l.id); }
+
+  var uid = 0;
+  function row(label, hint, control) {
+    var r = el('div', 'row'); var l = el('label', 'lbl', label);
+    if (control.firstChild && control.firstChild.id) { l.setAttribute('for', control.firstChild.id); }
+    if (hint) { l.appendChild(el('small', '', hint)); }
+    r.appendChild(l); r.appendChild(control); return r;
+  }
+  function numControl(obj, key, o) {
+    var f = el('span', 'field'); var i = document.createElement('input');
+    i.type = 'number'; i.id = 'f' + (uid++); i.min = o.min === undefined ? '0' : o.min; i.max = o.max === undefined ? '100' : o.max; i.step = '1';
+    i.setAttribute('inputmode', 'numeric');
+    if (obj[key] !== undefined) { i.value = o.pct ? Math.round(obj[key] * 100) : obj[key]; }
+    if (o.blank) { i.placeholder = o.ph || 'none'; }
+    i.addEventListener('input', function () {
+      var v = i.value.trim();
+      if (v === '') { if (o.blank) { delete obj[key]; sync(); } return; }
+      var num = Number(v); if (isNaN(num)) { return; }
+      obj[key] = o.pct ? Math.round(num) / 100 : num; sync();
+    });
+    f.appendChild(i); f.appendChild(el('span', 'unit', o.unit || ''));
+    return f;
+  }
+  function textControl(obj, key, o) {
+    var f = el('span', 'field'); var i = document.createElement('input');
+    i.type = 'text'; i.id = 'f' + (uid++); i.value = obj[key] === undefined ? '' : obj[key];
+    if (o && o.placeholder) { i.placeholder = o.placeholder; }
+    i.addEventListener('input', function () {
+      var v = i.value.trim();
+      if (v === '' && o && o.blank) { delete obj[key]; } else { obj[key] = v; }
+      sync();
+    });
+    f.appendChild(i); return f;
+  }
+  function checkControl(obj, key) {
+    var f = el('span', 'field'); var i = document.createElement('input');
+    i.type = 'checkbox'; i.id = 'f' + (uid++); i.checked = !!obj[key];
+    i.addEventListener('change', function () { obj[key] = i.checked; sync(); });
+    f.appendChild(i); return f;
+  }
+  function selectControl(options, current, onPick) {
+    var f = el('span', 'field'); var s = document.createElement('select'); s.id = 'f' + (uid++);
+    var found = false;
+    options.forEach(function (o) { var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; if (String(o[0]) === String(current)) { op.selected = true; found = true; } s.appendChild(op); });
+    if (!found) { var op = document.createElement('option'); op.value = current; op.textContent = current + '° (custom)'; op.selected = true; s.appendChild(op); }
+    s.addEventListener('change', function () { onPick(Number(s.value)); sync(); });
+    f.appendChild(s); return f;
+  }
+
+  function group(title, rows) {
+    var g = el('div', 'group'); g.appendChild(el('h2', '', title));
+    var r = el('div', 'rows'); rows.forEach(function (x) { if (x) { r.appendChild(x); } }); g.appendChild(r); return g;
+  }
+
+  function lightCard(room, l, li) {
+    var c = el('div', 'light'); var h = el('div', 'light-head');
+    var nm = document.createElement('input'); nm.type = 'text'; nm.value = lightName(l); nm.setAttribute('aria-label', 'Name for light ' + l.id);
+    nm.addEventListener('change', function () { names[l.id] = nm.value.trim() || ('Light ' + l.id); try { localStorage.setItem(NKEY, JSON.stringify(names)); } catch (e) {} build(); });
+    h.appendChild(nm);
+    h.appendChild(el('span', 'badge ' + l.kind, l.kind === 'lutron' ? 'Lutron' : 'LIFX'));
+    h.appendChild(el('span', 'lid', 'id ' + l.id));
+    var rmL = el('button', 'small', 'Remove light'); rmL.type = 'button'; rmL.style.marginLeft = 'auto';
+    rmL.addEventListener('click', function () { room.lights.splice(li, 1); sync(); build(); });
+    h.appendChild(rmL);
+    c.appendChild(h);
+    var rows = el('div', 'rows');
+    rows.appendChild(row('Max brightness (this light)', 'Overrides the room’s max. Blank uses the room’s max' + (room.max_level !== undefined ? ' (' + room.max_level + '%).' : ' (none set).'), numControl(l, 'max_level', { blank: true, ph: room.max_level !== undefined ? String(room.max_level) : 'room', unit: '%' })));
+    if (l.kind === 'lutron') {
+      rows.appendChild(row('Brightness scale', 'Share of the room level this light gets. Blank means the full room level.', numControl(l, 'scale', { pct: true, blank: true, unit: '%' })));
+    }
+    c.appendChild(rows);
+    var w = el('div', 'wins');
+    w.appendChild(el('div', 'lbl', 'Windows that light this spot'));
+    var arr = l.windows || [];
+    if (!arr.length) { w.appendChild(el('div', 'none', 'None set. Uses the room’s window setting.')); }
+    arr.forEach(function (win, wi) {
+      var line = el('div', 'win');
+      line.appendChild(selectControl(COMPASS, win.facing, function (v) { win.facing = v; }));
+      line.appendChild(el('span', 'w-label', 'strength'));
+      line.appendChild(numControl(win, 'gain', { pct: true, unit: '%' }));
+      var rm = el('button', 'small', 'Remove'); rm.type = 'button';
+      rm.addEventListener('click', function () { arr.splice(wi, 1); if (!arr.length) { delete l.windows; } sync(); build(); });
+      line.appendChild(rm); w.appendChild(line);
+    });
+    var add = el('button', 'small', 'Add window'); add.type = 'button'; add.style.justifySelf = 'start';
+    add.addEventListener('click', function () { if (!l.windows) { l.windows = []; } l.windows.push({ facing: 180, gain: 0.5 }); sync(); build(); });
+    w.appendChild(add); c.appendChild(w);
+    return c;
+  }
+
+  function lightsBlock(room) {
+    var g = el('div', 'group'); g.appendChild(el('h2', '', 'Lights'));
+    [['lutron', 'Lutron lights'], ['lifx', 'LIFX lights']].forEach(function (k) {
+      var list = (room.lights || []).map(function (l, i) { return [l, i]; }).filter(function (p) { return p[0].kind === k[0]; });
+      if (!list.length) { return; }
+      var t = el('div', 'kind-title'); t.appendChild(el('span', '', k[1] + ' (' + list.length + ')')); t.appendChild(el('span', 'rule')); g.appendChild(t);
+      list.forEach(function (p) { g.appendChild(lightCard(room, p[0], p[1])); });
+    });
+    if (!(room.lights || []).length) { g.appendChild(el('div', 'none', 'No lights in this room yet.')); }
+    g.appendChild(addLightForm(room));
+    return g;
+  }
+
+  function usedIds() { var u = {}; data.forEach(function (r) { (r.lights || []).forEach(function (l) { u[l.id] = r.name; }); }); return u; }
+
+  function addLightForm(room) {
+    var f = el('div', 'add-form');
+    var id = document.createElement('input'); id.type = 'number'; id.min = '1'; id.placeholder = 'Proxy ID'; id.setAttribute('aria-label', 'Light proxy ID'); id.style.width = '100px';
+    var kind = document.createElement('select'); kind.setAttribute('aria-label', 'Light type');
+    [['lutron', 'Lutron'], ['lifx', 'LIFX']].forEach(function (k) { var o = document.createElement('option'); o.value = k[0]; o.textContent = k[1]; kind.appendChild(o); });
+    var nm = document.createElement('input'); nm.type = 'text'; nm.placeholder = 'Name (label only)'; nm.setAttribute('aria-label', 'Light name');
+    var btn = el('button', 'small', 'Add light'); btn.type = 'button';
+    var msg = el('span', 'msg');
+    btn.addEventListener('click', function () {
+      var n = Math.round(Number(id.value));
+      if (!(n > 0)) { msg.textContent = 'Enter the light’s proxy ID.'; msg.className = 'msg bad'; return; }
+      var u = usedIds(); if (u[n]) { msg.textContent = 'Light ' + n + ' is already in ' + u[n] + '.'; msg.className = 'msg bad'; return; }
+      room.lights = room.lights || []; room.lights.push({ id: n, kind: kind.value });
+      if (nm.value.trim()) { names[n] = nm.value.trim(); try { localStorage.setItem(NKEY, JSON.stringify(names)); } catch (e) {} }
+      sync(); build();
+    });
+    f.appendChild(id); f.appendChild(kind); f.appendChild(nm); f.appendChild(btn); f.appendChild(msg);
+    var wrap = el('div', 'add-wrap'); wrap.appendChild(el('div', 'note', 'Add a light by its proxy ID (hover the light in Composer’s tree). Only lights listed here are controlled.')); wrap.appendChild(f);
+    return wrap;
+  }
+
+  function addRoomForm() {
+    var box = el('div', 'room'); box.appendChild(el('div', 'room-head')).appendChild(el('h3', '', 'Add a room'));
+    var f = el('div', 'add-form');
+    var nm = document.createElement('input'); nm.type = 'text'; nm.placeholder = 'Room name'; nm.setAttribute('aria-label', 'Room name');
+    var tp = document.createElement('select'); tp.setAttribute('aria-label', 'Room type');
+    [['mixed', 'Lutron + LIFX'], ['lifx_only', 'LIFX only']].forEach(function (k) { var o = document.createElement('option'); o.value = k[0]; o.textContent = k[1]; tp.appendChild(o); });
+    var btn = el('button', 'small', 'Add room'); btn.type = 'button'; var msg = el('span', 'msg');
+    btn.addEventListener('click', function () {
+      var name = nm.value.trim();
+      if (!name) { msg.textContent = 'Give the room a name.'; msg.className = 'msg bad'; return; }
+      if (data.some(function (r) { return r.name === name; })) { msg.textContent = 'A room with that name exists.'; msg.className = 'msg bad'; return; }
+      data.push({ name: name, type: tp.value, lights: [] }); sync(); build();
+    });
+    f.appendChild(nm); f.appendChild(tp); f.appendChild(btn); f.appendChild(msg); box.appendChild(f);
+    box.appendChild(el('p', 'note', 'A room needs at least one light before the driver uses it.'));
+    return box;
+  }
+
+  function awayBlock(room) {
+    var a = room.away;
+    var opts = (room.lights || []).map(function (l) { return [l.id, lightName(l)]; });
+    var sel = selectControl(opts, a.light, function (v) { a.light = v; });
+    return group('When nobody is home', [
+      row('Lamp that stays on', 'The “someone’s home” lamp', sel),
+      row('Level', null, numControl(a, 'level', { unit: '%' })),
+      row('Turns off at', 'Time, like 22:30', textControl(a, 'off'))
+    ]);
+  }
+
+  function scenesBlock(room) {
+    var g = el('div', 'group'); g.appendChild(el('h2', '', 'Keypad scenes'));
+    var byId = {}; (room.lights || []).forEach(function (l) { byId[l.id] = l; });
+    Object.keys(room.scenes).forEach(function (name) {
+      var sc = room.scenes[name]; var box = el('div', 'scene'); box.appendChild(el('div', 'scene-name', name));
+      if (sc.levels) {
+        var wrap = el('div', 'scene-levels');
+        Object.keys(sc.levels).forEach(function (id) {
+          var lab = el('label', ''); lab.appendChild(el('span', '', byId[id] ? lightName(byId[id]) : ('Light ' + id)));
+          var f = numControl(sc.levels, id, { unit: '%' }); lab.appendChild(f); wrap.appendChild(lab);
+        });
+        box.appendChild(wrap);
+      } else if (sc.off) { box.appendChild(el('div', 'none', 'Turns everything off.')); }
+      g.appendChild(box);
+    });
+    return g;
+  }
+
+  function wakeBlock(room) {
+    var w = room.wake;
+    var days = el('div', 'days'); w.days = w.days || [];
+    DAYS.forEach(function (d) {
+      var lab = el('label', ''); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = w.days.indexOf(d[0]) >= 0;
+      cb.setAttribute('aria-label', d[1]);
+      cb.addEventListener('change', function () {
+        var set = DAYS.map(function (x) { return x[0]; }).filter(function (x) { return x === d[0] ? cb.checked : w.days.indexOf(x) >= 0; });
+        w.days = set; sync();
+      });
+      lab.appendChild(cb); lab.appendChild(document.createTextNode(d[1])); days.appendChild(lab);
+    });
+    var dr = el('div', 'row'); dr.appendChild(el('div', 'lbl', 'Days')); dr.appendChild(days);
+    return group('Morning wake-up', [
+      row('Enabled', null, checkControl(w, 'enabled')),
+      row('Starts', 'Like sunrise-15 or 06:30', textControl(w, 'at')),
+      row('Ends', 'Like sunrise+30', textControl(w, 'stop')),
+      row('Ramp length', 'Minutes to climb to the wake level', numControl(w, 'ramp_min', { min: 0, max: 120, unit: 'min' })),
+      row('Wake level', null, numControl(w, 'level', { unit: '%' })),
+      dr
+    ]);
+  }
+
+  function roomCard(room) {
+    var card = el('div', 'room');
+    var head = el('div', 'room-head'); head.appendChild(el('h3', '', room.name));
+    head.appendChild(el('span', 'chip', room.type === 'mixed' ? 'Lutron + LIFX' : (room.type || '')));
+    var rmR = el('button', 'small', 'Remove room'); rmR.type = 'button'; rmR.style.marginLeft = 'auto';
+    var armed = false;
+    rmR.addEventListener('click', function () {
+      if (!armed) { armed = true; rmR.textContent = 'Click again to remove'; setTimeout(function () { armed = false; rmR.textContent = 'Remove room'; }, 3000); return; }
+      data.splice(data.indexOf(room), 1); sync(); build();
+    });
+    head.appendChild(rmR); card.appendChild(head);
+
+    var sched = [];
+    sched.push(row('Turns on', 'Time like 18:30 or sunset-15. Blank means it only follows lights you turn on.', textControl(room, 'on', { blank: true, placeholder: 'none' })));
+    if (room.on_daylight !== undefined) { sched.push(row('Turns on when daylight drops below', null, numControl(room, 'on_daylight', { pct: true, blank: true, unit: '%' }))); }
+    sched.push(row('Turns off at', 'Time, like 22:30', textControl(room, 'off', { blank: true, placeholder: 'none' })));
+    if (room.off_ramp_min !== undefined) { sched.push(row('Fade-off length', null, numControl(room, 'off_ramp_min', { min: 0, max: 120, blank: true, unit: 'min' }))); }
+    if (room.follow !== undefined) { sched.push(row('Follow lights already on', null, checkControl(room, 'follow'))); }
+    card.appendChild(group('Schedule', sched));
+
+    var br = [];
+    br.push(row('Max brightness', 'Caps every light in this room. Blank means no cap.', numControl(room, 'max_level', { blank: true, unit: '%' })));
+    br.push(row('Default window strength', 'Used by lights with no windows listed', numControl(room, 'window_gain', { pct: true, blank: true, unit: '%' })));
+    if (room.facing_deg !== undefined) { br.push(row('Room faces', null, selectControl(COMPASS, room.facing_deg, function (v) { room.facing_deg = v; }))); }
+    card.appendChild(group('Brightness', br));
+
+    card.appendChild(lightsBlock(room));
+    if (room.away) { card.appendChild(awayBlock(room)); }
+    if (room.scenes) { card.appendChild(scenesBlock(room)); }
+    if (room.wake) { card.appendChild(wakeBlock(room)); }
+    return card;
+  }
+
+  function build() {
+    uid = 0; var wrap = $('rooms'); wrap.innerHTML = '';
+    var scroll = window.scrollY;
+    data.forEach(function (room) { wrap.appendChild(roomCard(room)); });
+    wrap.appendChild(addRoomForm());
+    window.scrollTo(0, scroll);
+  }
+
+  function sync() { pretty.value = JSON.stringify(data, null, 2); refresh(); }
+
+  function refresh() {
+    var m = JSON.stringify(data); mini.value = m;
+    var same = m === LIVE_MINI; var c = $('chip-diff');
+    c.textContent = same ? 'matches live' : 'differs from live'; c.className = 'chip ' + (same ? 'ok' : 'warn');
+    var v = $('chip-valid'); v.textContent = 'valid JSON'; v.className = 'chip ok';
+    $('err').textContent = ''; $('err').className = 'msg';
+    try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {}
+  }
+
+  pretty.addEventListener('input', function () {
+    try {
+      var parsed = JSON.parse(pretty.value);
+      if (!Array.isArray(parsed)) { throw new Error('Top level must be a list of rooms.'); }
+      data = parsed; build(); refresh();
+    } catch (e) {
+      var v = $('chip-valid'); v.textContent = 'invalid JSON'; v.className = 'chip bad';
+      $('err').textContent = e.message; $('err').className = 'msg bad';
+    }
+  });
+
+  $('reset').addEventListener('click', function () {
+    data = JSON.parse(LIVE); names = JSON.parse(JSON.stringify(DEFAULT_NAMES));
+    try { localStorage.removeItem(NKEY); } catch (e) {}
+    build(); sync();
+  });
+
+  $('copy').addEventListener('click', function () {
+    var out = $('copied'); var text = mini.value;
+    function fallback() {
+      var cp = $('cp'); cp.value = text; cp.focus(); cp.select();
+      var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+      out.textContent = ok ? 'Copied.' : 'Open "Single-line version" and press Ctrl+C.';
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { out.textContent = 'Copied.'; }, fallback);
+    } else { fallback(); }
+    setTimeout(function () { out.textContent = ''; }, 3000);
+  });
+
+  build(); sync();
+})();
+</script>
