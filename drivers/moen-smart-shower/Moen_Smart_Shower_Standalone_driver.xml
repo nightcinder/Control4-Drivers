@@ -1,0 +1,484 @@
+<devicedata>
+	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Moen, Fortune Brands, or Control4</copyright>
+	<creator>Custom Driver Project</creator>
+	<manufacturer>Moen</manufacturer>
+	<name>Moen Smart Shower (U by Moen) - Standalone</name>
+	<model>TS3302 / TS3304 / S3102 / S3104 Digital Shower Valve + Controller</model>
+	<created>08/16/2026 12:00 PM</created>
+	<modified>08/16/2026 12:00 PM</modified>
+	<version>203</version>
+	<small image_source="c4z">icons/device_sm.png</small>
+	<large image_source="c4z">icons/device_lg.png</large>
+	<control>lua_gen</control>
+	<controlmethod>ip</controlmethod>
+	<driver>DriverWorks</driver>
+	<templatedescription>Moen Smart Shower (U by Moen) - direct cloud control, Thermostat + Extras proxy (v202)</templatedescription>
+	<search_types>
+		<type>Moen:shower:UbyMoen</type>
+	</search_types>
+
+	<!--
+		VERSIONING NOTE (per this project's convention): bump <version> above
+		on every future edit to this file's Lua/XML behavior; the file name
+		itself (Moen_Smart_Shower_Standalone_driver.xml/.lua) must NOT change.
+
+		================================================================
+		DECISION RECORD - v102 (Pool proxy) -> v200 (Thermostat + Extras)
+		================================================================
+		Full decision record: Phase0_Decision_Record.md (Moen Smart Shower
+		UI Re-Engineering Plan project). Summary carried here per this
+		project's convention of keeping architectural memory in the header:
+
+		WHY v102 WAS WRONG (kept for history, see also the superseded note
+		below): v102 modeled the shower as a Pool/Spa proxy. That correctly
+		got the shower out of the light_v2 lighting-scene/voice group (a
+		real hazard - see the v100->v102 note below), but it left the
+		driver's primary interaction - firing a saved preset - completely
+		absent from Navigator. Presets only existed as Composer
+		actions/commands. The device also read as a pool heater, not a
+		shower, and lived under Comfort -> Pools.
+
+		WHY THERMOSTAT + EXTRAS (v200): Control4 has no dedicated shower
+		proxy. Of the three architectures considered (Thermostat+Extras,
+		Pool+aux-remap, Light_V2+Extras - the last rejected outright, see
+		below), Thermostat+Extras was chosen because:
+		  1. Extras is a first-class, documented feature of the Thermostat
+		     proxy (has_extras, EXTRAS_SETUP_CHANGED, EXTRAS_STATE_CHANGED),
+		     giving Navigator a native (non-HTML) on/off switch + one button
+		     per real preset - the actual interaction the user wants.
+		  2. Agent/Wakeup exposure - the risk that could have killed this
+		     option outright - was checked LIVE against the real EA-1
+		     project's Agents panel: this OS Management Package (3.4.3) has
+		     NO Wakeup Agent at all, and Scheduler's events are individually
+		     named/explicit with none referencing this device or any
+		     thermostat/pool-classed device. Unlike Light V2 (genuinely
+		     swept by "all lights on/off"), there is no house-wide automatic
+		     sweep of Thermostat-classed devices - automation against one is
+		     installer-configured per device via Composer Actions, not
+		     implicit class enrollment. Confirmed safe.
+		  3. A throwaway test driver (thermostatV2 proxy, has_extras=true,
+		     zero Moen code) was iterated live against the real EA-1 until
+		     structurally clean. The blocker every earlier attempt hit -
+		     Composer's "WARNING! This device's C4i is badly formed" - was
+		     traced to placing <capabilities>
+    <navigator_display_option proxybindingid="5001">
+      <display_icons>
+        <Icon width="1024" height="1024">controller://driver/Moen_Smart_Shower_Standalone_driver_v200/icons/device/shower/experience_1024.png</Icon>
+        <Icon width="512" height="512">controller://driver/Moen_Smart_Shower_Standalone_driver_v200/icons/device/shower/experience_512.png</Icon>
+        <Icon width="300" height="300">controller://driver/Moen_Smart_Shower_Standalone_driver_v200/icons/device/shower/experience_300.png</Icon>
+        <Icon width="90" height="90">controller://driver/Moen_Smart_Shower_Standalone_driver_v200/icons/device/shower/experience_90.png</Icon>
+        <Icon width="70" height="70">controller://driver/Moen_Smart_Shower_Standalone_driver_v200/icons/device/shower/experience_70.png</Icon>
+      </display_icons>
+    </navigator_display_option>
+ nested inside
+		     <connection><classes><class> (matching how v102 structures its
+		     Pool capabilities). The FIX, confirmed against this project's
+		     own real working IntelliFire driver (also thermostatV2), is
+		     that <capabilities> must be a TOP-LEVEL sibling of
+		     <connections>/<config> - see below. Connection classname is
+		     THERMOSTAT, not THERMOSTATV2.
+
+		v201, FIRST REAL-DEVICE RESULT: v200 was applied to the actual Shower
+		device (427) live. Current temperature displayed correctly (from
+		TEMPERATURE_CHANGED). The Extras tab RENDERED (has_extras/capabilities
+		were correct) but came through EMPTY - no switch, no preset buttons.
+		Root cause: C4:SendToProxy's parameter table for EXTRAS_SETUP_CHANGED/
+		EXTRAS_STATE_CHANGED used the UI-facing field name (extras_setup /
+		extras_state) as the Lua table key. Per the DriverWorks Thermostat
+		Notifications doc, the actual wire parameter for both is literally
+		named "XML" - extras_setup/extras_state is only what it's called once
+		it reaches the UI, not the SendToProxy key. v102's own pool code
+		already used this exact convention for its XML notifications
+		(POOL_HEATMODE_LIST_CHANGED / POOL_HEATMODE_CHANGED both send
+		{XML=...}) - missed carrying it over the first time. Fixed in the
+		.lua (see SyncExtras). Icons also replaced this version - see below.
+		STILL TO CONFIRM after this fix: that the switch/buttons now actually
+		appear and round-trip taps.
+
+		v202, THREE MORE FIXES:
+		1. PACKAGING MISTAKE (mine, not a driver bug): v200/v201 were
+		   packaged as "Moen_Smart_Shower_Standalone_driver_v200.c4z" /
+		   "..._v201.c4z" - a DIFFERENT outer package filename than the
+		   original "Moen_Smart_Shower_Standalone_driver.c4z" that's bound
+		   to the real device. Composer matches "Add or Update Driver" to an
+		   already-bound device by that package filename (visible as
+		   "Device File" on the Summary tab), not just the internal
+		   driver.xml <name>. Loading a differently-named package creates a
+		   SEPARATE catalog entry instead of updating the bound device in
+		   place - which is why the icon change appeared to do nothing: the
+		   bound device was still running the old package. v202 is
+		   repackaged as EXACTLY "Moen_Smart_Shower_Standalone_driver.c4z",
+		   matching the versioning rule at the top of this file (bump
+		   <version>, never the file name) that I broke starting at v200.
+		2. NO ON/OFF TOGGLE ON THE NATIVE THERMOSTAT CARD: capabilities had
+		   <hvac_states> (which describes STATE feedback, e.g. "the system
+		   is currently Heating") but not <hvac_modes> (the SELECTABLE mode
+		   list Navigator actually uses to draw mode buttons) - confirmed as
+		   two distinct capabilities on the Thermostat Capabilities doc
+		   page. Added <hvac_modes>Off,Heat</hvac_modes> above. This should
+		   put an Off/Heat toggle directly on the thermostat card, wired to
+		   the same Action_ShowerOn/Off as the Extras switch.
+		3. INBOUND COMMAND NAMES WERE WRONG WORD ORDER: found the actual
+		   "Thermostat Unhandled Commands" reference page (a page this
+		   project's earlier research missed - it lists precisely what a
+		   protocol driver receives from the proxy, as opposed to the
+		   Notifications page which only covers the other direction). The
+		   real commands are SET_MODE_HVAC and SET_SETPOINT_HEAT - not
+		   SET_HVAC_MODE / SET_HEAT_SETPOINT as previously inferred by
+		   analogy. Fixed in the .lua RFP handler. Param key names (MODE,
+		   SETPOINT) are still inferred by symmetry with the matching
+		   outbound notification, since this reference page only lists
+		   command names and one-line descriptions, not parameter tables -
+		   if still wrong, the "else" branch logs the real strCommand.
+
+		INBOUND COMMAND NAMES ARE AN INFERENCE, NOT DOC-CONFIRMED: the
+		per-proxy Thermostat doc (snap-one.github.io/
+		docs-driverworks-proxyprotocol-tstat) fully documents the outbound
+		notifications this driver sends UP to the proxy (TEMPERATURE_CHANGED,
+		HEAT_SETPOINT_CHANGED, HVAC_MODE_CHANGED, ALLOWED_HVAC_MODES_CHANGED,
+		EXTRAS_SETUP_CHANGED, EXTRAS_STATE_CHANGED - all confirmed present on
+		that page with parameter tables). It does NOT document the inbound
+		commands the proxy sends DOWN to the driver when a user taps the
+		native thermostat controls. SET_HVAC_MODE / SET_HEAT_SETPOINT are
+		inferred by direct analogy with every other proxy already proven in
+		this project (SET_LEVEL for light_v2, SET_POOL_HEATMODE /
+		SET_POOL_SETPOINT / SET_AUX_MODE for pool - "SET_" + the matching
+		_CHANGED notification's base name is the pattern every one of them
+		follows). If wrong, the RFP dispatcher's "else" branch logs the real
+		incoming strCommand instead of guessing blindly again - check the
+		log during the Phase 1 acceptance test and fix the name in one pass
+		if it doesn't match. This does not affect safety either way: an
+		unrecognized command is a silent no-op, never a default action.
+
+		NOTE ON PROXY CHOICE (v102 change, superseded above but kept for
+		history): earlier versions modeled the shower and each outlet as
+		light_v2 proxies. That put the shower in the "all lights on/off"
+		scene/voice-command group, which could turn on water unexpectedly -
+		a real hazard, not just cosmetic. v102 moved to Pool as a closer
+		structural match than light_v2 while staying out of Lighting. v200
+		keeps that same property (out of the lighting/voice-all group) via
+		Thermostat instead.
+
+		NOTE ON CONNECTIONS: there is deliberately NO <connection> block for
+		a fixed network binding (unlike the bridge variant's TCP binding
+		6001) - unchanged from v102. REST calls via C4:urlGet/urlPost don't
+		need one. The Pusher WebSocket binding is allocated dynamically by
+		websocket.lua itself at runtime, unchanged from v102 - see the .lua
+		header for details. NONE OF THE TRANSPORT/PROTOCOL LAYER CHANGED IN
+		THIS VERSION - only the proxy/UI surface. See the .lua file; REST
+		auth, polling, and the Pusher subscription-wait fix are untouched.
+	-->
+	<proxies qty="1">
+		<proxy image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png" proxybindingid="5001" name="Shower" primary="True">thermostatV2</proxy>
+	</proxies>
+
+	<connections>
+		<connection>
+			<id>5001</id>
+			<facing>6</facing>
+			<connectionname>SHOWER</connectionname>
+			<type>2</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>THERMOSTAT</classname>
+				</class>
+			</classes>
+		</connection>
+	</connections>
+
+	<!--
+		STRUCTURE: <capabilities> is a TOP-LEVEL sibling of <connections>/
+		<config>, per the Phase 0 fix (see decision record above) - NOT
+		nested inside <connection><classes><class> the way v102's Pool
+		capabilities were. Confirmed against this project's real, working
+		IntelliFire v113 driver and live-tested clean against the real EA-1
+		via the Phase 0 throwaway driver before being carried into this
+		file.
+
+		VALUES: mirror the Phase 0 throwaway test driver's proven-clean set
+		as closely as makes sense for a real device (can_heat/hvac_states
+		rather than has_single_setpoint, since that combination is the one
+		actually confirmed structurally valid live - has_single_setpoint
+		was never live-tested). setpoint_heat_min/max_f mirror this driver's
+		own "Target Temp Min/Max (F)" properties (60/115 default) - same
+		known limitation v102 had: if those properties are changed, this
+		static capability won't update without reloading the driver.
+	-->
+	<capabilities>
+		<has_remote_sensor>false</has_remote_sensor>
+		<can_heat>true</can_heat>
+		<can_cool>false</can_cool>
+		<can_change_scale>false</can_change_scale>
+		<has_extras>true</has_extras>
+		<has_single_setpoint>false</has_single_setpoint>
+		<can_do_auto>false</can_do_auto>
+		<can_auto>false</can_auto>
+		<can_calibrate>false</can_calibrate>
+
+		<setpoint_heat_min_f>60</setpoint_heat_min_f>
+		<setpoint_heat_max_f>115</setpoint_heat_max_f>
+		<setpoint_heat_min_c>16</setpoint_heat_min_c>
+		<setpoint_heat_max_c>46</setpoint_heat_max_c>
+		<setpoint_heat_min>60</setpoint_heat_min>
+		<setpoint_heat_max>115</setpoint_heat_max>
+
+		<fan_states>Off</fan_states>
+		<hvac_states>Off,Heat</hvac_states>
+		<hvac_modes>Off,Heat</hvac_modes>
+		<has_connection_status>true</has_connection_status>
+
+		<can_preset_schedule>false</can_preset_schedule>
+		<can_preset>false</can_preset>
+	</capabilities>
+
+	<config>
+		<power_management_method>AlwaysOn</power_management_method>
+		<power_command_delay>0</power_command_delay>
+		<power_delay>0</power_delay>
+		<power_command_needed>False</power_command_needed>
+		<documentation file="www\documentation.rtf" />
+		<script file="Moen_Smart_Shower_Standalone_driver.lua" />
+
+		<commands>
+			<command>
+				<name>Shower On</name>
+				<description>Turn the shower on (resumes the active preset if one is paused, otherwise a plain on with no preset)</description>
+			</command>
+			<command>
+				<name>Shower Off</name>
+				<description>Turn the shower off</description>
+			</command>
+			<command>
+				<name>Set Temperature</name>
+				<description>Set the target temperature (F) while the shower is running</description>
+				<params>
+					<param>
+						<name>Temperature</name>
+						<type>STRING</type>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>Activate Preset</name>
+				<description>Activate a saved Moen shower preset by its position number</description>
+				<params>
+					<param>
+						<name>Position</name>
+						<type>LIST</type>
+						<items>
+							<item>1</item>
+							<item>2</item>
+							<item>3</item>
+							<item>4</item>
+						</items>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>Resume Paused Shower</name>
+				<description>Resume water flow after a preset paused it at temperature (mode = paused-by-preset)</description>
+			</command>
+			<command>
+				<name>Refresh Status</name>
+				<description>Poll Moen's cloud immediately instead of waiting for the next scheduled poll</description>
+			</command>
+			<!--
+				Outlets are no longer exposed in Navigator (Phase 1 UI goal),
+				but per the plan the underlying set_outlet code path stays
+				reachable from Composer programming rather than being
+				deleted - same reasoning as Set Temperature above.
+			-->
+			<command>
+				<name>Set Outlet</name>
+				<description>Turn a single outlet on/off directly (bypasses presets) - for Composer programming use, not exposed in Navigator</description>
+				<params>
+					<param>
+						<name>Outlet</name>
+						<type>LIST</type>
+						<items>
+							<item>1</item>
+							<item>2</item>
+							<item>3</item>
+							<item>4</item>
+						</items>
+					</param>
+					<param>
+						<name>State</name>
+						<type>LIST</type>
+						<items>
+							<item>ON</item>
+							<item>OFF</item>
+						</items>
+					</param>
+				</params>
+			</command>
+		</commands>
+
+		<actions>
+			<action>
+				<name> - Shower On</name>
+				<command>ACTION_SHOWER_ON</command>
+			</action>
+			<action>
+				<name> - Shower Off</name>
+				<command>ACTION_SHOWER_OFF</command>
+			</action>
+			<action>
+				<name> - Preset 1</name>
+				<command>ACTION_PRESET_1</command>
+			</action>
+			<action>
+				<name> - Preset 2</name>
+				<command>ACTION_PRESET_2</command>
+			</action>
+			<action>
+				<name> - Preset 3</name>
+				<command>ACTION_PRESET_3</command>
+			</action>
+			<action>
+				<name> - Preset 4</name>
+				<command>ACTION_PRESET_4</command>
+			</action>
+			<action>
+				<name> - Resume Paused Shower</name>
+				<command>ACTION_RESUME</command>
+			</action>
+			<action>
+				<name> - Refresh Status</name>
+				<command>ACTION_REFRESH_STATUS</command>
+			</action>
+			<action>
+				<name> - Print Debug Info</name>
+				<command>ACTION_PRINT_DEBUG</command>
+			</action>
+		</actions>
+
+		<properties>
+			<property>
+				<name>Moen Account Email</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<!--
+				CONFIRMED (carried over from v102): type PASSWORD is not a
+				valid Composer property type in this environment - crashes
+				Composer's property-type lookup. STRING is not masked -
+				worth knowing when entering it with anyone else present.
+			-->
+			<property>
+				<name>Moen Account Password</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Device Serial Number Override</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Target Temp Min (F)</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>60</default>
+			</property>
+			<property>
+				<name>Target Temp Max (F)</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>115</default>
+			</property>
+			<!--
+				Outlet "position" numbering is a per-device field, not
+				guaranteed 1-4 across every Moen shower model. Still needed
+				to interpret the API and for the "Set Outlet" Composer
+				command above, even though outlets are gone from Navigator.
+			-->
+			<property>
+				<name>Outlet 1 Position</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>1</default>
+			</property>
+			<property>
+				<name>Outlet 2 Position</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>2</default>
+			</property>
+			<property>
+				<name>Outlet 3 Position</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>3</default>
+			</property>
+			<property>
+				<name>Outlet 4 Position</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>4</default>
+			</property>
+			<property>
+				<name>Poll Interval (seconds)</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>20</default>
+			</property>
+			<property>
+				<name>Log Mode</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Off</default>
+				<items>
+					<item>Off</item>
+					<item>Print</item>
+					<item>Log</item>
+					<item>Print and Log</item>
+				</items>
+			</property>
+			<property>
+				<name>Cloud Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Unknown</default>
+			</property>
+			<property>
+				<name>Pusher Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Unknown</default>
+			</property>
+			<property>
+				<name>Shower Mode</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Unknown</default>
+			</property>
+			<property>
+				<name>Device Serial Number</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Device Name</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+		</properties>
+	</config>
+
+	<composer_categories>
+		<category>Comfort</category>
+	</composer_categories>
+	<navigator_categories>
+		<category>Comfort</category>
+	</navigator_categories>
+</devicedata>

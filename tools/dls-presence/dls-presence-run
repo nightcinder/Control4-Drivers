@@ -1,0 +1,5 @@
+#!/bin/sh
+# Wrapper used by dls-presence.service. Finds the Prometheus container's IP (port 9090 is not published
+# on the host), then starts the presence reporter in its Python venv. Adjust the paths for your host.
+PIP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' prometheus | awk '{print $1}')
+exec env PROM_URL=http://$PIP:9090 /home/USER/l360venv/bin/python /home/USER/dls_presence.py

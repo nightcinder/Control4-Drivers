@@ -1,0 +1,420 @@
+<devicedata>
+	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Yale, ASSA ABLOY, August Home, or Control4</copyright>
+	<creator>Custom Driver Project</creator>
+	<manufacturer>Yale</manufacturer>
+	<name>Yale Assure Lock 2 (Wi-Fi Smart Module)</name>
+	<model>YRD4xx / YRD5xx with Wi-Fi Smart Module (Yale Access cloud)</model>
+	<created>09/03/2026 12:00 PM</created>
+	<modified>09/03/2026 07:05 PM</modified>
+	<version>117</version>
+	<small image_source="c4z">icons/device_sm.png</small>
+	<large image_source="c4z">icons/device_lg.png</large>
+	<control>lua_gen</control>
+	<controlmethod>ip</controlmethod>
+	<driver>DriverWorks</driver>
+	<templatedescription>Yale Assure Lock 2 with the Wi-Fi Smart Module, controlled through the Yale Access (August) cloud API over HTTPS. Lock/unlock, lock state, battery, DoorSense contact, event history, and read-only keypad PIN listing.</templatedescription>
+	<search_types>
+		<type>Yale:lock:AssureLock2-WiFi</type>
+	</search_types>
+
+	<!--
+		NOTE ON CONNECTIONS: this driver has NO TCP/network connection binding.
+		The Assure Lock 2 Wi-Fi Smart Module has no LAN API - all control goes
+		out to https://api-production.august.com over HTTPS, which the driver
+		performs with C4:url(). C4:url() does not use a network binding, so
+		declaring a TCP port here would create a binding that never connects and
+		would show as a permanently offline network device in Composer.
+		<controlmethod> is still "ip" because the device is reached over IP.
+
+		NOTE ON CLASSNAMES - now VERIFIED, no longer a guess. The lock proxy
+		reference publishes no example <connections> block, so this was
+		originally written from convention. It has since been checked against
+		two authoritative sources pulled out of a live Control4 project:
+		  * Control4's own lock proxy definition, lock.c4i (Copyright 2016
+		    Control4 Corporation), which declares connection id 5001,
+		    facing 6, TYPE 2, consumer True, classname LOCK.
+		  * Cinegration's shipping yale_lock_cin.c4z, which declares its
+		    lock proxy binding as id 5001, facing 6, TYPE 2, consumer False,
+		    classname LOCK, hidden True.
+		This driver now matches on type 2 (v100 had 1, which was wrong).
+
+		v108 REMOVED <hidden>True</hidden> from this connection. It was copied
+		from Cinegration in v101, but their 5001 is an internal link from their
+		driver to a SEPARATE lock.c4i proxy DEVICE, and that separate device is
+		what Navigator enumerates. Here, 5001 IS this device's own lock proxy
+		binding, so hiding it hid the lock from Navigator: under
+		Security > Locks & Sensors the room listed only the generic relay
+		"Door Lock" and this driver's DoorSense contact - the lock itself
+		appeared in neither the Visible nor the Hidden list, i.e. Navigator did
+		not consider it a lock at all. Control4's own lock.c4i has no <hidden>.
+		Do not re-add it.
+
+		lock.c4i also exposes a second connection (id 1, "Lock State", type 1,
+		classname RELAY) so the proxy can drive a Control4 Generic Door Lock.
+		That binding is provided by the PROXY itself, not by the driver, so
+		there is deliberately nothing to declare for it here - it shows up on
+		the proxy automatically once this driver is placed.
+
+		CONTACT_SENSOR and <type>1</type> for the DoorSense binding come from
+		the contact proxy reference, which does document its connections block.
+	-->
+	<!--
+		v117: the DoorSense contact is NO LONGER a proxy this driver hosts.
+
+		It was declared as a second hosted proxy with connection 5002 as
+		type 1 / consumer TRUE. That is the shape of a CONSUMER control input - a
+		binding that accepts a contact sensor from some other device - so Composer
+		listed "Door Position (DoorSense)" under Control Inputs, and nothing this
+		driver sent ever reached the contact device. It sat at its default state
+		(Open) permanently. That is why the reading did not change across every
+		combination of notification polarity and the Invert Sensor checkbox: the
+		polarity was never the variable.
+
+		Control4's own drivers surface a contact the other way round, as a
+		DEPENDENCY: the driver declares a provider binding (id < 5000,
+		consumer False) and a <dependency> naming the contact proxy, and Composer
+		auto-adds that proxy as its own device bound to it. Verified against
+		control4_doorstation_ds2.c4z, which does exactly this with
+		contactsingle_motionsensor_c4.c4i on binding 300.
+	-->
+	<proxies qty="1">
+		<proxy image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png" proxybindingid="5001" name="Yale Assure Lock 2">lock</proxy>
+	</proxies>
+
+	<dependencies>
+		<dependency alwaysAdd="true" addMulitple="false">
+			<name>contactsingle_contactswitch_c4.c4i</name>
+			<auto_bindings>
+				<auto_binding>
+					<id>300</id>
+					<isconsumer>false</isconsumer>
+					<classes>
+						<class>
+							<classname>CONTACT_SENSOR</classname>
+						</class>
+					</classes>
+					<dep_binding_id>1</dep_binding_id>
+				</auto_binding>
+			</auto_bindings>
+		</dependency>
+	</dependencies>
+
+	<connections>
+		<connection>
+			<id>5001</id>
+			<facing>6</facing>
+			<connectionname>Lock</connectionname>
+			<type>2</type>
+			<!--
+				consumer False, matching Control4's own drivers: lock_consolidator.c4z
+				and door_autolock.c4z both declare their driver's OWN proxy binding as
+				type 2 / consumer False. v113 tried True on the theory that it should
+				mirror lock.c4i's own declaration; it changed nothing and no working
+				example supports it, so it is reverted rather than left in as cargo.
+			-->
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>LOCK</classname>
+				</class>
+			</classes>
+		</connection>
+		<!--
+			PROVIDER binding for the DoorSense contact. consumer False: this driver
+			DRIVES the contact device, it does not read one. Binding ids below 5000
+			are the convention for non-proxy bindings; 300 matches the doorstation
+			driver's motion-sensor binding, which is the reference for this pattern.
+		-->
+		<connection>
+			<id>300</id>
+			<facing>6</facing>
+			<connectionname>Door Position (DoorSense)</connectionname>
+			<type>1</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>CONTACT_SENSOR</classname>
+				</class>
+			</classes>
+		</connection>
+	</connections>
+
+	<!--
+		Capabilities are declared here AND re-sent at runtime as
+		CAPABILITY_CHANGED notifications (see PublishCapabilities() in
+		driver.lua), so the values survive a proxy that reads them either way.
+
+		Everything settings-related is false on purpose: the Yale Access API has
+		no confirmed endpoints for auto-lock time, volume, language, lockout
+		timers or admin codes, so advertising them would render Navigator
+		screens whose controls silently do nothing.
+
+		has_internal_history is true - REQUEST_HISTORY is implemented against
+		GET /houses/{houseId}/activities.
+
+		max_users is the Assure Lock 2's published 250-code capacity. NOTE that
+		user/PIN WRITES (ADD_USER / EDIT_USER / DELETE_USER) are not implemented
+		- no confirmed API endpoint exists for them; only reading the code list
+		is supported. See the KNOWN GAP section at the top of driver.lua.
+	-->
+	<capabilities>
+		<!--
+			v114: <navigator_display_option> REMOVED from the static capabilities.
+
+			It was added during the icon work to give Navigator custom lock artwork.
+			It is also the only thing declared against binding 5001 that is not
+			declared against 5002 - and 5002 (the DoorSense contact) is enumerated by
+			Director while 5001 (the lock) is not: the room's Navigator tab, under
+			Security > Locks & Sensors, lists the contact and offers the lock in
+			neither the Visible nor the Hidden column. Same device, same room, one
+			proxy listed and one not, so the difference is in what 5001 declares.
+
+			Custom Navigator artwork is cosmetic; a lock that Navigator will not show
+			at all is not. If removing this restores the lock, the icons can be
+			reintroduced deliberately and verified one at a time.
+		-->
+		<has_settings>false</has_settings>
+		<has_admin_code>false</has_admin_code>
+		<has_auto_lock_time>false</has_auto_lock_time>
+		<has_custom_settings>false</has_custom_settings>
+		<has_daily_schedule>false</has_daily_schedule>
+		<has_date_range_schedule>false</has_date_range_schedule>
+		<has_internal_history>true</has_internal_history>
+		<has_language>false</has_language>
+		<has_lock_modes>false</has_lock_modes>
+		<has_log_failed_attempts>false</has_log_failed_attempts>
+		<has_log_item_count>false</has_log_item_count>
+		<has_one_touch_locking>false</has_one_touch_locking>
+		<has_schedule_lockout>false</has_schedule_lockout>
+		<has_shutout_timer>false</has_shutout_timer>
+		<has_volume>false</has_volume>
+		<has_wrong_code_attempts>false</has_wrong_code_attempts>
+		<is_management_only>false</is_management_only>
+		<max_users>250</max_users>
+
+		<!--
+			These three keys are NOT in the published lock proxy reference. They
+			were found in Cinegration's shipping yale_lock_cin.c4z, which sets all
+			three false for this same lock. They are the correct, first-class way
+			to tell Navigator that this lock's credential list is read-only, so it
+			hides the add/edit/delete controls instead of offering buttons that do
+			nothing. This replaces the earlier approach of accepting ADD_USER /
+			EDIT_USER / DELETE_USER and silently logging - the driver still guards
+			those commands, but the UI should no longer offer them at all.
+
+			Note this is independent confirmation that PIN writes are not merely
+			undocumented but genuinely unavailable on this API: a paid commercial
+			driver for the same lock also declines to implement them.
+		-->
+		<can_add_remove_user>false</can_add_remove_user>
+		<can_edit_user>false</can_edit_user>
+		<can_edit_user_pin>false</can_edit_user_pin>
+
+		<!--
+			Files this driver's activity under Security > Door Lock in Control4's
+			History. Taken from Control4's own lock.c4i, which declares exactly
+			these two keys.
+		-->
+		<history_category>Security</history_category>
+		<history_subcategory>Door Lock</history_subcategory>
+	</capabilities>
+
+	<config>
+		<power_management_method>AlwaysOn</power_management_method>
+		<power_command_delay>0</power_command_delay>
+		<power_delay>0</power_delay>
+		<power_command_needed>False</power_command_needed>
+		<documentation file="www\documentation.rtf" />
+		<script file="driver.lua" />
+
+		<actions>
+			<action>
+				<name>1 - Sign In / Request Verification Code</name>
+				<command>ACTION_SIGN_IN</command>
+			</action>
+			<action>
+				<name>2 - Submit Verification Code</name>
+				<command>ACTION_SUBMIT_CODE</command>
+			</action>
+			<action>
+				<name>3 - Discover Locks</name>
+				<command>ACTION_DISCOVER</command>
+			</action>
+			<action>
+				<name> - Refresh Status</name>
+				<command>ACTION_REFRESH_STATUS</command>
+			</action>
+			<action>
+				<name> - Refresh History</name>
+				<command>ACTION_REFRESH_HISTORY</command>
+			</action>
+			<action>
+				<name> - Refresh PIN Codes</name>
+				<command>ACTION_REFRESH_USERS</command>
+			</action>
+			<action>
+				<name> - Refresh Access Token</name>
+				<command>ACTION_REFRESH_TOKEN</command>
+			</action>
+			<action>
+				<name> - Clear Stored Credentials</name>
+				<command>ACTION_CLEAR_CREDENTIALS</command>
+			</action>
+			<action>
+				<name> - Print Debug Info</name>
+				<command>ACTION_PRINT_DEBUG</command>
+			</action>
+		</actions>
+
+		<properties>
+			<property>
+				<name>Brand</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Yale Access</default>
+				<items>
+					<item>Yale Access</item>
+					<item>August</item>
+				</items>
+			</property>
+			<property>
+				<name>Login Method</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Email</default>
+				<items>
+					<item>Email</item>
+					<item>Phone</item>
+				</items>
+			</property>
+			<property>
+				<name>Username</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<!--
+				NOTE: type is STRING, not a masked type. Same reasoning recorded
+				in this project's IntelliFire driver - the reference drivers here
+				only use STRING and LIST, and a masked property type has not been
+				confirmed in DriverEditor. If autocomplete offers one, switch this
+				and Verification Code to it.
+
+				The password is only needed for the initial sign-in; token
+				refreshes use the stored JWT. As of v104 the driver CLEARS this
+				property automatically once sign-in succeeds, so the plaintext
+				password does not linger in the project or in project backups.
+			-->
+			<property>
+				<name>Password</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Verification Code</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Lock ID</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>House ID</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<!--
+				Leave BLANK for normal use: the driver carries the known
+				x-august-api-key values and rotates to the next one automatically
+				if Yale revokes the current one (HTTP 403 "API key is not valid").
+				Only fill this in if every known key has been revoked and you have
+				sourced a current one; setting it pins the key and disables rotation.
+			-->
+			<property>
+				<name>API Key</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Poll Interval (seconds)</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>60</default>
+			</property>
+			<property>
+				<name>History Items</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>20</default>
+			</property>
+			<property>
+				<name>Log Mode</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Off</default>
+				<items>
+					<item>Off</item>
+					<item>Print</item>
+					<item>Log</item>
+					<item>Print and Log</item>
+				</items>
+			</property>
+			<property>
+				<name>Auth State</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Not signed in</default>
+			</property>
+			<property>
+				<name>Token Expires</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Lock Name</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Firmware Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Battery Level</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Unknown</default>
+			</property>
+			<property>
+				<name>Discovered Locks</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+		</properties>
+	</config>
+
+	<composer_categories>
+		<category>Security</category>
+	</composer_categories>
+	<navigator_categories>
+		<category>Security</category>
+	</navigator_categories>
+</devicedata>

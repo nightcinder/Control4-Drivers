@@ -3,24 +3,72 @@
 	<creator>Custom Driver Project</creator>
 	<manufacturer>Big Ass Fans</manufacturer>
 	<name>Haiku SenseME Fan</name>
-	<model>Haiku / Haiku H / Haiku L / Haiku C</model>
+	<model>Haiku / Haiku H / Haiku L / Haiku C / i6</model>
 	<created>08/14/2026 12:00 PM</created>
-	<modified>08/14/2026 12:00 PM</modified>
-	<version>100</version>
-	<small image_source="c4z">icons/haiku_sm.png</small>
-	<large image_source="c4z">icons/haiku_lg.png</large>
+	<modified>08/15/2026 9:45 PM</modified>
+	<version>321</version>
+	<small image_source="c4z">icons/device_sm.png</small>
+	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
-	<templatedescription>Big Ass Fans Haiku (SenseME) - UDP Fan + Light Control</templatedescription>
+	<templatedescription>Big Ass Fans Haiku / i6 - TCP + Protocol Buffers Fan + Light Control (BAF i6 protocol, firmware 3.0+)</templatedescription>
 	<search_types>
 		<type>BigAssFans:fan:Haiku</type>
+		<type>BigAssFans:fan:i6</type>
 	</search_types>
 
 	<proxies qty="2">
-		<proxy proxybindingid="5001" name="Haiku Fan" image_source="c4z" small_image="icons/haiku_sm.png" large_image="icons/haiku_lg.png">fan</proxy>
+		<proxy image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png" proxybindingid="5001" name="Haiku Fan">fan</proxy>
 		<proxy proxybindingid="5002" name="Haiku Light">light_v2</proxy>
 	</proxies>
+
+	<capabilities>
+    <navigator_display_option proxybindingid="5001">
+      <display_icons>
+        <Icon width="1024" height="1024">controller://driver/Haiku_SenseME_i6/icons/device/fan/experience_1024.png</Icon>
+        <Icon width="512" height="512">controller://driver/Haiku_SenseME_i6/icons/device/fan/experience_512.png</Icon>
+        <Icon width="300" height="300">controller://driver/Haiku_SenseME_i6/icons/device/fan/experience_300.png</Icon>
+        <Icon width="90" height="90">controller://driver/Haiku_SenseME_i6/icons/device/fan/experience_90.png</Icon>
+        <Icon width="70" height="70">controller://driver/Haiku_SenseME_i6/icons/device/fan/experience_70.png</Icon>
+      </display_icons>
+    </navigator_display_option>
+
+		<!-- FAN proxy capability -->
+		<discrete_levels>7</discrete_levels>
+
+		<!--
+			LIGHT_V2 proxy capabilities, copied verbatim from Control4's own
+			official light_sample.c4i. <capabilities> is a single FLAT block
+			for the whole driver (not nested per-proxy) - each proxy type
+			reads the keys it recognizes by name (fan reads discrete_levels,
+			light_v2 reads dimmer/set_level/etc.), so both sets coexist here
+			safely. Before v300 this driver had NO <capabilities> block at
+			all, so light_v2 fell back to working defaults; once discrete_
+			levels was added as the ONLY entry, Control4 apparently treated
+			that as the driver's complete capability set and the light lost
+			its implicit dimmer/on_off/set_level capabilities entirely (no
+			light control from Navigator) - that regression is what these
+			keys restore.
+		-->
+		<dimmer>True</dimmer>
+		<set_level>True</set_level>
+		<ramp_level>True</ramp_level>
+		<on_off>True</on_off>
+		<min_max>False</min_max>
+		<click_rates>False</click_rates>
+		<hold_rates>False</hold_rates>
+		<cold_start>False</cold_start>
+		<has_leds>False</has_leds>
+		<supports_broadcast_scenes>False</supports_broadcast_scenes>
+		<supports_multichannel_scenes>False</supports_multichannel_scenes>
+		<hide_proxy_properties>False</hide_proxy_properties>
+		<hide_proxy_events>False</hide_proxy_events>
+		<reduced_als_support>False</reduced_als_support>
+		<advanced_scene_support>False</advanced_scene_support>
+		<load_group_support>False</load_group_support>
+		<buttons_are_virtual>True</buttons_are_virtual>
+	</capabilities>
 
 	<connections>
 		<connection>
@@ -64,7 +112,7 @@
 			<linelevel>True</linelevel>
 			<classes>
 				<class>
-					<classname>UDP</classname>
+					<classname>TCP</classname>
 					<ports>
 						<port>
 							<number>31415</number>
@@ -79,13 +127,11 @@
 	</connections>
 
 	<!--
-		NOTE: No <capabilities> block is included. The DriverWorks capability
-		keys that are officially confirmed (via Control4's own light_sample.c4i)
-		apply specifically to light_v2 (dimmer/set_level/ramp_level/on_off/etc.),
-		and no equivalent officially-sourced key set for the FAN proxy could be
-		verified for this combo driver. Rather than guess at fan capability keys,
-		this block is omitted; add one in DriverEditor if you find it improves
-		Navigator/Composer behavior for your OS version.
+		<discrete_levels>7</discrete_levels> above tells Navigator the FAN
+		proxy has 7 discrete speed steps. Without this block, Navigator has
+		no way to know the fan proxy supports speed control at all, and the
+		device UI silently collapses to showing only the LIGHT_V2 proxy
+		(filed under "Lights", no speed control) - confirmed by live testing.
 	-->
 
 	<config>
@@ -99,7 +145,7 @@
 		<commands>
 			<command>
 				<name>Rediscover Fan</name>
-				<description>Broadcast a discovery request and re-resolve the fan's IP/MAC</description>
+				<description>Force a clean TCP reconnect to the configured Fan IP Address and refresh all properties</description>
 			</command>
 			<command>
 				<name>Set Whoosh Mode</name>
@@ -172,7 +218,7 @@
 			<property>
 				<name>Has Light Kit</name>
 				<type>LIST</type>
-				<readonly>false</readonly>
+				<readonly>true</readonly>
 				<default>Yes</default>
 				<items>
 					<item>Yes</item>

@@ -5,10 +5,10 @@
 	<name>IntelliFire Fireplace (Wi-Fi Module)</name>
 	<model>IFT-WFM (Off / Pilot / Flame, variable flame height)</model>
 	<created>08/15/2026 12:00 PM</created>
-	<modified>08/15/2026 12:00 PM</modified>
-	<version>100</version>
-	<small image_source="c4z">icons/intellifire_sm.png</small>
-	<large image_source="c4z">icons/intellifire_lg.png</large>
+	<modified>09/03/2026 07:20 PM</modified>
+	<version>115</version>
+	<small image_source="c4z">icons/device_sm.png</small>
+	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
@@ -18,16 +18,32 @@
 	</search_types>
 
 	<!--
-		NOTE ON PROXY CHOICE: there is no native Control4 "fireplace" proxy.
-		This driver models the unit as a single light_v2 proxy: ON/OFF maps to
-		the main flame, and SET_LEVEL/RAMP_TO_LEVEL maps to flame height
-		(0-100% -> height 0-4). The third "pilot only" state that this
-		fireplace supports doesn't fit a two-state ON/OFF + level control
-		naturally, so it's exposed separately as a Composer command/action
-		(same pattern this project's Haiku driver uses for Whoosh mode).
+		NOTE ON PROXY CHOICE (updated 2026-08-15): there is still no native
+		Control4 "fireplace" proxy, but this driver now uses thermostatV2
+		instead of light_v2. Reasoning: light_v2-bound devices are pulled
+		into a room's Lighting group by Navigator/Composer, which means
+		"All Lights Off" scenes, lighting keypad buttons, and similar
+		programming would silently also kill the fireplace - not obviously
+		desirable, and not how commercial Control4 fireplace drivers do it
+		(e.g. the Elite Fire Proflame2 driver on drivercentral.io explicitly
+		uses "familiar thermostat style controls" for this exact reason).
+
+		Mapping used here:
+		  - HVAC Mode "Off"/"Heat"  -> main flame off / on (same ignition
+		    sequence as before: pilot first if needed, then power).
+		  - Heat Setpoint (0-100)   -> flame height, via the same
+		    percent<->height conversion this driver already used for
+		    light_v2's LEVEL. This is an intensity dial re-using the
+		    thermostat setpoint control, not a real temperature - the "F"
+		    units shown are cosmetic, same trick the commercial driver uses.
+		  - Pilot-only stays a separate Composer command/action (thermostatV2
+		    has no "pilot" concept), same as before.
+		  - No ambient temperature sensor exists on this hardware, so the
+		    current-temperature readout on the Navigator thermostat card
+		    will show as unavailable/blank - expected, not a bug.
 	-->
 	<proxies qty="1">
-		<proxy proxybindingid="5001" name="IntelliFire Fireplace" image_source="c4z" small_image="icons/intellifire_sm.png" large_image="icons/intellifire_lg.png">light_v2</proxy>
+		<proxy image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png" proxybindingid="5001" name="IntelliFire Fireplace">thermostatV2</proxy>
 	</proxies>
 
 	<connections>
@@ -42,7 +58,7 @@
 			<linelevel>False</linelevel>
 			<classes>
 				<class>
-					<classname>LIGHT_V2</classname>
+					<classname>THERMOSTAT</classname>
 				</class>
 			</classes>
 		</connection>
@@ -72,11 +88,60 @@
 	</connections>
 
 	<!--
-		NOTE: No <capabilities> block, same reasoning as this project's Haiku
-		driver - the confirmed DriverWorks capability keys (via light_sample.c4i)
-		apply to light_v2's dimmer/on-off behavior, which this driver already
-		follows. Nothing fireplace-specific to add without guessing.
+		thermostatV2 capabilities. Structure confirmed against a real,
+		published thermostatV2 driver (bphillips09/Control4-HA-Thermostat on
+		GitHub) rather than guessed. can_cool/can_auto/has_extras/etc. are
+		all False since this fireplace only ever needs Off/Heat + one
+		setpoint acting as the flame-intensity dial.
+
+		2026-08-16 (seventh session): added the setpoint_single_* fields
+		below. The real reference driver always defines heat/cool/single
+		setpoint ranges together even when has_single_setpoint is false -
+		this driver was missing the single_* fields entirely, which may be
+		part of why the setpoint control didn't render correctly in the
+		Control4 App. Kept in sync with setpoint_heat_* since this device
+		only ever has one active setpoint.
 	-->
+	<capabilities>
+    <navigator_display_option proxybindingid="5001">
+      <display_icons>
+        <Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/flame/experience_1024.png</Icon>
+        <Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/flame/experience_512.png</Icon>
+        <Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/flame/experience_300.png</Icon>
+        <Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/flame/experience_90.png</Icon>
+        <Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/flame/experience_70.png</Icon>
+      </display_icons>
+    </navigator_display_option>
+
+		<has_remote_sensor>false</has_remote_sensor>
+		<can_heat>true</can_heat>
+		<can_cool>false</can_cool>
+		<can_change_scale>false</can_change_scale>
+		<has_extras>false</has_extras>
+		<has_single_setpoint>false</has_single_setpoint>
+		<can_do_auto>false</can_do_auto>
+		<can_auto>false</can_auto>
+		<can_calibrate>false</can_calibrate>
+
+		<setpoint_heat_min_f>1</setpoint_heat_min_f>
+		<setpoint_heat_max_f>5</setpoint_heat_max_f>
+		<setpoint_heat_min_c>1</setpoint_heat_min_c>
+		<setpoint_heat_max_c>5</setpoint_heat_max_c>
+		<setpoint_heat_min>1</setpoint_heat_min>
+		<setpoint_heat_max>5</setpoint_heat_max>
+
+		<setpoint_single_min_f>1</setpoint_single_min_f>
+		<setpoint_single_max_f>5</setpoint_single_max_f>
+		<setpoint_single_min_c>1</setpoint_single_min_c>
+		<setpoint_single_max_c>5</setpoint_single_max_c>
+
+		<fan_states>Off</fan_states>
+		<hvac_states>Off,Heat</hvac_states>
+		<has_connection_status>true</has_connection_status>
+
+		<can_preset_schedule>false</can_preset_schedule>
+		<can_preset>false</can_preset>
+	</capabilities>
 
 	<config>
 		<power_management_method>AlwaysOn</power_management_method>

@@ -1,0 +1,31 @@
+{\rtf1\ansi\deff0{\fonttbl{\f0 Segoe UI;}}\fs20
+\b\fs28 Yale Assure Lock 2 (Wi-Fi Smart Module) \'96 Control4 Driver\b0\fs20\par
+\par
+\b Unofficial community driver.\b0  Not affiliated with or supported by Yale, ASSA ABLOY, August Home, or Control4. Version 100.\par
+\par
+\b How it works\b0\par
+The Assure Lock 2 Wi-Fi Smart Module has no local LAN API. This driver controls the lock through the Yale Access (formerly August) cloud at https://api-production.august.com over HTTPS. Lock and unlock therefore depend on your internet connection and on that cloud service being reachable. Typical round trip is 1-4 seconds.\par
+\par
+The API is the private phone-app API, documented only by community reverse engineering (see the yalexs project). Yale may change or break it without notice.\par
+\par
+\b Setup\b0\par
+1. Set \b Brand\b0  (Yale Access if you use the Yale Access app, August if your account was created in the August app), \b Login Method\b0 , \b Username\b0  and \b Password\b0 .\par
+2. Run the action \b 1 - Sign In / Request Verification Code\b0 . Yale sends a 6-digit code to your email or phone.\par
+3. Enter that code in the \b Verification Code\b0  property, then run \b 2 - Submit Verification Code\b0 .\par
+4. Run \b 3 - Discover Locks\b0 . With a single lock on the account it is selected automatically; otherwise copy the Lock ID printed in the Lua output into the \b Lock ID\b0  property.\par
+5. Polling starts automatically. You may blank out the Password afterwards - the driver keeps and refreshes an access token instead.\par
+\par
+\b What is supported\b0\par
+\bullet  Lock, Unlock and Toggle, with lock state reported back to Navigator and to programming.\par
+\bullet  Battery level, mapped to the proxy's normal / warning / critical states (warning at 40%, critical at 15%).\par
+\bullet  DoorSense door position, exposed as a separate contact sensor binding. If your lock has no DoorSense magnet paired, this binding simply never reports.\par
+\bullet  Event history (who locked or unlocked and when), from the account activity feed.\par
+\bullet  Reading the keypad PIN code list.\par
+\par
+\b What is NOT supported\b0\par
+\bullet  \b Creating, editing or deleting PIN codes.\b0  There is no confirmed API endpoint for these operations, so ADD_USER, EDIT_USER and DELETE_USER are deliberately inert: they log a message and change nothing. Manage codes in the Yale Access app. This is a safety decision - firing unverified write requests at a door lock's credential list is not worth the risk.\par
+\bullet  Lock settings (auto-lock time, volume, language, lockout timers, admin code). No confirmed endpoints exist, so these capabilities are advertised as false and no Navigator settings screen is offered for them.\par
+\par
+\b Troubleshooting\b0\par
+Set \b Log Mode\b0  to \ldblquote Print and Log\rdblquote  and watch the Lua tab. Every request and response code is logged; credentials and tokens are redacted. The \b - Print Debug Info\b0  action dumps the full driver state. If the Auth State property shows a rejected token, re-run action 1.
+}

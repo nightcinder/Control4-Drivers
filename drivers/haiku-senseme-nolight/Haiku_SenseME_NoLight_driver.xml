@@ -1,0 +1,218 @@
+<devicedata>
+	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Big Ass Fans or Control4</copyright>
+	<creator>Custom Driver Project</creator>
+	<manufacturer>Big Ass Fans</manufacturer>
+	<name>Haiku SenseME Fan (No Light Kit)</name>
+	<model>Haiku / Haiku H / Haiku L / Haiku C / i6 (fan-only, no light kit)</model>
+	<created>08/15/2026 8:50 PM</created>
+	<modified>08/15/2026 8:50 PM</modified>
+	<version>101</version>
+	<small image_source="c4z">icons/device_sm.png</small>
+	<large image_source="c4z">icons/device_lg.png</large>
+	<control>lua_gen</control>
+	<controlmethod>ip</controlmethod>
+	<driver>DriverWorks</driver>
+	<templatedescription>Big Ass Fans Haiku / i6 - TCP + Protocol Buffers Fan Control ONLY, for fans with no light kit attached (BAF i6 protocol, firmware 3.0+)</templatedescription>
+	<search_types>
+		<type>BigAssFans:fan:Haiku:NoLight</type>
+		<type>BigAssFans:fan:i6:NoLight</type>
+	</search_types>
+
+	<!--
+		This is a SEPARATE driver file (not a property toggle) from
+		Haiku_SenseME_i6.c4z. Control4's proxy set is fixed by driver.xml at
+		device-add time and cannot be changed at runtime, so a fan/light combo
+		driver can never be "reduced" to fan-only by deleting its light
+		sub-item - deleting a proxy sub-item deletes the whole device. Use
+		THIS driver for any Haiku fan that has no physical light kit.
+	-->
+
+	<proxies qty="1">
+		<proxy image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png" proxybindingid="5001" name="Haiku Fan">fan</proxy>
+	</proxies>
+
+	<capabilities>
+    <navigator_display_option proxybindingid="5001">
+      <display_icons>
+        <Icon width="1024" height="1024">controller://driver/Haiku_SenseME_i6_NoLight/icons/device/fan/experience_1024.png</Icon>
+        <Icon width="512" height="512">controller://driver/Haiku_SenseME_i6_NoLight/icons/device/fan/experience_512.png</Icon>
+        <Icon width="300" height="300">controller://driver/Haiku_SenseME_i6_NoLight/icons/device/fan/experience_300.png</Icon>
+        <Icon width="90" height="90">controller://driver/Haiku_SenseME_i6_NoLight/icons/device/fan/experience_90.png</Icon>
+        <Icon width="70" height="70">controller://driver/Haiku_SenseME_i6_NoLight/icons/device/fan/experience_70.png</Icon>
+      </display_icons>
+    </navigator_display_option>
+
+		<discrete_levels>7</discrete_levels>
+	</capabilities>
+
+	<connections>
+		<connection>
+			<id>5001</id>
+			<facing>6</facing>
+			<connectionname>FAN</connectionname>
+			<type>2</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>FAN</classname>
+				</class>
+			</classes>
+		</connection>
+		<connection>
+			<id>6001</id>
+			<facing>1</facing>
+			<connectionname>Network</connectionname>
+			<type>4</type>
+			<consumer>True</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>True</linelevel>
+			<classes>
+				<class>
+					<classname>TCP</classname>
+					<ports>
+						<port>
+							<number>31415</number>
+							<auto_connect>True</auto_connect>
+							<monitor_connection>True</monitor_connection>
+							<keep_connection>True</keep_connection>
+						</port>
+					</ports>
+				</class>
+			</classes>
+		</connection>
+	</connections>
+
+	<config>
+		<power_management_method>AlwaysOn</power_management_method>
+		<power_command_delay>0</power_command_delay>
+		<power_delay>0</power_delay>
+		<power_command_needed>False</power_command_needed>
+		<documentation file="www\documentation.rtf" />
+		<script file="driver.lua" />
+
+		<commands>
+			<command>
+				<name>Rediscover Fan</name>
+				<description>Force a clean TCP reconnect to the configured Fan IP Address and refresh all properties</description>
+			</command>
+			<command>
+				<name>Set Whoosh Mode</name>
+				<description>Turn Whoosh (natural breeze) mode on or off</description>
+				<params>
+					<param>
+						<name>State</name>
+						<type>LIST</type>
+						<items>
+							<item>ON</item>
+							<item>OFF</item>
+						</items>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>Set Fan Direction</name>
+				<description>Set fan rotation direction (seasonal reverse)</description>
+				<params>
+					<param>
+						<name>Direction</name>
+						<type>LIST</type>
+						<items>
+							<item>FWD</item>
+							<item>REV</item>
+						</items>
+					</param>
+				</params>
+			</command>
+		</commands>
+
+		<actions>
+			<action>
+				<name> - Rediscover Fan</name>
+				<command>ACTION_REDISCOVER</command>
+			</action>
+			<action>
+				<name> - Whoosh On</name>
+				<command>ACTION_WHOOSH_ON</command>
+			</action>
+			<action>
+				<name> - Whoosh Off</name>
+				<command>ACTION_WHOOSH_OFF</command>
+			</action>
+			<action>
+				<name> - Print Debug Info</name>
+				<command>ACTION_PRINT_DEBUG</command>
+			</action>
+		</actions>
+
+		<properties>
+			<property>
+				<name>Fan IP Address</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>0.0.0.0</default>
+			</property>
+			<property>
+				<name>Fan Name (SenseME App Name)</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Fan MAC Address</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Max Fan Speed (0-7)</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>7</default>
+				<items>
+					<item>1</item>
+					<item>2</item>
+					<item>3</item>
+					<item>4</item>
+					<item>5</item>
+					<item>6</item>
+					<item>7</item>
+				</items>
+			</property>
+			<property>
+				<name>Poll Interval (seconds)</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>60</default>
+			</property>
+			<property>
+				<name>Log Mode</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Off</default>
+				<items>
+					<item>Off</item>
+					<item>Print</item>
+					<item>Log</item>
+					<item>Print and Log</item>
+				</items>
+			</property>
+			<property>
+				<name>Connection Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Unknown</default>
+			</property>
+		</properties>
+	</config>
+
+	<composer_categories>
+		<category>Comfort</category>
+	</composer_categories>
+	<navigator_categories>
+		<category>Comfort</category>
+	</navigator_categories>
+</devicedata>

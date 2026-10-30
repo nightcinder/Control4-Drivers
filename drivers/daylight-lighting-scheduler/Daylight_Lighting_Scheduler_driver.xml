@@ -1,0 +1,196 @@
+<devicedata>
+  <version>2</version>
+  <manufacturer>Nick Adamany</manufacturer>
+  <name>Daylight Lighting Scheduler</name>
+  <model>DLS</model>
+  <creator>Nick Adamany</creator>
+  <created>10/19/2026 7:30 PM</created>
+  <modified>10/29/2026 8:58 PM</modified>
+  <control>lua_gen</control>
+  <controlmethod>other</controlmethod>
+  <driver>DriverWorks</driver>
+  <combo>true</combo>
+  <proxies />
+  <capabilities />
+  <config>
+    <script file="driver.lua" />
+    <properties>
+      <property>
+        <name>Driver Version</name>
+        <type>STRING</type>
+        <default />
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Status</name>
+        <type>STRING</type>
+        <default>Starting</default>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Enabled</name>
+        <type>LIST</type>
+        <items><item>On</item><item>Off</item></items>
+        <default>On</default>
+      </property>
+      <property>
+        <name>Latitude</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>Longitude</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>Update Interval (min)</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>1</minimum>
+        <maximum>60</maximum>
+        <default>5</default>
+      </property>
+      <property>
+        <name>Ramp Time (sec)</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>1</minimum>
+        <maximum>600</maximum>
+        <default>90</default>
+      </property>
+      <property>
+        <name>Cloud Cover Source</name>
+        <type>LIST</type>
+        <items><item>Open-Meteo (internet)</item><item>None (assume clear)</item></items>
+        <default>Open-Meteo (internet)</default>
+      </property>
+      <property>
+        <name>Cloud Poll Interval (min)</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>10</minimum>
+        <maximum>180</maximum>
+        <default>20</default>
+      </property>
+      <property>
+        <name>Wake Time</name>
+        <type>STRING</type>
+        <default>06:30</default>
+      </property>
+      <property>
+        <name>Wind-down Start</name>
+        <type>STRING</type>
+        <default>21:00</default>
+      </property>
+      <property>
+        <name>Bed Time</name>
+        <type>STRING</type>
+        <default>22:30</default>
+      </property>
+      <property>
+        <name>Night Level (%)</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>1</minimum>
+        <maximum>100</maximum>
+        <default>20</default>
+      </property>
+      <property>
+        <name>CCT Min (K)</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>1500</minimum>
+        <maximum>4000</maximum>
+        <default>2200</default>
+      </property>
+      <property>
+        <name>CCT Max (K)</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>2500</minimum>
+        <maximum>6500</maximum>
+        <default>4000</default>
+      </property>
+      <property>
+        <name>Mixed Room CCT (K)</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>2000</minimum>
+        <maximum>4000</maximum>
+        <default>2700</default>
+      </property>
+      <property>
+        <name>Override Hold (min)</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>5</minimum>
+        <maximum>720</maximum>
+        <default>120</default>
+      </property>
+      <property>
+        <name>Scene Hold (min)</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>5</minimum>
+        <maximum>1440</maximum>
+        <default>240</default>
+      </property>
+      <property>
+        <name>Presence</name>
+        <type>STRING</type>
+        <default>Home</default>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Presence Port</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>0</minimum>
+        <maximum>65535</maximum>
+        <default>8730</default>
+      </property>
+      <property>
+        <name>Presence Token</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>Color Command Mode</name>
+        <type>LIST</type>
+        <items><item>CCT (mode 1)</item><item>xy (mode 0)</item></items>
+        <default>CCT (mode 1)</default>
+      </property>
+      <property>
+        <name>Rooms JSON</name>
+        <type>STRING</type>
+        <default>[{"name":"Downstairs","type":"mixed","follow":true,"on":"sunset-15","off":"23:45","off_ramp_min":30,"away":{"light":480,"level":30,"off":"22:30"},"scenes":{"Max":{"levels":{"480":100,"478":100,"476":100}},"Evening":{"levels":{"480":50,"478":50,"476":50}},"Dinner":{"levels":{"480":50,"478":75,"476":50}},"Off":{"off":true}},"window_gain":0.4,"facing_deg":0,"lights":[{"id":331,"kind":"lutron","scale":0.55,"windows":[{"facing":0,"gain":0.5}]},{"id":333,"kind":"lutron","scale":0.55,"windows":[{"facing":0,"gain":0.6}]},{"id":335,"kind":"lutron","scale":0.55,"windows":[{"facing":0,"gain":0.4},{"facing":90,"gain":0.2}]},{"id":480,"kind":"lifx","windows":[{"facing":0,"gain":0.6}]},{"id":478,"kind":"lifx","windows":[{"facing":0,"gain":0.6},{"facing":90,"gain":0.4},{"facing":270,"gain":0.2}]},{"id":476,"kind":"lifx","windows":[{"facing":180,"gain":0.8},{"facing":90,"gain":0.4}]}]},{"name":"Upstairs","type":"mixed","window_gain":0.5,"on_daylight":0.3,"off":"22:30","lights":[{"id":337,"kind":"lutron"},{"id":482,"kind":"lifx"}],"wake":{"enabled":false,"at":"sunrise-15","stop":"sunrise+30","ramp_min":30,"level":35,"days":["mon","tue","wed","thu","fri"]}}]</default>
+      </property>
+      <property>
+        <name>Debug</name>
+        <type>LIST</type>
+        <items><item>Off</item><item>On</item></items>
+        <default>Off</default>
+      </property>
+    </properties>
+    <actions>
+      <action><name>Recalculate Now</name><command>RecalcNow</command></action>
+      <action><name>Release All Overrides</name><command>ReleaseAll</command></action>
+      <action><name>Log Status</name><command>LogStatus</command></action>
+    </actions>
+    <commands>
+      <command>
+        <name>SetPresence</name>
+        <description>Set PRESENT to Home or Away</description>
+        <params>
+          <param><name>PRESENT</name><type>STRING</type></param>
+        </params>
+      </command>
+      <command>
+        <name>ApplyScene</name>
+        <description>Apply SCENE in ROOM and hold the room off the schedule</description>
+        <params>
+          <param><name>ROOM</name><type>STRING</type></param>
+          <param><name>SCENE</name><type>STRING</type></param>
+        </params>
+      </command>
+      <command>
+        <name>Release Room Override</name>
+        <description>Resume automatic control of ROOM</description>
+        <params>
+          <param><name>ROOM</name><type>STRING</type></param>
+        </params>
+      </command>
+    </commands>
+  </config>
+</devicedata>
