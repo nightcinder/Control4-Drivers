@@ -5,6 +5,8 @@
   "token_file": "",
   "poll_seconds": 4,
   "heartbeat_seconds": 20,
+  "plex": {"url": "http://172.21.1.157:32400", "token_file": "/home/liesa/.config/c4-nowplaying/plex_token"},
+  "jellyfin": {"url": "http://172.21.1.157:8096", "key_file": "/home/liesa/.config/c4-nowplaying/jellyfin_key"},
   "shields": [
     {"room": "Downstairs", "host": "172.21.1.186"},
     {"room": "Upstairs", "host": "REPLACE_UPSTAIRS_SHIELD_IP"}
