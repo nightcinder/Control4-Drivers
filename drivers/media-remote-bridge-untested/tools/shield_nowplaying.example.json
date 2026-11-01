@@ -1,0 +1,12 @@
+{
+  "adb": "C:\\Users\\Nick\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe",
+  "bridge_base_url": "http://CONTROLLER_IP:8765",
+  "token_env": "MEDIA_BRIDGE_TOKEN",
+  "token_file": "",
+  "poll_seconds": 4,
+  "heartbeat_seconds": 20,
+  "shields": [
+    {"room": "Downstairs", "host": "172.21.1.186"},
+    {"room": "Upstairs", "host": "REPLACE_UPSTAIRS_SHIELD_IP"}
+  ]
+}
