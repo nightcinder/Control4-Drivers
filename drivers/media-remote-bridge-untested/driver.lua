@@ -4,7 +4,7 @@
 -- the raw TCP stream is NOT from a reference driver: DLS speaks a plain line protocol.
 -- Anything not confirmed by a reference is marked TODO(verify). See README.md.
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 
 local LOG_PREFIX = "[MediaRemoteBridge " .. VERSION .. "] "
 local ROOM_NAMES = { "Upstairs", "Downstairs" }
@@ -151,13 +151,13 @@ end
 
 local function cmdNext(q)
     LOG("next")
-    local ok, err = sendToActiveRoom("NEXT", {}) -- TODO(verify): NEXT
+    local ok, err = sendToActiveRoom("SKIP_FWD", {}) -- TODO(verify): SKIP_FWD (was NEXT, which did nothing)
     return result("next", ok, nil, err)
 end
 
 local function cmdPrev(q)
     LOG("prev")
-    local ok, err = sendToActiveRoom("PREVIOUS", {}) -- TODO(verify): PREVIOUS
+    local ok, err = sendToActiveRoom("SKIP_REV", {}) -- TODO(verify): SKIP_REV (was PREVIOUS, which did nothing)
     return result("prev", ok, nil, err)
 end
 
