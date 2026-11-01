@@ -93,6 +93,16 @@ Commands:
 
     python tools\shield_nowplaying.py tools\shield_nowplaying.json --once   # parse only, no POST
     python tools\shield_nowplaying.py tools\shield_nowplaying.json          # run forever
+    python tools\shield_nowplaying.py --selftest                            # check the Plex/Jellyfin parsers on sample JSON
+
+Media server enrichment (optional). Plex and Jellyfin only show the show or movie in the Shield's session as a bare title (for example `Season Seven` with the episode name as subtitle), so the poller can ask the media server what the Shield is playing and use that instead:
+
+- `"plex": {"url": "http://172.21.1.157:32400", "token_file": "/home/liesa/.config/c4-nowplaying/plex_token"}`. Used when the Shield's active app is `com.plexapp.android`. The poller calls `GET {url}/status/sessions` and matches the player whose address is the Shield's IP (falling back to a player named SHIELD).
+- `"jellyfin": {"url": "http://172.21.1.157:8096", "key_file": "/home/liesa/.config/c4-nowplaying/jellyfin_key"}`. Used when the Shield's active app is `org.jellyfin.androidtv` (or any package containing `jellyfin`). The poller calls `GET {url}/Sessions` and matches the session whose remote address is the Shield's IP (falling back to a single Android TV session).
+- Both sections are optional. Leave a section out and that server is never queried. The token or key is read from the file named in the config; it is never written to the config, the log or the `--once` output.
+- Episodes become title = show name, artist = `S7E3 - Episode title` (parts that are missing are left out). Movies become title = movie name, artist = year.
+- Each server request has a 3 second timeout. A section that is absent, or a server that returns no matching session, falls back silently to the Shield's own title and artist. A timeout, unreadable token file or other error also falls back to the Shield's values, and each distinct error is logged as one line, repeated at most every 5 minutes. Each Shield is queried at most once every 4 seconds.
+- `--once` output includes `enriched` (true or false) and `source` (`plex`, `jellyfin` or `shield`).
 
 Run it as a scheduled task or service on a machine that can reach both the Shields and the controller. The script does not install itself as a service.
 
