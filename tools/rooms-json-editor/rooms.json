@@ -3,7 +3,7 @@
     "name": "Downstairs",
     "type": "mixed",
     "follow": true,
-    "on": "sunset-15",
+    "on_daylight": 0.3,
     "off": "23:45",
     "off_ramp_min": 30,
     "away": {
