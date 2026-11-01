@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Media Remote Bridge v0.2.0 - driver skeleton.
+  Layout follows Daylight_Lighting_Scheduler_driver.xml (software-only, no proxies,
+  script and properties under <config>). See README.md for what is confirmed and what is TODO(verify).
+-->
+<devicedata>
+  <version>2</version>
+  <manufacturer>Custom</manufacturer>
+  <name>Media Remote Bridge</name>
+  <model>Media Remote Bridge</model>
+  <creator>Custom</creator>
+  <created>11/01/2026 12:00 PM</created>
+  <modified>11/01/2026 12:00 PM</modified>
+  <control>lua_gen</control>
+  <controlmethod>other</controlmethod>
+  <driver>DriverWorks</driver>
+  <combo>true</combo>
+  <proxies />
+  <capabilities />
+  <config>
+    <script file="driver.lua" />
+    <properties>
+      <property>
+        <name>Driver Version</name>
+        <type>STRING</type>
+        <default />
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Status</name>
+        <type>STRING</type>
+        <default>Starting</default>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Server Port</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>1</minimum>
+        <maximum>65535</maximum>
+        <default>8765</default>
+      </property>
+      <property>
+        <name>Server Token</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>Active Room</name>
+        <type>LIST</type>
+        <items><item>Upstairs</item><item>Downstairs</item></items>
+        <default>Upstairs</default>
+      </property>
+      <property>
+        <name>Lock Room</name>
+        <type>LIST</type>
+        <items><item>Off</item><item>On</item></items>
+        <default>Off</default>
+      </property>
+      <!-- TODO(verify): room device IDs are entered by hand, the same way DLS takes light IDs.
+           Maximum 999999 is a placeholder bound, not a confirmed Control4 limit. -->
+      <property>
+        <name>Upstairs Device ID</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>0</minimum>
+        <maximum>999999</maximum>
+        <default>0</default>
+      </property>
+      <property>
+        <name>Downstairs Device ID</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>0</minimum>
+        <maximum>999999</maximum>
+        <default>0</default>
+      </property>
+      <property>
+        <name>Log Mode</name>
+        <type>LIST</type>
+        <items><item>Off</item><item>Print</item><item>Log</item><item>Print and Log</item></items>
+        <default>Off</default>
+      </property>
+    </properties>
+    <actions>
+      <action><name>Log Status</name><command>LogStatus</command></action>
+      <action><name>Restart Server</name><command>RestartServer</command></action>
+    </actions>
+  </config>
+</devicedata>
