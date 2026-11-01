@@ -5,13 +5,13 @@
   script and properties under <config>). See README.md for what is confirmed and what is TODO(verify).
 -->
 <devicedata>
-  <version>2</version>
+  <version>3</version>
   <manufacturer>Custom</manufacturer>
   <name>Media Remote Bridge</name>
   <model>Media Remote Bridge</model>
   <creator>Custom</creator>
   <created>11/01/2026 12:00 PM</created>
-  <modified>11/01/2026 12:00 PM</modified>
+  <modified>11/01/2026 02:46 PM</modified>
   <control>lua_gen</control>
   <controlmethod>other</controlmethod>
   <driver>DriverWorks</driver>
