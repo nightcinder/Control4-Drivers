@@ -4,7 +4,7 @@
 -- the raw TCP stream is NOT from a reference driver: DLS speaks a plain line protocol.
 -- Anything not confirmed by a reference is marked TODO(verify). See README.md.
 
-VERSION = "0.2.2"
+VERSION = "0.3.0"
 
 local LOG_PREFIX = "[MediaRemoteBridge " .. VERSION .. "] "
 local ROOM_NAMES = { "Upstairs", "Downstairs" }
@@ -224,17 +224,47 @@ local COMMANDS = {
     set_active_room = cmdSetActiveRoom,
 }
 
+-- Room variables (confirmed on the EA-1 via C4:GetDeviceVariables): CURRENT_VOLUME, IS_MUTED,
+-- POWER_STATE, CURRENT_SELECTED_DEVICE. Looked up by name each time.
+local function roomVariables(roomName)
+    local id = roomDeviceId(roomName)
+    if not id then return nil, "device id not set for " .. roomName end
+    local ok, vars = pcall(function() return C4:GetDeviceVariables(id) end)
+    if not ok or type(vars) ~= "table" then return nil, tostring(vars) end
+    local byName = {}
+    for _, v in pairs(vars) do
+        if type(v) == "table" and v.name then byName[v.name] = v.value end
+    end
+    return byName
+end
+
 local function cmdStatus()
-    return {
+    local t = {
         ok = true,
         command = "status",
         version = VERSION,
         active_room = activeRoomName(),
         lock_room = Properties["Lock Room"] or "Off",
-        -- TODO(verify): now-playing source (device variable id for the room). C4:GetDeviceVariable
-        -- is confirmed by DLS, but no reference gives a media-room variable id.
         now_playing = "unknown",
     }
+    local vars, err = roomVariables(activeRoomName())
+    if vars then
+        t.volume = tonumber(vars["CURRENT_VOLUME"])
+        t.muted = tostring(vars["IS_MUTED"]) == "1"
+        t.power = tostring(vars["POWER_STATE"]) == "1"
+        local sel = tonumber(vars["CURRENT_SELECTED_DEVICE"])
+        if sel and sel > 0 then
+            t.source_id = sel
+            local ok, name = pcall(function() return C4:GetDeviceDisplayName(sel) end)
+            if ok and name and name ~= "" then
+                t.source = name
+                t.now_playing = name -- TODO: real title/artist when the source publishes media info
+            end
+        end
+    else
+        t.vars_error = err
+    end
+    return t
 end
 
 ---------------------------------------------------------------------------
