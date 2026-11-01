@@ -1,10 +1,10 @@
--- Media Remote Bridge - Control4 driver v0.2.0
+-- Media Remote Bridge - Control4 driver v0.4.0
 -- Listener and dispatch follow Daylight_Lighting_Scheduler_driver.lua (C4:CreateServer,
 -- OnServerDataIn, C4:ServerSend, C4:ServerCloseClient). The HTTP request parsing on top of
 -- the raw TCP stream is NOT from a reference driver: DLS speaks a plain line protocol.
 -- Anything not confirmed by a reference is marked TODO(verify). See README.md.
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 local LOG_PREFIX = "[MediaRemoteBridge " .. VERSION .. "] "
 local ROOM_NAMES = { "Upstairs", "Downstairs" }
@@ -210,6 +210,31 @@ local function cmdSetActiveRoom(q)
     return result("set_active_room", true, { room = room })
 end
 
+-- Now-playing reports pushed by the Shield poller (POST /v1/nowplaying), per room.
+local NOWPLAYING_MAX_AGE = 45   -- seconds; older reports are ignored by status
+local nowPlaying = {}           -- roomName -> { title, artist, app, playing, ts }
+
+local function cmdNowPlaying(q)
+    local room = q.room
+    if room ~= "Upstairs" and room ~= "Downstairs" then
+        return result("nowplaying", false, nil, "room must be Upstairs or Downstairs")
+    end
+    local title = trim(q.title)
+    local artist = trim(q.artist)
+    local app = trim(q.app)
+    if title == "" and artist == "" and app == "" then
+        nowPlaying[room] = nil
+        LOG("nowplaying cleared " .. room)
+        return result("nowplaying", true)
+    end
+    nowPlaying[room] = {
+        title = title, artist = artist, app = app,
+        playing = (q.playing == "1"), ts = os.time(),
+    }
+    LOG("nowplaying " .. room .. ": " .. title .. " / " .. artist .. " / " .. app)
+    return result("nowplaying", true)
+end
+
 local COMMANDS = {
     play = cmdPlay,
     pause = cmdPause,
@@ -263,6 +288,20 @@ local function cmdStatus()
         end
     else
         t.vars_error = err
+    end
+    local np = nowPlaying[activeRoomName()]
+    if np and (os.time() - np.ts) <= NOWPLAYING_MAX_AGE then
+        t.np_title = np.title
+        t.np_artist = np.artist
+        t.np_app = np.app
+        t.np_playing = np.playing
+        if np.title ~= "" and np.artist ~= "" then
+            t.now_playing = np.title .. " - " .. np.artist
+        elseif np.title ~= "" then
+            t.now_playing = np.title
+        elseif np.app ~= "" then
+            t.now_playing = np.app
+        end
     end
     return t
 end
@@ -322,6 +361,8 @@ end
 --   GET  /v1/status
 --   POST /v1/command/<name>?level=<0-100>   (level only used by volume_set)
 --   POST /v1/command/set_active_room?room=Upstairs|Downstairs
+--   POST /v1/nowplaying?room=Upstairs|Downstairs&title=..&artist=..&app=..&playing=1|0
+--        (all of title, artist, app empty clears the room)
 local function handleRequest(nHandle, req)
     if not authorized(req.headers) then
         return httpReply(nHandle, 401, { ok = false, error = "unauthorized" })
@@ -335,6 +376,14 @@ local function handleRequest(nHandle, req)
             return httpReply(nHandle, 405, { ok = false, error = "use GET" })
         end
         return httpReply(nHandle, 200, cmdStatus())
+    end
+
+    if path == "/v1/nowplaying" then
+        if req.method ~= "POST" then
+            return httpReply(nHandle, 405, { ok = false, error = "use POST" })
+        end
+        local res = cmdNowPlaying(q)
+        return httpReply(nHandle, res.ok and 200 or 400, res)
     end
 
     local name = path:match("^/v1/command/([%w_]+)$")

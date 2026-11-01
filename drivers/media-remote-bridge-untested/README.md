@@ -1,6 +1,6 @@
 # Media Remote Bridge
 
-Control4 driver skeleton (v0.2.0). It exposes a small HTTP/JSON API on the controller that sends room-level media commands to the Upstairs or Downstairs room.
+Control4 driver skeleton (v0.4.0). It exposes a small HTTP/JSON API on the controller that sends room-level media commands to the Upstairs or Downstairs room, and accepts now-playing reports pushed by a Shield poller (`tools/shield_nowplaying.py`).
 
 ## Files
 
@@ -24,11 +24,17 @@ Build result for 0.2.0: `MediaRemoteBridge.c4z` built (driver.xml, driver.lua). 
 
 ## API
 
-- `GET /v1/status` - returns version, active room, lock state, now-playing (stub)
+- `GET /v1/status` - returns version, active room, lock state, now-playing
+  - Always: `version`, `active_room`, `lock_room`, `now_playing`, `volume`, `muted`, `power`, `source_id`, `source` (as before).
+  - When the active room has a now-playing report at most 45 seconds old, also: `np_title`, `np_artist`, `np_app` (strings), `np_playing` (boolean). `now_playing` becomes `title - artist`, or `title`, or `app`, whichever exists first; otherwise it keeps the source name.
 - `POST /v1/command/<name>` with header `Authorization: Bearer <Server Token>`
   - `play`, `pause`, `toggle`, `next`, `prev`, `mute`, `unmute`, `volume_up`, `volume_down`
   - `volume_set?level=0-100`
   - `set_active_room?room=Upstairs|Downstairs` (refused when Lock Room is On)
+- `POST /v1/nowplaying?room=Upstairs|Downstairs&title=..&artist=..&app=..&playing=1|0` with the same Bearer header
+  - Query values are URL-decoded (`%XX` and `+` as space). Reply `{"ok":true,"command":"nowplaying"}`.
+  - Stores the report per room with a timestamp. If `title`, `artist` and `app` are all empty, clears that room.
+  - Room state is in memory only; it is lost on driver restart.
 
 Unauthenticated requests get 401. An empty `Server Token` refuses every request. Wrong method gets 405, unknown route 404, bad command args 400.
 
@@ -72,6 +78,23 @@ Properties and room IDs:
 8. `Upstairs Device ID` and `Downstairs Device ID` use a `RANGED_INTEGER` 0-999999. That maximum is a placeholder I chose, not a confirmed limit.
 9. Writing a writable `LIST` property (`Active Room`) with `C4:UpdateProperty`. No reference does this.
 10. The room lookup by name no longer uses a Control4 call. Name-to-ID is a configuration step. Automatic discovery by name is not confirmed by any reference.
+
+## Shield now-playing poller
+
+`tools/shield_nowplaying.py` (Python 3, standard library only) reads what each Nvidia Shield is playing and pushes it to `POST /v1/nowplaying`. It runs `adb -s HOST:5555 shell dumpsys media_session`, takes the first session with `active=true`, and posts the title, artist, app and playing state for that Shield's room. It posts when the content changes and every 20 seconds as a heartbeat. adb errors are logged in one line and retried; the script does not exit on them.
+
+Setup:
+
+1. Copy `tools/shield_nowplaying.example.json` to a local `tools/shield_nowplaying.json` and set `bridge_base_url` (controller address and `Server Port`). Set `adb` to the adb path. Replace the `REPLACE_...` host with the real IP, or delete that entry. Entries whose host starts with `REPLACE` are skipped.
+2. Set the bridge token in an environment variable named by `token_env` (default `MEDIA_BRIDGE_TOKEN`), or point `token_file` at a file that holds only the token. The token is never written to the config or the log.
+3. Enable ADB debugging on each Shield. Test with `--once`, which reads the device and prints the parsed state without posting.
+
+Commands:
+
+    python tools\shield_nowplaying.py tools\shield_nowplaying.json --once   # parse only, no POST
+    python tools\shield_nowplaying.py tools\shield_nowplaying.json          # run forever
+
+Run it as a scheduled task or service on a machine that can reach both the Shields and the controller. The script does not install itself as a service.
 
 ## Operational notes
 
