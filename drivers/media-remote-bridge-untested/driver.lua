@@ -4,7 +4,7 @@
 -- the raw TCP stream is NOT from a reference driver: DLS speaks a plain line protocol.
 -- Anything not confirmed by a reference is marked TODO(verify). See README.md.
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 local LOG_PREFIX = "[MediaRemoteBridge " .. VERSION .. "] "
 local ROOM_NAMES = { "Upstairs", "Downstairs" }
@@ -123,21 +123,29 @@ local function result(command, ok, extra, err)
     return t
 end
 
+local playGuess = {} -- TODO(verify): per-room guess of play state until now-playing reports the real one
+local function setGuess(v) playGuess[activeRoomName()] = v end
+
 local function cmdPlay(q)
     LOG("play")
     local ok, err = sendToActiveRoom("PLAY", {}) -- TODO(verify): PLAY
+    if ok then setGuess(true) end
     return result("play", ok, nil, err)
 end
 
 local function cmdPause(q)
     LOG("pause")
     local ok, err = sendToActiveRoom("PAUSE", {}) -- TODO(verify): PAUSE
+    if ok then setGuess(false) end
     return result("pause", ok, nil, err)
 end
 
 local function cmdToggle(q)
     LOG("toggle")
-    local ok, err = sendToActiveRoom("TOGGLE_PLAY", {}) -- TODO(verify): TOGGLE_PLAY
+    local playing = playGuess[activeRoomName()]
+    if playing == nil then playing = true end
+    local ok, err = sendToActiveRoom(playing and "PAUSE" or "PLAY", {})
+    if ok then setGuess(not playing) end
     return result("toggle", ok, nil, err)
 end
 
