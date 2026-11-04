@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# version 0.5 (2026-11-04): room_auto active-room selection
 """Push Shield now-playing state to the Media Remote Bridge driver.
 
 Every poll interval, for each configured Shield, this runs
@@ -6,6 +7,11 @@ Every poll interval, for each configured Shield, this runs
 takes the first session in "Sessions Stack" with active=true (the stack is
 most-recent-first) and POSTs it to the bridge:
     POST /v1/nowplaying?room=..&title=..&artist=..&app=..&playing=1|0
+
+room_auto (optional config section): when exactly one Shield is playing, that room becomes the
+Control4 active room; otherwise the room of the phone (UniFi AP, read from Prometheus) is used.
+Switches only after the desired room has been stable for stable_cycles polls, and never while the
+driver is locked. See room_auto_cycle().
 
 Standard library only. The token is read from an environment variable (or a
 file) named in the config; it is never stored in the config or logged.
@@ -455,10 +461,167 @@ def report_error(room, msg, state):
         slot["at"] = now
 
 
+ROOM_AUTO_DEFAULTS = {
+    "enabled": False,
+    "phone_name": "",
+    "prometheus_url": "",
+    "ap_rooms": {},
+    "stable_cycles": 3,
+    "phone_cache_seconds": 20,
+}
+
+
+def room_auto_config(cfg):
+    ra = dict(ROOM_AUTO_DEFAULTS)
+    ra.update(cfg.get("room_auto") or {})
+    ra["stable_cycles"] = max(1, int(ra["stable_cycles"]))
+    return ra
+
+
+def room_for_ap(ra, ap):
+    """Room for a UniFi AP name, or None when the AP is not in the map."""
+    if not ap:
+        return None
+    return (ra.get("ap_rooms") or {}).get(ap)
+
+
+def phone_ap(ra, state):
+    """AP name the phone is associated with, from UniFi Poller metrics in Prometheus. None when not found."""
+    now = time.monotonic()
+    cached = state.get("room_auto_phone")
+    if cached is not None and now - cached[0] < ra["phone_cache_seconds"]:
+        return cached[1]
+    ap = None
+    name = ra.get("phone_name") or ""
+    try:
+        if not name or not re.match(r"^[A-Za-z0-9_. -]+$", name):
+            raise EnrichError("phone_name not configured")
+        base = ra["prometheus_url"].rstrip("/")
+        for label in ("name", "hostname"):
+            q = 'unpoller_client_uptime_seconds{%s=~"(?i)%s"}' % (label, name)
+            data = http_get_json(base + "/api/v1/query?" + urllib.parse.urlencode({"query": q}),
+                                 {"Accept": "application/json"})
+            for series in ((data or {}).get("data") or {}).get("result") or []:
+                m = series.get("metric") or {}
+                if m.get("wired") == "false" and m.get("ap_name"):
+                    ap = m["ap_name"]
+                    break
+            if ap:
+                break
+    except EnrichError as e:
+        report_error("room_auto", "phone lookup: %s" % e, state)
+    except Exception as e:
+        report_error("room_auto", "phone lookup: unexpected %s" % type(e).__name__, state)
+    state["room_auto_phone"] = (now, ap)
+    return ap
+
+
+def desired_room(playing_rooms, phone_room):
+    """(room, reason). Exactly one playing room wins; otherwise the phone's room decides."""
+    if len(playing_rooms) == 1:
+        return playing_rooms[0], "%s is playing" % playing_rooms[0]
+    why = "both rooms playing" if len(playing_rooms) > 1 else "nothing playing"
+    if phone_room:
+        return phone_room, "%s; phone is in %s" % (why, phone_room)
+    return None, "%s; phone location unknown" % why
+
+
+def room_auto_decision(cfg, infos, state):
+    """(desired room, reason) for this poll. A room with no adb state counts as not playing."""
+    ra = room_auto_config(cfg)
+    playing = [sh["room"] for sh in cfg["shields"] if (infos.get(sh["room"]) or {}).get("playing")]
+    ap = phone_ap(ra, state)
+    return desired_room(playing, room_for_ap(ra, ap))
+
+
+def auto_stable(auto, desired, stable_cycles):
+    """True when desired has held for stable_cycles polls and differs from the room last applied."""
+    if desired is None:
+        auto["candidate"], auto["count"] = None, 0
+        return False
+    if desired == auto["candidate"]:
+        auto["count"] += 1
+    else:
+        auto["candidate"], auto["count"] = desired, 1
+    return auto["count"] >= stable_cycles and desired != auto["applied"]
+
+
+def auto_apply(auto, desired, get_status, set_room):
+    """Make the driver show desired unless it is locked or already there. Returns a short action string."""
+    try:
+        status = get_status()
+    except Exception as e:
+        return "skip: controller unreachable (%s)" % type(e).__name__
+    if not isinstance(status, dict):
+        return "skip: unexpected status"
+    if str(status.get("lock_room", "Off")) == "On":
+        return "skip: room is locked"
+    if status.get("active_room") == desired:
+        auto["applied"] = desired
+        return "already on %s" % desired
+    try:
+        set_room(desired)
+    except Exception as e:
+        return "switch failed (%s)" % type(e).__name__
+    auto["applied"] = desired
+    return "switched to %s" % desired
+
+
+def bridge_call(cfg, token, method, path, query=None):
+    url = cfg["bridge_base_url"].rstrip("/") + path
+    if query:
+        url += "?" + urllib.parse.urlencode(query)
+    req = urllib.request.Request(url, data=b"" if method == "POST" else None, method=method,
+                                 headers={"Authorization": "Bearer " + token})
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        body = resp.read().decode("utf-8", "replace")
+    return json.loads(body) if body.strip() else {}
+
+
+def room_auto_cycle(cfg, token, infos, state):
+    ra = room_auto_config(cfg)
+    if not ra["enabled"]:
+        return
+    desired, reason = room_auto_decision(cfg, infos, state)
+    sig = (desired, reason)
+    if state.get("room_auto_sig") != sig:
+        state["room_auto_sig"] = sig
+        log("room_auto: desired %s (%s)" % (desired or "none", reason))
+    auto = state.setdefault("room_auto", {"candidate": None, "count": 0, "applied": None})
+    if not auto_stable(auto, desired, ra["stable_cycles"]):
+        return
+    action = auto_apply(
+        auto, desired,
+        lambda: bridge_call(cfg, token, "GET", "/v1/status"),
+        lambda room: bridge_call(cfg, token, "POST", "/v1/command/set_active_room", {"room": room}))
+    if state.get("room_auto_action") != action:
+        state["room_auto_action"] = action
+        log("room_auto: %s" % action)
+
+
+def _room_auto_sim(desireds, applied=None, status=None, stable=3):
+    """Replay per-poll desired rooms through the same logic. Returns (rooms POSTed, action strings)."""
+    if status is None:
+        status = {"lock_room": "Off", "active_room": "Downstairs"}
+    posts, actions = [], []
+    auto = {"candidate": None, "count": 0, "applied": applied}
+
+    def get_status():
+        if isinstance(status, Exception):
+            raise status
+        return dict(status)
+
+    for d in desireds:
+        if auto_stable(auto, d, stable):
+            actions.append(auto_apply(auto, d, get_status, posts.append))
+    return posts, actions
+
+
 def poll_once(cfg, token, state):
     adb = cfg["adb"]
     base = cfg["bridge_base_url"]
     heartbeat = float(cfg["heartbeat_seconds"])
+    infos = {}
     for sh in cfg["shields"]:
         room = sh["room"]
         host = sh["host"]
@@ -476,6 +639,7 @@ def poll_once(cfg, token, state):
             continue
 
         info = enrich_info(cfg, sh, info, state)
+        infos[room] = info
         payload = (info["title"], info["artist"], info["app"], info["playing"])
         now = time.monotonic()
         prev = state.get(room)
@@ -485,10 +649,15 @@ def poll_once(cfg, token, state):
             if prev is None or prev["payload"] != payload:
                 log("%s: %s" % (room, describe(info)))
             state[room] = {"payload": payload, "sent": now}
+    try:
+        room_auto_cycle(cfg, token, infos, state)
+    except Exception as e:
+        report_error("room_auto", "unexpected error: %s" % type(e).__name__, state)
 
 
 def run_once(cfg):
     state = {}
+    infos = {}
     for sh in cfg["shields"]:
         room = sh["room"]
         host = sh["host"]
@@ -501,11 +670,15 @@ def run_once(cfg):
             print(json.dumps({"room": room, "host": host, "error": str(e)}))
             continue
         info = enrich_info(cfg, sh, info, state, quiet=True)
+        infos[room] = info
         out = dict(info)
         out["room"] = room
         out["host"] = host
         out["query"] = build_query(room, info)
         print(json.dumps(out, indent=2))
+    if room_auto_config(cfg)["enabled"]:
+        desired, reason = room_auto_decision(cfg, infos, state)
+        print(json.dumps({"room_auto_desired": desired, "reason": reason}, indent=2))
 
 
 def selftest():
@@ -576,6 +749,16 @@ def selftest():
         ("episode label without season",
          episode_label(None, 3, "Pilot"),
          "E3 - Pilot"),
+        ("room_auto one room playing", desired_room(["Upstairs"], "Downstairs")[0], "Upstairs"),
+        ("room_auto both playing uses phone", desired_room(["Upstairs", "Downstairs"], "Downstairs")[0], "Downstairs"),
+        ("room_auto both playing, phone unknown", desired_room(["Upstairs", "Downstairs"], None)[0], None),
+        ("room_auto neither playing uses phone", desired_room([], "Upstairs")[0], "Upstairs"),
+        ("room_auto unknown AP no change", desired_room([], room_for_ap({"ap_rooms": {"Kitchen": "Downstairs"}}, "Mystery"))[0], None),
+        ("room_auto hysteresis holds", _room_auto_sim(["Upstairs", "Upstairs", "Downstairs", "Upstairs", "Upstairs"], applied="Downstairs")[0], []),
+        ("room_auto switches once", _room_auto_sim(["Upstairs"] * 6, applied="Downstairs")[0], ["Upstairs"]),
+        ("room_auto lock on blocks", _room_auto_sim(["Upstairs"] * 4, applied="Downstairs", status={"lock_room": "On", "active_room": "Downstairs"})[0], []),
+        ("room_auto controller down blocks", _room_auto_sim(["Upstairs"] * 4, applied="Downstairs", status=OSError("down"))[0], []),
+        ("room_auto already on, no POST", _room_auto_sim(["Upstairs"] * 4, applied="Downstairs", status={"lock_room": "Off", "active_room": "Upstairs"})[0], []),
     ]
     failed = 0
     for name, got, want in cases:
