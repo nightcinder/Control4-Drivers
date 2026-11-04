@@ -769,6 +769,20 @@ def selftest():
     return 0 if failed == 0 else 1
 
 
+def kuma_ping(cfg, state):
+    """Heartbeat to an Uptime Kuma push monitor (optional: config key kuma_push_url).
+    Sent at most once a minute, only after a poll cycle finished without raising."""
+    url = cfg.get("kuma_push_url")
+    if not url:
+        return
+    now = time.time()
+    if now - state.get("_kuma_sent", 0) < 60:
+        return
+    state["_kuma_sent"] = now
+    try:
+        urllib.request.urlopen(url, timeout=5).read()
+    except Exception as e:
+        log("kuma heartbeat failed: %s" % e)
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Push Shield now-playing to the Media Remote Bridge.")
     ap.add_argument("config", nargs="?", help="JSON config file (see shield_nowplaying.example.json)")
@@ -808,6 +822,7 @@ def main(argv=None):
         while True:
             try:
                 poll_once(cfg, token, state)
+                kuma_ping(cfg, state)
             except Exception as e:  # a bad cycle must not stop the loop
                 log("unexpected error: %s" % e)
             time.sleep(float(cfg["poll_seconds"]))
