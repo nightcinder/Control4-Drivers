@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Media Remote Bridge v0.2.0 - driver skeleton.
+  Media Remote Bridge v0.4.1 - driver skeleton.
   Layout follows Daylight_Lighting_Scheduler_driver.xml (software-only, no proxies,
   script and properties under <config>). See README.md for what is confirmed and what is TODO(verify).
 -->

@@ -1,10 +1,10 @@
--- Media Remote Bridge - Control4 driver v0.4.0
+-- Media Remote Bridge - Control4 driver v0.4.1
 -- Listener and dispatch follow Daylight_Lighting_Scheduler_driver.lua (C4:CreateServer,
 -- OnServerDataIn, C4:ServerSend, C4:ServerCloseClient). The HTTP request parsing on top of
 -- the raw TCP stream is NOT from a reference driver: DLS speaks a plain line protocol.
 -- Anything not confirmed by a reference is marked TODO(verify). See README.md.
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 
 local LOG_PREFIX = "[MediaRemoteBridge " .. VERSION .. "] "
 local ROOM_NAMES = { "Upstairs", "Downstairs" }
@@ -18,7 +18,7 @@ local clients = {}              -- nHandle -> request bytes received so far
 -- Logging and status (style of Yale_AssureLock2 / IntelliFire: "Log Mode" property)
 ---------------------------------------------------------------------------
 local function LOG(msg)
-    local s = LOG_PREFIX .. tostring(msg)
+    local s = (LOG_PREFIX .. tostring(msg)):gsub("%c", " ")
     local mode = Properties["Log Mode"] or "Off"
     if mode == "Print" or mode == "Print and Log" then print(s) end
     if mode == "Log" or mode == "Print and Log" then C4:DebugLog(s) end
@@ -35,7 +35,54 @@ local function trim(s)
     return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
+local MAX_TEXT_CHARS = 200
+
+-- Returns s with control characters (bytes < 0x20 and 0x7F) and anything that is not valid
+-- UTF-8 removed. If maxChars is given, the result is cut after that many characters, always on
+-- a UTF-8 boundary.
+local function sanitizeText(s, maxChars)
+    s = tostring(s or "")
+    local out, n, i, chars = {}, #s, 1, 0
+    while i <= n do
+        if maxChars and chars >= maxChars then break end
+        local c = s:byte(i)
+        local len = 0
+        if c < 0x80 then
+            if c >= 0x20 and c ~= 0x7F then len = 1 end
+            if len == 0 then i = i + 1 end           -- drop control character
+        else
+            local need, lo, hi = 0, 0x80, 0xBF
+            if c >= 0xC2 and c <= 0xDF then need = 1
+            elseif c == 0xE0 then need, lo = 2, 0xA0
+            elseif c == 0xED then need, hi = 2, 0x9F
+            elseif c >= 0xE1 and c <= 0xEF then need = 2
+            elseif c == 0xF0 then need, lo = 3, 0x90
+            elseif c == 0xF4 then need, hi = 3, 0x8F
+            elseif c >= 0xF1 and c <= 0xF3 then need = 3
+            end
+            if need > 0 and i + need <= n then
+                local ok = true
+                for k = 1, need do
+                    local b = s:byte(i + k)
+                    if k == 1 then
+                        if b < lo or b > hi then ok = false break end
+                    elseif b < 0x80 or b > 0xBF then ok = false break end
+                end
+                if ok then len = need + 1 end
+            end
+            if len == 0 then i = i + 1 end           -- drop invalid byte
+        end
+        if len > 0 then
+            out[#out + 1] = s:sub(i, i + len - 1)
+            i = i + len
+            chars = chars + 1
+        end
+    end
+    return table.concat(out)
+end
+
 local function jsonString(s)
+    s = sanitizeText(s)
     s = s:gsub('[%c"\\]', function(c)
         if c == '"' then return '\\"'
         elseif c == "\\" then return "\\\\"
@@ -124,6 +171,17 @@ local function result(command, ok, extra, err)
 end
 
 local playGuess = {} -- TODO(verify): per-room guess of play state until now-playing reports the real one
+
+-- Now-playing reports pushed by the Shield poller (POST /v1/nowplaying), per room.
+local NOWPLAYING_MAX_AGE = 45   -- seconds; older reports are ignored by status and toggle
+local nowPlaying = {}           -- roomName -> { title, artist, app, playing, ts }
+
+-- Returns the room's now-playing report if it is younger than NOWPLAYING_MAX_AGE, else nil.
+local function freshNowPlaying(roomName)
+    local np = nowPlaying[roomName]
+    if np and (os.time() - np.ts) <= NOWPLAYING_MAX_AGE then return np end
+    return nil
+end
 local function setGuess(v) playGuess[activeRoomName()] = v end
 
 local function cmdPlay(q)
@@ -142,7 +200,11 @@ end
 
 local function cmdToggle(q)
     LOG("toggle")
-    local playing = playGuess[activeRoomName()]
+    -- Prefer a fresh now-playing report (survives EA-1 reboots / driver updates);
+    -- fall back to the tracked guess, then to "playing".
+    local np = freshNowPlaying(activeRoomName())
+    local playing
+    if np then playing = np.playing else playing = playGuess[activeRoomName()] end
     if playing == nil then playing = true end
     local ok, err = sendToActiveRoom(playing and "PAUSE" or "PLAY", {})
     if ok then setGuess(not playing) end
@@ -186,7 +248,8 @@ local function cmdVolumeDown(q)
 end
 
 local function cmdVolumeSet(q)
-    local level = tonumber(q.level)
+    local level = nil
+    if tostring(q.level or ""):match("^%d+$") then level = tonumber(q.level) end
     if not level or level < 0 or level > 100 then
         return result("volume_set", false, nil, "level must be 0-100")
     end
@@ -210,18 +273,14 @@ local function cmdSetActiveRoom(q)
     return result("set_active_room", true, { room = room })
 end
 
--- Now-playing reports pushed by the Shield poller (POST /v1/nowplaying), per room.
-local NOWPLAYING_MAX_AGE = 45   -- seconds; older reports are ignored by status
-local nowPlaying = {}           -- roomName -> { title, artist, app, playing, ts }
-
 local function cmdNowPlaying(q)
     local room = q.room
     if room ~= "Upstairs" and room ~= "Downstairs" then
         return result("nowplaying", false, nil, "room must be Upstairs or Downstairs")
     end
-    local title = trim(q.title)
-    local artist = trim(q.artist)
-    local app = trim(q.app)
+    local title = trim(sanitizeText(q.title, MAX_TEXT_CHARS))
+    local artist = trim(sanitizeText(q.artist, MAX_TEXT_CHARS))
+    local app = trim(sanitizeText(q.app, MAX_TEXT_CHARS))
     if title == "" and artist == "" and app == "" then
         nowPlaying[room] = nil
         LOG("nowplaying cleared " .. room)
@@ -289,8 +348,8 @@ local function cmdStatus()
     else
         t.vars_error = err
     end
-    local np = nowPlaying[activeRoomName()]
-    if np and (os.time() - np.ts) <= NOWPLAYING_MAX_AGE then
+    local np = freshNowPlaying(activeRoomName())
+    if np then
         t.np_title = np.title
         t.np_artist = np.artist
         t.np_app = np.app
@@ -420,17 +479,22 @@ end
 
 -- TODO(verify): the exact status string the Director sends when a client disconnects.
 function OnServerConnectionStatusChanged(nHandle, nPort, strStatus)
-    if tostring(strStatus):lower():find("clos", 1, true) then
+    local st = tostring(strStatus):lower()
+    -- Drop any partial request when a connection goes away ...
+    if st:find("clos", 1, true) or st:find("offline", 1, true) or st:find("disconnect", 1, true) then
+        clients[nHandle] = nil
+    -- ... and start every new connection clean, so a reused handle can never inherit old bytes.
+    elseif st:find("online", 1, true) or st:find("connect", 1, true) then
         clients[nHandle] = nil
     end
 end
 
 local function stopServer()
-    if serverHandle ~= nil then
-        -- DLS calls C4:DestroyServer() with no arguments. TODO(verify) that this is correct.
-        pcall(function() C4:DestroyServer() end)
-        serverHandle = nil
-    end
+    -- DLS calls C4:DestroyServer() with no arguments. TODO(verify) that this is correct.
+    -- Always called, even if serverHandle looks empty: CreateServer's return value is unverified,
+    -- and a restart or port change must never leave the old listener bound.
+    pcall(function() C4:DestroyServer() end)
+    serverHandle = nil
     clients = {}
 end
 
@@ -441,9 +505,10 @@ local function startServer()
         setStatus("Server disabled (port 0)")
         return
     end
-    -- Same call DLS uses. Its return value is the server handle.
+    -- Same call DLS uses. Success is judged by the call not raising; the return value
+    -- (the server handle) is unverified and may legitimately be nil.
     local ok, handle = pcall(function() return C4:CreateServer(port) end)
-    if not ok or handle == nil then
+    if not ok then
         LOG("could not start server on port " .. tostring(port) .. ": " .. tostring(handle))
         setStatus("Server failed on port " .. tostring(port))
         return
