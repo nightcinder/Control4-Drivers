@@ -1,6 +1,6 @@
 # Media Remote Bridge
 
-Control4 driver skeleton (v0.4.0). It exposes a small HTTP/JSON API on the controller that sends room-level media commands to the Upstairs or Downstairs room, and accepts now-playing reports pushed by a Shield poller (`tools/shield_nowplaying.py`).
+Control4 driver skeleton (v0.4.1). It exposes a small HTTP/JSON API on the controller that sends room-level media commands to the Upstairs or Downstairs room, and accepts now-playing reports pushed by a Shield poller (`tools/shield_nowplaying.py`).
 
 ## Files
 
