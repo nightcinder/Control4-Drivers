@@ -111,3 +111,13 @@ Run it as a scheduled task or service on a machine that can reach both the Shiel
 - Changing `Server Port` restarts the listener through `OnPropertyChanged`. Changing `Server Token` takes effect on the next request.
 - `Log Status` and `Restart Server` are Composer actions.
 - Do not use a real token in source or in this repository. Set it in Composer.
+
+## Driver XML notes
+
+The following comments were removed from driver.xml (Composer reported "Unable to find/parse config data file" when the XML began with a declaration and comments). The text is kept here:
+
+- Media Remote Bridge v0.4.2 - driver skeleton.
+    Layout follows Daylight_Lighting_Scheduler_driver.xml (software-only, no proxies,
+    script and properties under <config>). See README.md for what is confirmed and what is TODO(verify).
+- TODO(verify): room device IDs are entered by hand, the same way DLS takes light IDs.
+             Maximum 999999 is a placeholder bound, not a confirmed Control4 limit.
