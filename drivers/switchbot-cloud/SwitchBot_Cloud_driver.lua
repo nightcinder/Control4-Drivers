@@ -572,7 +572,7 @@ function ExecuteCommand(strCommand, tParams)
   end
   if strCommand == "DISCOVER" or strCommand == "Discover Devices" then
     discover()
-  elseif strCommand == "ACTION_REFRESH" then
+  elseif strCommand == "ACTION_REFRESH" or strCommand == "Refresh Status" then
     pollAll()
   elseif strCommand == "SB_REGISTER" then
     local childId = tonumber(tParams.CHILD_ID)
