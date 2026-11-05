@@ -242,7 +242,7 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "118"
+DRIVER_VERSION = "119"
 
 -- ===================== Globals / Config ============================
 g_ip         = "0.0.0.0"
