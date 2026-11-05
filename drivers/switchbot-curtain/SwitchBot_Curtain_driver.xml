@@ -1,155 +1,171 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <devicedata>
-  <name>SwitchBot Curtain</name>
-  <manufacturer>SwitchBot</manufacturer>
-  <model>SwitchBot Curtain (cloud API v1.1)</model>
-  <creator>Custom driver (unofficial)</creator>
-  <version>1</version>
-  <created>2026-11-04 00:00</created>
-  <modified>2026-11-04 00:00</modified>
-  <copyright>Custom driver, not affiliated with SwitchBot</copyright>
-  <description>Controls one SwitchBot curtain or blind through the SwitchBot cloud API v1.1. Untested against live hardware; see README.</description>
-  <control>lua_gen</control>
-  <controlMethod>ip</controlMethod>
-  <driverType>cloud</driverType>
-  <script file="driver.lua"/>
+	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with SwitchBot or Control4</copyright>
+	<creator>Custom Driver Project</creator>
+	<manufacturer>SwitchBot</manufacturer>
+	<name>SwitchBot Curtain</name>
+	<model>SwitchBot Curtain / Curtain 3 / Blind Tilt (cloud API v1.1)</model>
+	<created>11/04/2026 10:00 PM</created>
+	<modified>11/04/2026 10:30 PM</modified>
+	<version>2</version>
+	<control>lua_gen</control>
+	<controlmethod>ip</controlmethod>
+	<driver>DriverWorks</driver>
+	<templatedescription>SwitchBot Curtain - cloud API control (open/close/position) via a SwitchBot Hub</templatedescription>
 
-  <proxies>
-    <proxy proxybindingid="5001" name="SwitchBot Curtain" primary="true">shade</proxy>
-  </proxies>
+	<proxies qty="1">
+		<proxy proxybindingid="5001" name="SwitchBot Curtain" primary="True">blind</proxy>
+	</proxies>
 
-  <properties>
-    <property>
-      <name>Token</name>
-      <type>STRING</type>
-      <default></default>
-      <readonly>false</readonly>
-      <description>SwitchBot API token (from the SwitchBot app, Developer Options). Stored by Composer; never logged.</description>
-    </property>
-    <property>
-      <name>Secret</name>
-      <type>STRING</type>
-      <default></default>
-      <readonly>false</readonly>
-      <description>SwitchBot API secret key (from the SwitchBot app, Developer Options). Never logged.</description>
-    </property>
-    <property>
-      <name>Device ID</name>
-      <type>STRING</type>
-      <default></default>
-      <readonly>false</readonly>
-      <description>Device ID of this curtain. Copy it from Discovered Devices after running Discover Devices.</description>
-    </property>
-    <property>
-      <name>Discovered Devices</name>
-      <type>STRING</type>
-      <default></default>
-      <readonly>true</readonly>
-      <description>Curtain and blind devices on the account: name | id | type.</description>
-    </property>
-    <property>
-      <name>Status</name>
-      <type>STRING</type>
-      <default>Not configured</default>
-      <readonly>true</readonly>
-      <description>Last driver status (Online, Auth failed, Rate limited, and so on).</description>
-    </property>
-    <property>
-      <name>Battery</name>
-      <type>INT</type>
-      <default>0</default>
-      <readonly>true</readonly>
-      <description>Battery percentage reported by the device.</description>
-    </property>
-    <property>
-      <name>Low Battery Threshold</name>
-      <type>INT</type>
-      <default>20</default>
-      <readonly>false</readonly>
-      <description>Fires the Low Battery event when the battery is below this percentage.</description>
-    </property>
-    <property>
-      <name>Poll Interval Seconds</name>
-      <type>INT</type>
-      <default>300</default>
-      <readonly>false</readonly>
-      <description>Seconds between status polls. Minimum 60.</description>
-    </property>
-    <property>
-      <name>Invert Level</name>
-      <type>LIST</type>
-      <items>
-        <item>True</item>
-        <item>False</item>
-      </items>
-      <default>True</default>
-      <readonly>false</readonly>
-      <description>True: Control4 100 = open, mapped to SwitchBot position 100 - level (API 0 = open). False: no mapping.</description>
-    </property>
-    <property>
-      <name>Mode</name>
-      <type>LIST</type>
-      <items>
-        <item>ff</item>
-        <item>0</item>
-        <item>1</item>
-      </items>
-      <default>ff</default>
-      <readonly>false</readonly>
-      <description>setPosition mode: ff (default), 0 (performance), 1 (silent).</description>
-    </property>
-    <property>
-      <name>Driver Version</name>
-      <type>STRING</type>
-      <default>1.0.0</default>
-      <readonly>true</readonly>
-      <description>Version of this driver.</description>
-    </property>
-  </properties>
+	<connections>
+		<connection>
+			<id>5001</id>
+			<facing>6</facing>
+			<connectionname>Blind</connectionname>
+			<type>2</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>BLIND</classname>
+				</class>
+			</classes>
+		</connection>
+	</connections>
 
-  <actions>
-    <action>
-      <name>Discover Devices</name>
-      <command>Discover Devices</command>
-    </action>
-  </actions>
+	<config>
+		<power_management_method>AlwaysOn</power_management_method>
+		<power_command_delay>0</power_command_delay>
+		<power_delay>0</power_delay>
+		<power_command_needed>False</power_command_needed>
+		<script file="driver.lua" />
 
-  <commands>
-    <command>
-      <name>Open</name>
-      <description>Open the curtain fully.</description>
-      <command>Open</command>
-    </command>
-    <command>
-      <name>Close</name>
-      <description>Close the curtain fully.</description>
-      <command>Close</command>
-    </command>
-    <command>
-      <name>Stop</name>
-      <description>Stop any movement.</description>
-      <command>Stop</command>
-    </command>
-    <command>
-      <name>Set Position</name>
-      <description>Move to a Control4 level from 0 to 100 (100 = open when Invert Level is True).</description>
-      <command>Set Position</command>
-      <params>
-        <param>
-          <name>LEVEL</name>
-          <type>NUMBER</type>
-          <min>0</min>
-          <max>100</max>
-        </param>
-      </params>
-    </command>
-  </commands>
+		<commands>
+			<command>
+				<name>Open</name>
+				<description>Open the curtain fully</description>
+			</command>
+			<command>
+				<name>Close</name>
+				<description>Close the curtain fully</description>
+			</command>
+			<command>
+				<name>Stop</name>
+				<description>Stop any movement</description>
+			</command>
+			<command>
+				<name>Set Position</name>
+				<description>Move to a Control4 level from 0 to 100 (100 = open when Invert Level is True)</description>
+				<params>
+					<param>
+						<name>LEVEL</name>
+						<type>RANGED_INTEGER</type>
+						<minimum>0</minimum>
+						<maximum>100</maximum>
+						<default>100</default>
+					</param>
+				</params>
+			</command>
+		</commands>
 
-  <events>
-    <event>
-      <id>1</id>
-      <name>Low Battery</name>
-      <description>Battery is below the Low Battery Threshold.</description>
-    </event>
-  </events>
+		<actions>
+			<action>
+				<name>Discover Devices</name>
+				<command>DISCOVER</command>
+			</action>
+		</actions>
+
+		<properties>
+			<property>
+				<name>Token</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Secret</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Device ID</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Discovered Devices</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Not configured</default>
+			</property>
+			<property>
+				<name>Battery</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>0</minimum>
+				<maximum>100</maximum>
+				<readonly>true</readonly>
+				<default>0</default>
+			</property>
+			<property>
+				<name>Low Battery Threshold</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>0</minimum>
+				<maximum>100</maximum>
+				<readonly>false</readonly>
+				<default>20</default>
+			</property>
+			<property>
+				<name>Poll Interval Seconds</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>60</minimum>
+				<maximum>3600</maximum>
+				<readonly>false</readonly>
+				<default>300</default>
+			</property>
+			<property>
+				<name>Invert Level</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>True</default>
+				<items>
+					<item>True</item>
+					<item>False</item>
+				</items>
+			</property>
+			<property>
+				<name>Mode</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>ff</default>
+				<items>
+					<item>ff</item>
+					<item>0</item>
+					<item>1</item>
+				</items>
+			</property>
+			<property>
+				<name>Driver Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>1.0.1</default>
+			</property>
+		</properties>
+	</config>
+
+	<events>
+		<event>
+			<id>1</id>
+			<name>Low Battery</name>
+			<description>Battery is below the Low Battery Threshold</description>
+		</event>
+	</events>
 </devicedata>
