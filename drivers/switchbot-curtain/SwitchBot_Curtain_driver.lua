@@ -1,6 +1,6 @@
 --[[
   SwitchBot Curtain driver for Control4 (OS 3.4.x)
-  Version: 1.0.1
+  Version: 1.0.2
   UNTESTED against a live Control4 system or live SwitchBot account.
   Only the crypto/JSON helpers are exercised offline (tests/test_signing.lua).
 
@@ -9,7 +9,7 @@
   Never log Token or Secret.
 ]]
 
-local DRIVER_VERSION = "1.0.1"
+local DRIVER_VERSION = "1.0.2"
 local API_BASE = "https://api.switch-bot.com/v1.1"
 local PROXY_BINDING = 5001
 local SUPPORTED_TYPES = { ["Curtain"] = true, ["Curtain3"] = true, ["Blind Tilt"] = true }
@@ -555,6 +555,15 @@ end
 
 function ExecuteCommand(strCommand, tParams)
   tParams = tParams or {}
+  -- Composer dispatches <actions> as ExecuteCommand("LUA_ACTION", {ACTION = <command>}).
+  if strCommand == "LUA_ACTION" then
+    strCommand = tParams.ACTION
+    if strCommand == nil then
+      print("SwitchBot: LUA_ACTION with no ACTION parameter, ignoring")
+      return
+    end
+  end
+  print("SwitchBot: ExecuteCommand " .. tostring(strCommand))
   if strCommand == "Discover Devices" or strCommand == "DISCOVER" then
     discover()
   elseif strCommand == "Open" or strCommand == "OPEN" then
