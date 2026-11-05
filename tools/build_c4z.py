@@ -27,6 +27,12 @@ COMMON_FILES = [
     "global/handlers.lua", "global/lib.lua", "global/timer.lua", "global/url.lua",
     "module/json.lua", "module/metrics.lua", "module/websocket.lua",
 ]
+# Some drivers were first installed in Composer under a different .c4z name than their folder. Composer matches an
+# update to the installed driver by package name (and the XML icon paths use it), so build those under the original name.
+PACKAGE_NAMES = {
+    "haiku-senseme": "Haiku_SenseME_i6",
+    "haiku-senseme-nolight": "Haiku_SenseME_i6_NoLight",
+}
 REQUIRE_COMMON = re.compile(r"^\s*(?:\w+\s*=\s*)?require\s*\(?\s*['\"]drivers-common-public", re.M)
 
 
@@ -48,7 +54,7 @@ def build(folder):
         return False
 
     os.makedirs(DIST, exist_ok=True)
-    out = os.path.join(DIST, folder + ".c4z")
+    out = os.path.join(DIST, PACKAGE_NAMES.get(folder, folder) + ".c4z")
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.write(xml_path, "driver.xml")
         z.write(lua_path, script_name)
