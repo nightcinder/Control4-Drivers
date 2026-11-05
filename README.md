@@ -17,7 +17,7 @@ Not affiliated with Control4 or the respective device manufacturers.
 | `drivers/intellifire` | IntelliFire Fireplace (Wi-Fi Module) | 115 |
 | `drivers/moen-smart-shower` | Moen Smart Shower (U by Moen), standalone | 203 |
 | `drivers/yale-assure-lock-2` | Yale Assure Lock 2 (Wi-Fi Smart Module) | 117 |
-| `drivers/switchbot-curtain` | SwitchBot Curtain (cloud API, untested) | 11 (v1.0.10 in Lua) |
+| `drivers/switchbot-curtain` | SwitchBot Curtain (cloud API, untested) | 12 (v1.0.11 in Lua) |
 | `drivers/lifx-bulb-legacy` | LIFX Bulb (earlier driver, kept for reference) | 107 |
 
 ### Daylight Lighting Scheduler (`Daylight_Lighting_Scheduler_driver`)
@@ -67,7 +67,7 @@ Controls one SwitchBot Curtain / Curtain 3 / Blind Tilt through the SwitchBot cl
 - Run **Discover Devices** to list device IDs, then copy one into **Device ID**
 - **Two motors, one window** (e.g. a double curtain): put the second motor's ID in **Second Device ID**. Every command goes to both, status is combined (moving if either moves, position averaged, lowest battery). Leave it empty for a single curtain. Pairing them in the SwitchBot app and using the master ID also works.
 - Polls status every 300 s by default. After a command it shows the expected level at once, sends only the last of rapid presses (0.8 s debounce), and checks status every few seconds until the curtain stops, ignoring SwitchBot's stale just-after-command status; the account limit is 10,000 API calls per day
-- **Invert Level** defaults to on: a live Curtain went to SwitchBot position 0 when opened, so 0 = open and 100 = closed (matching SwitchBot's docs) while Control4 uses 100 = open. Turn it off only if a curtain is reversed
+- **Invert Level** defaults to off (SwitchBot position 100 = open, matching a live Den West curtain). Switch it to True per curtain if one reports 0 = open and the Navigator direction is reversed; it depends on how each motor was calibrated in the SwitchBot app
 - Navigator icons are original generic curtain artwork drawn by `tools/switchbot-curtain/make_icons.py` into `www/icons/`; the `controller://driver/switchbot-curtain/...` path assumes the package is named `switchbot-curtain.c4z`
 - Offline signing test: `lua5.1 tools/switchbot-curtain/test_signing.lua drivers/switchbot-curtain/SwitchBot_Curtain_driver.lua` (SHA-256, HMAC-SHA256, Base64 and signature checks, no network)
 - Unverified: not run against a live Control4 or SwitchBot account. Control4 API names (`C4:urlGet`/`urlPost` callbacks, timers, events) are from memory of the OS 3 SDK, and the blind proxy details are partly confirmed: the Navigator buttons send `UP`/`DOWN` (observed live), and the proxy setup (`SET_CAN_STOP`, `SET_HAS_LEVEL`) and `STOPPED` with `LEVEL` follow the open-source Control4-HA-Blinds driver. The proxy's notification names for opening/closing motion are unknown, so Navigator jumps to the expected level on a press instead of showing movement. v1.0.0 would not add to a project because its XML lacked the `<config>` and `<connections>` blocks; 1.0.1 follows the Haiku driver's structure. Signature is sent without uppercasing, per SwitchBot's samples; change it if auth fails. Token and Secret are plain STRING properties, not masked
