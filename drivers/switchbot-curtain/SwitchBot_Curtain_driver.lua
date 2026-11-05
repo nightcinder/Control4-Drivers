@@ -1,6 +1,6 @@
 --[[
   SwitchBot Curtain driver for Control4 (OS 3.4.x)
-  Version: 1.0.3
+  Version: 1.0.4
   UNTESTED against a live Control4 system or live SwitchBot account.
   Only the crypto/JSON helpers are exercised offline (tests/test_signing.lua).
 
@@ -9,7 +9,7 @@
   Never log Token or Secret.
 ]]
 
-local DRIVER_VERSION = "1.0.3"
+local DRIVER_VERSION = "1.0.4"
 local API_BASE = "https://api.switch-bot.com/v1.1"
 local PROXY_BINDING = 5001
 local SUPPORTED_TYPES = { ["Curtain"] = true, ["Curtain3"] = true, ["Blind Tilt"] = true }
@@ -325,11 +325,13 @@ local function setStatus(text)
   pcall(function() print("[SwitchBot Curtain] " .. text) end)
 end
 
+-- Confirmed on a live Curtain (2026-11-04): with Invert Level False, Control4 100 = open matches
+-- SwitchBot slidePosition 100 = open, so the default is False. Set True only if a curtain is reversed.
 local function invertLevel()
-  return (prop("Invert Level") or "True") ~= "False"
+  return (prop("Invert Level") or "False") == "True"
 end
 
--- Control4 level (100 = open) <-> SwitchBot position (0 = open per API doc).
+-- Control4 level (100 = open) <-> SwitchBot position (100 = open on the tested Curtain).
 local function levelToPosition(level)
   if invertLevel() then return 100 - level end
   return level
@@ -360,6 +362,11 @@ end
 -- HTTP. Single place to adapt if OS 3.4 callback signatures differ.
 -- Callback signature assumed: (ticketId, strData, responseCode, tHeaders, strError)
 -- ============================================================================
+local function stamp()
+  local ok, v = pcall(os.date, "%H:%M:%S")
+  return ok and v or "--:--:--"
+end
+
 local function apiRequest(method, path, body, callback)
   local token, secret = prop("Token") or "", prop("Secret") or ""
   if token == "" or secret == "" then
@@ -377,12 +384,12 @@ local function apiRequest(method, path, body, callback)
   }
   local url = API_BASE .. path
   local function handler(_, strData, code, _, strError)
-    print("SwitchBot: " .. method .. " " .. path .. " -> HTTP " .. tostring(code)
+    print("SwitchBot " .. stamp() .. ": " .. method .. " " .. path .. " -> HTTP " .. tostring(code)
       .. (strError and (" error: " .. tostring(strError)) or "")
       .. " body: " .. string.sub(tostring(strData or ""), 1, 200))
     callback(code, strData, strError)
   end
-  print("SwitchBot: " .. method .. " " .. path .. " sent")
+  print("SwitchBot " .. stamp() .. ": " .. method .. " " .. path .. " sent")
   local ok, err = pcall(function()
     if method == "GET" then
       C4:urlGet(url, headers, false, handler)
@@ -567,7 +574,7 @@ function ExecuteCommand(strCommand, tParams)
       return
     end
   end
-  print("SwitchBot: ExecuteCommand " .. tostring(strCommand))
+  print("SwitchBot " .. stamp() .. ": ExecuteCommand " .. tostring(strCommand))
   if strCommand == "ACTION_OPEN" then strCommand = "Open"
   elseif strCommand == "ACTION_CLOSE" then strCommand = "Close"
   elseif strCommand == "ACTION_REFRESH" then
