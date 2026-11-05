@@ -5,8 +5,8 @@
 	<name>IntelliFire Fireplace (Wi-Fi Module)</name>
 	<model>IFT-WFM (Off / Pilot / Flame, variable flame height)</model>
 	<created>08/15/2026 12:00 PM</created>
-	<modified>11/05/2026 12:00 PM</modified>
-	<version>116</version>
+	<modified>11/05/2026 1:45 PM</modified>
+	<version>117</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -166,6 +166,14 @@
 					</param>
 				</params>
 			</command>
+			<command>
+				<name>Fireplace On</name>
+				<description>Turn the main flame on (same as thermostat Mode Heat)</description>
+			</command>
+			<command>
+				<name>Fireplace Off</name>
+				<description>Turn the main flame off (same as thermostat Mode Off)</description>
+			</command>
 		</commands>
 
 		<actions>
@@ -176,6 +184,14 @@
 			<action>
 				<name> - Pilot Off</name>
 				<command>ACTION_PILOT_OFF</command>
+			</action>
+			<action>
+				<name> - Fireplace On</name>
+				<command>ACTION_FIREPLACE_ON</command>
+			</action>
+			<action>
+				<name> - Fireplace Off</name>
+				<command>ACTION_FIREPLACE_OFF</command>
 			</action>
 			<action>
 				<name> - Refresh Status</name>
