@@ -242,7 +242,7 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "119"
+DRIVER_VERSION = "120"
 
 -- ===================== Globals / Config ============================
 g_ip         = "0.0.0.0"
@@ -252,6 +252,7 @@ g_pollInt    = 20
 g_logMode    = "Off"
 
 FIREPLACE_BINDING = 5001
+RELAY_OUT_BINDING = 5002
 NET_BINDING       = 6001
 HTTP_PORT         = 80
 
@@ -825,6 +826,7 @@ function NotifyRelayState(bInitial)
 		sName = bOn and "CLOSED" or "OPENED"
 	end
 	C4:SendToProxy(FIREPLACE_BINDING, sName, {}, "NOTIFY")
+	C4:SendToProxy(RELAY_OUT_BINDING, sName, {}, "NOTIFY")
 end
 
 -- ===================== Proxy commands (Navigator -> device) ============================
@@ -837,7 +839,7 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
 		return
 	end
 
-	if (idBinding == FIREPLACE_BINDING) then
+	if (idBinding == FIREPLACE_BINDING or idBinding == RELAY_OUT_BINDING) then
 		FireplaceProxyCommand(strCommand, tParams)
 	end
 end
@@ -866,6 +868,10 @@ function FireplaceProxyCommand(cmd, p)
 		else
 			FireplaceProxyCommand("SET_MODE_HVAC", { MODE = "Heat" })
 		end
+		return
+	elseif (cmd == "TRIGGER") then
+		-- Relay "trigger" pulse from the proxy: no state change, ignored.
+		LOG("TRIGGER ignored")
 		return
 	end
 
