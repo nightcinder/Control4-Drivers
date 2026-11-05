@@ -70,6 +70,9 @@ def build(folder):
                 rel = os.path.relpath(full, path).replace(os.sep, "/")
                 if full in (xml_path, lua_path) or rel.endswith(".md"):
                     continue
+                # Helper scripts that live beside the driver (top-level tools/ and build.sh) are not part of the package.
+                if rel == "build.sh" or rel.startswith("tools/"):
+                    continue
                 z.write(full, rel)
         if needs_common:
             for rel in COMMON_FILES:
