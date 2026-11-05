@@ -6,7 +6,7 @@
 	<model>SwitchBot Curtain / Curtain 3 / Blind Tilt (cloud API v1.1)</model>
 	<created>11/04/2026 10:00 PM</created>
 	<modified>11/04/2026 10:30 PM</modified>
-	<version>7</version>
+	<version>8</version>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
@@ -168,7 +168,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>1.0.6</default>
+				<default>1.0.7</default>
 			</property>
 		</properties>
 	</config>

@@ -1,6 +1,6 @@
 --[[
   SwitchBot Curtain driver for Control4 (OS 3.4.x)
-  Version: 1.0.6
+  Version: 1.0.7
   UNTESTED against a live Control4 system or live SwitchBot account.
   Only the crypto/JSON helpers are exercised offline (tests/test_signing.lua).
 
@@ -9,13 +9,18 @@
   Never log Token or Secret.
 ]]
 
-local DRIVER_VERSION = "1.0.6"
+local DRIVER_VERSION = "1.0.7"
 local API_BASE = "https://api.switch-bot.com/v1.1"
 local PROXY_BINDING = 5001
 local SUPPORTED_TYPES = { ["Curtain"] = true, ["Curtain3"] = true, ["Blind Tilt"] = true }
 local MIN_POLL_SECONDS = 60
 local DEFAULT_POLL_SECONDS = 300
-local POST_COMMAND_POLL_MS = 15000
+local COMMAND_DEBOUNCE_MS = 800   -- rapid button presses collapse into the last one
+local FOLLOWUP_FIRST_MS = 6000    -- first status check after a command
+local FOLLOWUP_MS = 4000          -- later checks while the curtain is moving
+local HOLD_SECONDS = 30           -- cloud status is stale this long after a command
+local MAX_FOLLOWUPS = 30          -- stop chasing after about two minutes
+local LEVEL_TOLERANCE = 5         -- close enough to the target level
 local MAX_BACKOFF_SECONDS = 3600
 
 -- ============================================================================
@@ -308,6 +313,12 @@ local state = {
   busy = false,
   pollTimer = nil,
   lastLevel = nil,
+  cmdTimer = nil,      -- debounce timer for the pending command
+  pending = nil,       -- {command, parameter} waiting to be sent
+  followTimer = nil,   -- single follow-up status poll
+  followCount = 0,
+  targetLevel = nil,   -- level the last command is heading to
+  holdUntil = 0,       -- os.time() until which a non-matching idle status is treated as stale
 }
 
 local function prop(name)
@@ -473,6 +484,29 @@ local function handleCommon(code, strData, strError, onOk)
   if onOk then onOk(obj) end
 end
 
+local function sendLevelToProxy(level)
+  print("SwitchBot " .. stamp() .. ": SendToProxy LEVEL_CHANGED level=" .. tostring(level))
+  pcall(function() C4:SendToProxy(PROXY_BINDING, "LEVEL_CHANGED", { LEVEL = level, TARGET = level }) end)
+end
+
+-- Motion state for Navigator. Names OPENING / CLOSING / STOPPED are inferred from the blind
+-- proxy's Opening/Closing/Stopped variables and are unconfirmed; every send is logged.
+local function sendStateToProxy(name)
+  print("SwitchBot " .. stamp() .. ": SendToProxy " .. name)
+  pcall(function() C4:SendToProxy(PROXY_BINDING, name, {}) end)
+end
+
+local function scheduleFollowUp(ms)
+  if state.followTimer then pcall(function() state.followTimer:Cancel() end) end
+  local ok, timer = pcall(function()
+    return C4:SetTimer(ms, function()
+      state.followTimer = nil
+      SwitchBot_PollStatus()
+    end)
+  end)
+  if ok then state.followTimer = timer end
+end
+
 function SwitchBot_PollStatus()
   local id = prop("Device ID") or ""
   if id == "" then
@@ -484,9 +518,23 @@ function SwitchBot_PollStatus()
       local body = type(obj.body) == "table" and obj.body or {}
       if type(body.slidePosition) == "number" then
         local level = clamp(positionToLevel(body.slidePosition), 0, 100)
-        state.lastLevel = level
-        print("SwitchBot " .. stamp() .. ": SendToProxy LEVEL_CHANGED level=" .. tostring(level))
-        pcall(function() C4:SendToProxy(PROXY_BINDING, "LEVEL_CHANGED", { LEVEL = level, TARGET = level }) end)
+        local moving = body.moving == true
+        local target = state.targetLevel
+        local holding = target ~= nil and os.time() < state.holdUntil
+        local waiting = moving or (holding and math.abs(level - target) > LEVEL_TOLERANCE)
+        if waiting and state.followCount < MAX_FOLLOWUPS then
+          -- Mid-move or stale cloud status: do not overwrite the expected level; check again soon.
+          state.followCount = state.followCount + 1
+          print("SwitchBot " .. stamp() .. ": status level=" .. tostring(level) .. " moving="
+            .. tostring(moving) .. " target=" .. tostring(target) .. ", checking again")
+          scheduleFollowUp(FOLLOWUP_MS)
+        else
+          state.targetLevel = nil
+          state.followCount = 0
+          state.lastLevel = level
+          sendLevelToProxy(level)
+          sendStateToProxy("STOPPED")
+        end
       end
       if type(body.battery) == "number" then
         setProp("Battery", body.battery)
@@ -512,7 +560,7 @@ local function sendCommand(command, parameter)
   apiRequest("POST", "/devices/" .. id .. "/commands", body, function(code, strData, strError)
     handleCommon(code, strData, strError, function() end)
     if state.failures == 0 then
-      pcall(function() C4:SetTimer(POST_COMMAND_POLL_MS, function() SwitchBot_PollStatus() end) end)
+      scheduleFollowUp(FOLLOWUP_FIRST_MS)
     end
   end)
 end
@@ -523,11 +571,47 @@ local function modeParam()
   return m
 end
 
+-- Debounced command: shows the expected level at once, then sends only the latest press.
+local function queueCommand(command, parameter, targetLevel)
+  if state.cmdTimer then pcall(function() state.cmdTimer:Cancel() end) end
+  state.pending = { command = command, parameter = parameter }
+  state.followCount = 0
+  if targetLevel ~= nil then
+    local prev = state.lastLevel
+    state.targetLevel = targetLevel
+    state.holdUntil = os.time() + HOLD_SECONDS
+    state.lastLevel = targetLevel
+    sendLevelToProxy(targetLevel)
+    if prev == nil or targetLevel >= prev then
+      sendStateToProxy("OPENING")
+    else
+      sendStateToProxy("CLOSING")
+    end
+  else
+    state.targetLevel = nil
+    sendStateToProxy("STOPPED")
+  end
+  local ok, timer = pcall(function()
+    return C4:SetTimer(COMMAND_DEBOUNCE_MS, function()
+      state.cmdTimer = nil
+      local p = state.pending
+      state.pending = nil
+      if p then sendCommand(p.command, p.parameter) end
+    end)
+  end)
+  if ok then
+    state.cmdTimer = timer
+  else
+    local p = state.pending
+    state.pending = nil
+    sendCommand(p.command, p.parameter)
+  end
+end
+
 local function setLevel(level)
   level = clamp(math.floor(tonumber(level) or 0), 0, 100)
-  state.lastLevel = level
   local pos = levelToPosition(level)
-  sendCommand("setPosition", "0," .. modeParam() .. "," .. tostring(pos))
+  queueCommand("setPosition", "0," .. modeParam() .. "," .. tostring(pos), level)
 end
 
 -- ============================================================================
@@ -593,11 +677,11 @@ function ExecuteCommand(strCommand, tParams)
   if strCommand == "Discover Devices" or strCommand == "DISCOVER" then
     discover()
   elseif strCommand == "Open" or strCommand == "OPEN" then
-    sendCommand("turnOn", "default")
+    queueCommand("turnOn", "default", 100)
   elseif strCommand == "Close" or strCommand == "CLOSE" then
-    sendCommand("turnOff", "default")
+    queueCommand("turnOff", "default", 0)
   elseif strCommand == "Stop" or strCommand == "STOP" then
-    sendCommand("pause", "default")
+    queueCommand("pause", "default", nil)
   elseif strCommand == "Set Position" or strCommand == "SET_POSITION" then
     setLevel(tParams.LEVEL or tParams.Level or tParams.level)
   end
@@ -611,26 +695,26 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
   -- Confirmed from a live log (2026-11-04): the Navigator open/close buttons send UP and DOWN.
   -- UP = open and DOWN = close is the assumed mapping (confirm by watching the curtain).
   if strCommand == "OPEN" or strCommand == "UP" then
-    sendCommand("turnOn", "default")
+    queueCommand("turnOn", "default", 100)
   elseif strCommand == "CLOSE" or strCommand == "DOWN" then
-    sendCommand("turnOff", "default")
+    queueCommand("turnOff", "default", 0)
   elseif strCommand == "STOP" then
-    sendCommand("pause", "default")
+    queueCommand("pause", "default", nil)
   elseif strCommand == "SET_LEVEL_TARGET" then
     -- Blind proxy: LEVEL_TARGET carries 0-100, or an open/closed marker (unverified names).
     local t = tParams.LEVEL_TARGET
     if t == "LEVEL_TARGET_OPEN" then
-      sendCommand("turnOn", "default")
+      queueCommand("turnOn", "default", 100)
     elseif t == "LEVEL_TARGET_CLOSED" then
-      sendCommand("turnOff", "default")
+      queueCommand("turnOff", "default", 0)
     else
       setLevel(t)
     end
   elseif strCommand == "TOGGLE" then
     if (state.lastLevel or 0) > 0 then
-      sendCommand("turnOff", "default")
+      queueCommand("turnOff", "default", 0)
     else
-      sendCommand("turnOn", "default")
+      queueCommand("turnOn", "default", 100)
     end
   elseif strCommand == "SET_LEVEL" then
     setLevel(tParams.LEVEL)
