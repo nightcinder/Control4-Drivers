@@ -1,7 +1,7 @@
 --[[
   SwitchBot Curtain (child) driver for Control4 (OS 3.4.x)
-  Version: 2.0.0
-  One instance = one window: a SwitchBot Curtain/Blind (Device ID), optionally a second unpaired motor
+  Version: 2.1.0
+  One instance = one window: a SwitchBot Curtain/Blind (Device), optionally a second unpaired motor
   (Second Device ID). It has no Token or Secret: bind its SwitchBot connection to a "SwitchBot Cloud"
   (parent) driver, which talks to the SwitchBot cloud API and polls status for every child.
 
@@ -10,7 +10,7 @@
     from parent: SB_STATUS {DEVICE_ID, POSITION, MOVING, BATTERY}, SB_PARENT_STATUS {TEXT}, SB_HELLO
 ]]
 
-local DRIVER_VERSION = "2.0.0"
+local DRIVER_VERSION = "2.1.0"
 local PROXY_BINDING = 5001
 local CLOUD_BINDING = 1
 local COMMAND_DEBOUNCE_MS = 800   -- rapid button presses collapse into the last one
@@ -84,10 +84,18 @@ end
 -- ============================================================================
 -- Link to the parent
 -- ============================================================================
+-- Device and Second Device are drop-downs the parent fills from Discover ("Name [ID]"); a bare ID also works.
+local function extractId(v)
+  v = tostring(v or "")
+  local id = v:match("%[([%w]+)%]") or v:gsub("%s+", "")
+  if id == "None" then return "" end
+  return id
+end
+
 local function deviceIds()
   local ids = {}
-  for _, name in ipairs({ "Device ID", "Second Device ID" }) do
-    local v = (prop(name) or ""):gsub("%s+", "")
+  for _, name in ipairs({ "Device", "Second Device" }) do
+    local v = extractId(prop(name))
     if v ~= "" and v ~= ids[1] then ids[#ids + 1] = v end
   end
   return ids
@@ -112,14 +120,10 @@ end
 
 local function register()
   local ids = deviceIds()
-  if #ids == 0 then
-    setStatus("Set Device ID (run Discover Devices on the SwitchBot Cloud driver)")
-    return
-  end
   local cid = 0
   pcall(function() cid = C4:GetDeviceID() end)
   if sendToParent("SB_REGISTER", { CHILD_ID = tostring(cid), IDS = table.concat(ids, ",") }) then
-    setStatus("Waiting for SwitchBot Cloud")
+    setStatus(#ids == 0 and "Choose a Device" or "Waiting for SwitchBot Cloud")
   end
 end
 
@@ -237,7 +241,7 @@ end
 local function sendCommand(command, parameter)
   local ids = deviceIds()
   if #ids == 0 then
-    setStatus("Set Device ID")
+    setStatus("Choose a Device")
     return
   end
   if sendToParent("SB_COMMAND", { IDS = table.concat(ids, ","), COMMAND = command, PARAMETER = parameter or "default" }) then
@@ -293,6 +297,13 @@ end
 -- Control4 entry points
 -- ============================================================================
 function OnDriverInit()
+  -- Keep the saved selection valid in the drop-downs until the parent sends the full device list.
+  for _, name in ipairs({ "Device", "Second Device" }) do
+    local v = prop(name)
+    if v and v ~= "" and v ~= "None" then
+      pcall(function() C4:UpdatePropertyList(name, "None," .. v, v) end)
+    end
+  end
   setProp("Driver Version", DRIVER_VERSION)
   setStatus("Starting")
 end
@@ -310,7 +321,7 @@ function OnBindingChanged(idBinding, strClass, bIsBound, otherDeviceId, otherBin
 end
 
 function OnPropertyChanged(strProperty)
-  if strProperty == "Device ID" or strProperty == "Second Device ID" then
+  if strProperty == "Device" or strProperty == "Second Device" then
     state.dev = {}
     register()
   end
@@ -331,6 +342,12 @@ function ExecuteCommand(strCommand, tParams)
     return
   elseif strCommand == "SB_PARENT_STATUS" then
     setStatus(tostring(tParams.TEXT or ""))
+    return
+  elseif strCommand == "SB_DEVICES" then
+    local list = tostring(tParams.LIST or "None")
+    for _, name in ipairs({ "Device", "Second Device" }) do
+      pcall(function() C4:UpdatePropertyList(name, list, prop(name) or "None") end)
+    end
     return
   elseif strCommand == "SB_HELLO" then
     register()

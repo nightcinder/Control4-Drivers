@@ -1,6 +1,6 @@
 --[[
   SwitchBot Cloud (parent) driver for Control4 (OS 3.4.x)
-  Version: 2.0.0
+  Version: 2.1.0
   Holds the SwitchBot Token and Secret, talks to the cloud API v1.1, polls status, and serves any number of
   "SwitchBot Curtain" child drivers bound to its SWITCHBOT_CLOUD connection. Never log Token or Secret.
 
@@ -9,7 +9,7 @@
     parent -> child: SB_STATUS {DEVICE_ID, POSITION, MOVING, BATTERY}, SB_PARENT_STATUS {TEXT}, SB_HELLO
 ]]
 
-local DRIVER_VERSION = "2.0.0"
+local DRIVER_VERSION = "2.1.0"
 local API_BASE = "https://api.switch-bot.com/v1.1"
 local CLOUD_BINDING = 1
 local SUPPORTED_TYPES = { ["Curtain"] = true, ["Curtain3"] = true, ["Blind Tilt"] = true }
@@ -304,7 +304,7 @@ end
 -- ============================================================================
 -- Driver state and helpers
 -- ============================================================================
-local state = { failures = 0, pollTimer = nil, children = {}, lastStatus = nil }
+local state = { failures = 0, pollTimer = nil, children = {}, lastStatus = nil, deviceList = "None" }
 
 local function prop(name)
   local ok, v = pcall(function() return Properties[name] end)
@@ -520,9 +520,10 @@ local function discover()
     handleCommon(code, strData, strError, function(obj)
       local body = type(obj.body) == "table" and obj.body or {}
       local list = type(body.deviceList) == "table" and body.deviceList or {}
-      local lines = {}
+      local lines, options = {}, { "None" }
       for _, d in ipairs(list) do
         if type(d) == "table" and SUPPORTED_TYPES[tostring(d.deviceType)] then
+          options[#options + 1] = string.format("%s [%s]", (tostring(d.deviceName):gsub(",", " ")), tostring(d.deviceId))
           local extra = ""
           if d.master == true then extra = " | master of pair" elseif d.group == true then extra = " | paired" end
           lines[#lines + 1] = string.format("%s | %s | %s%s", tostring(d.deviceName), tostring(d.deviceId), tostring(d.deviceType), extra)
@@ -530,6 +531,8 @@ local function discover()
       end
       local text = #lines > 0 and table.concat(lines, "  ;  ") or "No curtain/blind devices found"
       setProp("Discovered Devices", text)
+      state.deviceList = table.concat(options, ",")
+      for _, id in ipairs(childIds()) do sendToChild(id, "SB_DEVICES", { LIST = state.deviceList }) end
       pcall(function() print("[SwitchBot Cloud] Discovered devices (name | id | type):\n" .. text) end)
     end)
   end)
@@ -546,6 +549,7 @@ function OnDriverInit()
 end
 
 function OnDriverLateInit()
+  if (prop("Token") or "") ~= "" then pcall(function() C4:SetTimer(1500, function() discover() end) end) end
   -- Ask any bound children to register their device IDs.
   pcall(function() C4:SetTimer(2000, function()
     for _, id in ipairs(childIds()) do sendToChild(id, "SB_HELLO", {}) end
@@ -559,6 +563,7 @@ end
 function OnPropertyChanged(strProperty)
   if strProperty == "Token" or strProperty == "Secret" or strProperty == "Poll Interval Seconds" then
     state.failures = 0
+    if (prop("Token") or "") ~= "" and (prop("Secret") or "") ~= "" then discover() end
     pollAll()
     schedulePoll(false)
   end
@@ -578,6 +583,7 @@ function ExecuteCommand(strCommand, tParams)
     local childId = tonumber(tParams.CHILD_ID)
     if childId then
       state.children[childId] = splitIds(tParams.IDS)
+      sendToChild(childId, "SB_DEVICES", { LIST = state.deviceList })
       print("SwitchBot " .. stamp() .. ": child " .. tostring(childId) .. " registered " .. tostring(tParams.IDS))
       pollIds(state.children[childId])
     end
