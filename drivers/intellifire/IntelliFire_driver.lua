@@ -242,7 +242,7 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "116"
+DRIVER_VERSION = "117"
 
 -- ===================== Globals / Config ============================
 g_ip         = "0.0.0.0"
@@ -957,6 +957,14 @@ function ExecuteCommand(strCommand, tParams)
 			SendFireplaceCommand("power", 0)
 			SendFireplaceCommand("pilot", 0)
 		end
+
+	elseif (strCommand == "Fireplace On" or strCommand == "ACTION_FIREPLACE_ON") then
+		-- Same code path as thermostat Mode = Heat (pilot-first/power ignition handled there).
+		FireplaceProxyCommand("SET_MODE_HVAC", { MODE = "Heat" })
+
+	elseif (strCommand == "Fireplace Off" or strCommand == "ACTION_FIREPLACE_OFF") then
+		-- Same code path as thermostat Mode = Off (power=0, pilot=0).
+		FireplaceProxyCommand("SET_MODE_HVAC", { MODE = "Off" })
 
 	elseif (strCommand == "ACTION_REFRESH_STATUS") then
 		QueuePoll()
