@@ -242,7 +242,7 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "117"
+DRIVER_VERSION = "118"
 
 -- ===================== Globals / Config ============================
 g_ip         = "0.0.0.0"
@@ -308,10 +308,8 @@ function OnDriverLateInit()
 	BindTo(g_ip)
 	StartPolling()
 	NotifyOnline(false)
-	C4:SendToProxy(FIREPLACE_BINDING, "ALLOWED_HVAC_MODES_CHANGED", { MODES = "Off,Heat" }, "NOTIFY")
-	C4:SendToProxy(FIREPLACE_BINDING, "SCALE_CHANGED", { SCALE = "FAHRENHEIT" }, "NOTIFY")
 	-- REAL BUG FOUND LIVE (2026-08-16, ninth session): this used to call
-	-- NotifyThermostatState() right here, announcing g_state's hardcoded
+	-- NotifyRelayState(false) right here, announcing g_state's hardcoded
 	-- placeholder values (height=0 -> a "1" on the 1-5 dial) as if they
 	-- were real - before StartPolling()'s very first poll (fired a moment
 	-- ago, still in flight) has actually heard back from the fireplace.
@@ -709,16 +707,18 @@ function OnPollResponse(statusCode, body)
 	-- OnDriverLateInit notes above for why this replaced announcing the
 	-- placeholder immediately at driver init.
 	local changed = false
+	local firstReal = false
 	if (not g_haveRealState) then
 		g_haveRealState = true
 		changed = true
+		firstReal = true
 	end
 	if (power ~= nil and power ~= g_state.power) then g_state.power = power; changed = true end
 	if (pilot ~= nil and pilot ~= g_state.pilot) then g_state.pilot = pilot; changed = true end
 	if (height ~= nil and height ~= g_state.height) then g_state.height = height; changed = true end
 
 	if (changed) then
-		NotifyThermostatState()
+		NotifyRelayState(firstReal)
 	end
 end
 
@@ -813,13 +813,18 @@ function SetpointToHeight(nSetpoint)
 	return h
 end
 
-function NotifyThermostatState()
-	local mode = "Off"
-	if (g_state.power == 1) then mode = "Heat" end
-	local sp = HeightToSetpoint(g_state.height)
-	C4:SendToProxy(FIREPLACE_BINDING, "HVAC_MODE_CHANGED", { MODE = mode }, "NOTIFY")
-	C4:SendToProxy(FIREPLACE_BINDING, "HVAC_STATE_CHANGED", { STATE = mode }, "NOTIFY")
-	C4:SendToProxy(FIREPLACE_BINDING, "HEAT_SETPOINT_CHANGED", { SETPOINT = sp, SCALE = "FAHRENHEIT" }, "NOTIFY")
+function NotifyRelayState(bInitial)
+	-- Relay proxy: CLOSED = main flame on, OPENED = main flame off.
+	-- bInitial=true sends STATE_CLOSED / STATE_OPENED (the first real reading
+	-- from the fireplace); otherwise CLOSED / OPENED for a change.
+	local bOn = (g_state.power == 1)
+	local sName
+	if (bInitial) then
+		sName = bOn and "STATE_CLOSED" or "STATE_OPENED"
+	else
+		sName = bOn and "CLOSED" or "OPENED"
+	end
+	C4:SendToProxy(FIREPLACE_BINDING, sName, {}, "NOTIFY")
 end
 
 -- ===================== Proxy commands (Navigator -> device) ============================
@@ -848,6 +853,22 @@ end
 -- TurnFlameOn() as a named function (rather than inlining) since Pilot
 -- On/Off is still exposed separately via its own Composer command/action.
 function FireplaceProxyCommand(cmd, p)
+	-- Relay proxy commands (v118). CLOSE = turn the main flame on, OPEN = off.
+	if (cmd == "CLOSE") then
+		FireplaceProxyCommand("SET_MODE_HVAC", { MODE = "Heat" })
+		return
+	elseif (cmd == "OPEN") then
+		FireplaceProxyCommand("SET_MODE_HVAC", { MODE = "Off" })
+		return
+	elseif (cmd == "TOGGLE") then
+		if (g_state.power == 1) then
+			FireplaceProxyCommand("SET_MODE_HVAC", { MODE = "Off" })
+		else
+			FireplaceProxyCommand("SET_MODE_HVAC", { MODE = "Heat" })
+		end
+		return
+	end
+
 	if (cmd == "SET_MODE_HVAC") then
 		local mode = p.MODE
 		if (mode == "Heat") then
@@ -862,14 +883,14 @@ function FireplaceProxyCommand(cmd, p)
 			-- ignition - see the reconcile notes above OnPollResponse.
 			g_desiredPower = 1
 			g_desiredHeight = nil
-			NotifyThermostatState()
+			NotifyRelayState(false)
 			TurnFlameOn()
 		else -- "Off" (or anything unrecognized - fail safe to off)
 			g_state.power = 0
 			g_state.pilot = 0
 			g_desiredPower = 0
 			g_desiredHeight = nil
-			NotifyThermostatState()
+			NotifyRelayState(false)
 			SendFireplaceCommand("power", 0)
 			SendFireplaceCommand("pilot", 0)
 		end
@@ -896,7 +917,7 @@ function FireplaceProxyCommand(cmd, p)
 		g_state.height = height
 		g_desiredPower = 1
 		g_desiredHeight = height
-		NotifyThermostatState()
+		NotifyRelayState(false)
 		-- "flame_height" is the real local /post command name (confirmed
 		-- against intellifire4py's const.py) - "height" is only the /poll
 		-- response field name, a different string for the same concept.
@@ -906,7 +927,7 @@ function FireplaceProxyCommand(cmd, p)
 		-- The setpoint here is a re-purposed 1-5 intensity dial, not a
 		-- real temperature, so there's nothing to actually convert - just
 		-- acknowledge whatever scale Navigator asked for.
-		C4:SendToProxy(FIREPLACE_BINDING, "SCALE_CHANGED", { SCALE = p.SCALE or "FAHRENHEIT" }, "NOTIFY")
+		-- Thermostat-only command. The relay proxy has no scale, so nothing is sent.
 	else
 		LOG("Unhandled fireplace proxy command: " .. tostring(cmd))
 	end
@@ -959,11 +980,11 @@ function ExecuteCommand(strCommand, tParams)
 		end
 
 	elseif (strCommand == "Fireplace On" or strCommand == "ACTION_FIREPLACE_ON") then
-		-- Same code path as thermostat Mode = Heat (pilot-first/power ignition handled there).
+		-- Same code path as the relay CLOSE command (power=1 ignition handled there).
 		FireplaceProxyCommand("SET_MODE_HVAC", { MODE = "Heat" })
 
 	elseif (strCommand == "Fireplace Off" or strCommand == "ACTION_FIREPLACE_OFF") then
-		-- Same code path as thermostat Mode = Off (power=0, pilot=0).
+		-- Same code path as the relay OPEN command (power=0, pilot=0).
 		FireplaceProxyCommand("SET_MODE_HVAC", { MODE = "Off" })
 
 	elseif (strCommand == "ACTION_REFRESH_STATUS") then
