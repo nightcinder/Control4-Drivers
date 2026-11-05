@@ -18,7 +18,7 @@ Not affiliated with Control4 or the respective device manufacturers.
 | `drivers/moen-smart-shower` | Moen Smart Shower (U by Moen), standalone | 203 |
 | `drivers/yale-assure-lock-2` | Yale Assure Lock 2 (Wi-Fi Smart Module) | 117 |
 | `drivers/switchbot-cloud` | SwitchBot Cloud (parent: token, API, polling) | 4 (v2.1.0 in Lua) |
-| `drivers/switchbot-curtain` | SwitchBot Curtain (child of SwitchBot Cloud) | 14 (v2.1.0 in Lua) |
+| `drivers/switchbot-curtain` | SwitchBot Curtain (child of SwitchBot Cloud) | 15 (v2.1.1 in Lua) |
 | `drivers/lifx-bulb-legacy` | LIFX Bulb (earlier driver, kept for reference) | 107 |
 
 ### Daylight Lighting Scheduler (`Daylight_Lighting_Scheduler_driver`)

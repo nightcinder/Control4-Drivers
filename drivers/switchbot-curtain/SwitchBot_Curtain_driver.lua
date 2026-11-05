@@ -1,6 +1,6 @@
 --[[
   SwitchBot Curtain (child) driver for Control4 (OS 3.4.x)
-  Version: 2.1.0
+  Version: 2.1.1
   One instance = one window: a SwitchBot Curtain/Blind (Device), optionally a second unpaired motor
   (Second Device ID). It has no Token or Secret: bind its SwitchBot connection to a "SwitchBot Cloud"
   (parent) driver, which talks to the SwitchBot cloud API and polls status for every child.
@@ -10,7 +10,7 @@
     from parent: SB_STATUS {DEVICE_ID, POSITION, MOVING, BATTERY}, SB_PARENT_STATUS {TEXT}, SB_HELLO
 ]]
 
-local DRIVER_VERSION = "2.1.0"
+local DRIVER_VERSION = "2.1.1"
 local PROXY_BINDING = 5001
 local CLOUD_BINDING = 1
 local COMMAND_DEBOUNCE_MS = 800   -- rapid button presses collapse into the last one
@@ -324,6 +324,11 @@ function OnPropertyChanged(strProperty)
   if strProperty == "Device" or strProperty == "Second Device" then
     state.dev = {}
     register()
+  elseif strProperty == "Invert Level" then
+    -- Re-read the status so Navigator shows the level under the new mapping at once.
+    state.targetLevel = nil
+    state.followCount = 0
+    requestPoll()
   end
 end
 
