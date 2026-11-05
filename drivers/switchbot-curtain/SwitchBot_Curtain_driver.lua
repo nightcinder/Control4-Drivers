@@ -1,6 +1,6 @@
 --[[
   SwitchBot Curtain driver for Control4 (OS 3.4.x)
-  Version: 1.0.9
+  Version: 1.0.10
   UNTESTED against a live Control4 system or live SwitchBot account.
   Only the crypto/JSON helpers are exercised offline (tests/test_signing.lua).
 
@@ -9,7 +9,7 @@
   Never log Token or Secret.
 ]]
 
-local DRIVER_VERSION = "1.0.9"
+local DRIVER_VERSION = "1.0.10"
 local API_BASE = "https://api.switch-bot.com/v1.1"
 local PROXY_BINDING = 5001
 local SUPPORTED_TYPES = { ["Curtain"] = true, ["Curtain3"] = true, ["Blind Tilt"] = true }
@@ -527,61 +527,98 @@ local function scheduleFollowUp(ms)
   if ok then state.followTimer = timer end
 end
 
+local function deviceIds()
+  local ids = {}
+  for _, name in ipairs({ "Device ID", "Second Device ID" }) do
+    local v = (prop(name) or ""):gsub("%s+", "")
+    if v ~= "" and v ~= ids[1] then ids[#ids + 1] = v end
+  end
+  return ids
+end
+
+local function handleStatus(body)
+  if type(body.slidePosition) == "number" then
+    local level = clamp(positionToLevel(body.slidePosition), 0, 100)
+    local moving = body.moving == true
+    local target = state.targetLevel
+    local holding = target ~= nil and os.time() < state.holdUntil
+    local waiting = moving or (holding and math.abs(level - target) > LEVEL_TOLERANCE)
+    if waiting and state.followCount < MAX_FOLLOWUPS then
+      -- Mid-move or stale cloud status: do not overwrite the expected level; check again soon.
+      state.followCount = state.followCount + 1
+      print("SwitchBot " .. stamp() .. ": status level=" .. tostring(level) .. " moving="
+        .. tostring(moving) .. " target=" .. tostring(target) .. ", checking again")
+      scheduleFollowUp(FOLLOWUP_MS)
+    else
+      state.targetLevel = nil
+      state.followCount = 0
+      state.lastLevel = level
+      sendLevelToProxy(level)
+    end
+  end
+  if type(body.battery) == "number" then
+    setProp("Battery", body.battery)
+    local threshold = tonumber(prop("Low Battery Threshold")) or 20
+    if body.battery < threshold then
+      pcall(function() C4:FireEventByID(1) end)
+    end
+  end
+end
+
+-- Combine the status of one or two motors into one window: moving if either moves,
+-- position is the average, battery is the lowest.
+local function combineStatus(list)
+  local out, posSum, posN = {}, 0, 0
+  for _, b in ipairs(list) do
+    if type(b.slidePosition) == "number" then posSum = posSum + b.slidePosition; posN = posN + 1 end
+    if b.moving == true then out.moving = true end
+    if type(b.battery) == "number" and (out.battery == nil or b.battery < out.battery) then
+      out.battery = b.battery
+    end
+  end
+  if posN > 0 then out.slidePosition = posSum / posN end
+  return out
+end
+
 function SwitchBot_PollStatus()
-  local id = prop("Device ID") or ""
-  if id == "" then
+  local ids = deviceIds()
+  if #ids == 0 then
     setStatus("Set Device ID (use Discover Devices)")
     return
   end
-  apiRequest("GET", "/devices/" .. id .. "/status", nil, function(code, strData, strError)
-    handleCommon(code, strData, strError, function(obj)
-      local body = type(obj.body) == "table" and obj.body or {}
-      if type(body.slidePosition) == "number" then
-        local level = clamp(positionToLevel(body.slidePosition), 0, 100)
-        local moving = body.moving == true
-        local target = state.targetLevel
-        local holding = target ~= nil and os.time() < state.holdUntil
-        local waiting = moving or (holding and math.abs(level - target) > LEVEL_TOLERANCE)
-        if waiting and state.followCount < MAX_FOLLOWUPS then
-          -- Mid-move or stale cloud status: do not overwrite the expected level; check again soon.
-          state.followCount = state.followCount + 1
-          print("SwitchBot " .. stamp() .. ": status level=" .. tostring(level) .. " moving="
-            .. tostring(moving) .. " target=" .. tostring(target) .. ", checking again")
-          scheduleFollowUp(FOLLOWUP_MS)
-        else
-          state.targetLevel = nil
-          state.followCount = 0
-          state.lastLevel = level
-          sendLevelToProxy(level)
-        end
-      end
-      if type(body.battery) == "number" then
-        setProp("Battery", body.battery)
-        local threshold = tonumber(prop("Low Battery Threshold")) or 20
-        if body.battery < threshold then
-          pcall(function() C4:FireEventByID(1) end)
-        end
+  local results, remaining = {}, #ids
+  for _, id in ipairs(ids) do
+    apiRequest("GET", "/devices/" .. id .. "/status", nil, function(code, strData, strError)
+      handleCommon(code, strData, strError, function(obj)
+        results[#results + 1] = type(obj.body) == "table" and obj.body or {}
+      end)
+      remaining = remaining - 1
+      if remaining == 0 and #results > 0 then
+        handleStatus(#results == 1 and results[1] or combineStatus(results))
       end
     end)
-  end)
+  end
 end
 
 -- Send a command to the device, then poll once shortly afterwards.
 local function sendCommand(command, parameter)
-  local id = prop("Device ID") or ""
-  if id == "" then
+  local ids = deviceIds()
+  if #ids == 0 then
     setStatus("Set Device ID (use Discover Devices)")
     return
   end
-  local cmdType = "command"
   local body = '{"command":"' .. command .. '","parameter":"' .. (parameter or "default") ..
-    '","commandType":"' .. cmdType .. '"}'
-  apiRequest("POST", "/devices/" .. id .. "/commands", body, function(code, strData, strError)
-    handleCommon(code, strData, strError, function() end)
-    if state.failures == 0 then
-      scheduleFollowUp(FOLLOWUP_FIRST_MS)
-    end
-  end)
+    '","commandType":"command"}'
+  local remaining = #ids
+  for _, id in ipairs(ids) do
+    apiRequest("POST", "/devices/" .. id .. "/commands", body, function(code, strData, strError)
+      handleCommon(code, strData, strError, function() end)
+      remaining = remaining - 1
+      if remaining == 0 and state.failures == 0 then
+        scheduleFollowUp(FOLLOWUP_FIRST_MS)
+      end
+    end)
+  end
 end
 
 local function modeParam()
@@ -638,7 +675,9 @@ local function discover()
       local lines = {}
       for _, d in ipairs(list) do
         if type(d) == "table" and SUPPORTED_TYPES[tostring(d.deviceType)] then
-          lines[#lines + 1] = string.format("%s | %s | %s", tostring(d.deviceName), tostring(d.deviceId), tostring(d.deviceType))
+          local extra = ""
+          if d.master == true then extra = " | master of pair" elseif d.group == true then extra = " | paired" end
+          lines[#lines + 1] = string.format("%s | %s | %s%s", tostring(d.deviceName), tostring(d.deviceId), tostring(d.deviceType), extra)
         end
       end
       local text = #lines > 0 and table.concat(lines, "  ;  ") or "No curtain/blind devices found"
@@ -668,7 +707,7 @@ function OnDriverLateInit()
 end
 
 function OnPropertyChanged(strProperty)
-  if strProperty == "Token" or strProperty == "Secret" or strProperty == "Device ID"
+  if strProperty == "Token" or strProperty == "Secret" or strProperty == "Device ID" or strProperty == "Second Device ID"
     or strProperty == "Poll Interval Seconds" then
     state.failures = 0
     SwitchBot_PollStatus()
