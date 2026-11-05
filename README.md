@@ -17,7 +17,7 @@ Not affiliated with Control4 or the respective device manufacturers.
 | `drivers/intellifire` | IntelliFire Fireplace (Wi-Fi Module) | 115 |
 | `drivers/moen-smart-shower` | Moen Smart Shower (U by Moen), standalone | 203 |
 | `drivers/yale-assure-lock-2` | Yale Assure Lock 2 (Wi-Fi Smart Module) | 117 |
-| `drivers/switchbot-curtain` | SwitchBot Curtain (cloud API, untested) | 3 (v1.0.2 in Lua) |
+| `drivers/switchbot-curtain` | SwitchBot Curtain (cloud API, untested) | 4 (v1.0.3 in Lua) |
 | `drivers/lifx-bulb-legacy` | LIFX Bulb (earlier driver, kept for reference) | 107 |
 
 ### Daylight Lighting Scheduler (`Daylight_Lighting_Scheduler_driver`)

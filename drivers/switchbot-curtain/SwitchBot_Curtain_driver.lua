@@ -1,6 +1,6 @@
 --[[
   SwitchBot Curtain driver for Control4 (OS 3.4.x)
-  Version: 1.0.2
+  Version: 1.0.3
   UNTESTED against a live Control4 system or live SwitchBot account.
   Only the crypto/JSON helpers are exercised offline (tests/test_signing.lua).
 
@@ -9,7 +9,7 @@
   Never log Token or Secret.
 ]]
 
-local DRIVER_VERSION = "1.0.2"
+local DRIVER_VERSION = "1.0.3"
 local API_BASE = "https://api.switch-bot.com/v1.1"
 local PROXY_BINDING = 5001
 local SUPPORTED_TYPES = { ["Curtain"] = true, ["Curtain3"] = true, ["Blind Tilt"] = true }
@@ -377,8 +377,12 @@ local function apiRequest(method, path, body, callback)
   }
   local url = API_BASE .. path
   local function handler(_, strData, code, _, strError)
+    print("SwitchBot: " .. method .. " " .. path .. " -> HTTP " .. tostring(code)
+      .. (strError and (" error: " .. tostring(strError)) or "")
+      .. " body: " .. string.sub(tostring(strData or ""), 1, 200))
     callback(code, strData, strError)
   end
+  print("SwitchBot: " .. method .. " " .. path .. " sent")
   local ok, err = pcall(function()
     if method == "GET" then
       C4:urlGet(url, headers, false, handler)
@@ -524,7 +528,7 @@ local function discover()
           lines[#lines + 1] = string.format("%s | %s | %s", tostring(d.deviceName), tostring(d.deviceId), tostring(d.deviceType))
         end
       end
-      local text = #lines > 0 and table.concat(lines, "\n") or "No curtain/blind devices found"
+      local text = #lines > 0 and table.concat(lines, "  ;  ") or "No curtain/blind devices found"
       setProp("Discovered Devices", text)
       pcall(function() print("[SwitchBot Curtain] Discovered devices (name | id | type):\n" .. text) end)
     end)
@@ -564,6 +568,12 @@ function ExecuteCommand(strCommand, tParams)
     end
   end
   print("SwitchBot: ExecuteCommand " .. tostring(strCommand))
+  if strCommand == "ACTION_OPEN" then strCommand = "Open"
+  elseif strCommand == "ACTION_CLOSE" then strCommand = "Close"
+  elseif strCommand == "ACTION_REFRESH" then
+    SwitchBot_PollStatus()
+    return
+  end
   if strCommand == "Discover Devices" or strCommand == "DISCOVER" then
     discover()
   elseif strCommand == "Open" or strCommand == "OPEN" then
