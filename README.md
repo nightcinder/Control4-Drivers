@@ -17,8 +17,8 @@ Not affiliated with Control4 or the respective device manufacturers.
 | `drivers/intellifire` | IntelliFire Fireplace (Wi-Fi Module) | 115 |
 | `drivers/moen-smart-shower` | Moen Smart Shower (U by Moen), standalone | 203 |
 | `drivers/yale-assure-lock-2` | Yale Assure Lock 2 (Wi-Fi Smart Module) | 117 |
-| `drivers/switchbot-cloud` | SwitchBot Cloud (parent: token, API, polling) | 3 (v2.0.0 in Lua) |
-| `drivers/switchbot-curtain` | SwitchBot Curtain (child of SwitchBot Cloud) | 13 (v2.0.0 in Lua) |
+| `drivers/switchbot-cloud` | SwitchBot Cloud (parent: token, API, polling) | 4 (v2.1.0 in Lua) |
+| `drivers/switchbot-curtain` | SwitchBot Curtain (child of SwitchBot Cloud) | 14 (v2.1.0 in Lua) |
 | `drivers/lifx-bulb-legacy` | LIFX Bulb (earlier driver, kept for reference) | 107 |
 
 ### Daylight Lighting Scheduler (`Daylight_Lighting_Scheduler_driver`)
@@ -67,8 +67,8 @@ Two drivers. **SwitchBot Cloud** (`SwitchBot_Cloud_driver`) holds the API Token 
 Setup:
 - Get the token and secret in the SwitchBot app: Profile, Preferences, About, tap the app version 10 times, then Developer Options. Add one **SwitchBot Cloud** driver and paste them into **Token** and **Secret**. One token covers every hub and floor
 - Run **Discover Devices** on the parent to list device IDs (paired motors are tagged `master of pair` / `paired`)
-- Add a **SwitchBot Curtain** per window, bind its **SwitchBot Cloud** connection to the parent in Connections, and put the ID in **Device ID**. Curtains paired in the SwitchBot app: use the master ID alone
-- **Second Device ID** is only for two unpaired motors on one window: every command goes to both, status is combined (moving if either moves, position averaged, lowest battery)
+- Add a **SwitchBot Curtain** per window and bind its **SwitchBot Cloud** connection to the parent in Connections (a one-time manual step). **Device** is then a drop-down of the discovered curtains by name (the parent runs Discover on its own when the Token is set). Curtains paired in the SwitchBot app: pick the master alone
+- **Second Device** is only for two unpaired motors on one window: every command goes to both, status is combined (moving if either moves, position averaged, lowest battery)
 - **Invert Level** (per child) defaults to off (SwitchBot position 100 = open, as on Den West). Set True if a curtain reports 0 = open; the Lounge pair needs True. It depends on how each motor was calibrated in the SwitchBot app
 - The parent polls every 300 s by default; after a command the child shows the expected level at once, sends only the last of rapid presses (0.8 s debounce), and asks the parent for status every few seconds until the curtain stops, ignoring SwitchBot's stale just-after-command status; the account limit is 10,000 API calls per day
 - Parent and child talk with `C4:SendToDevice` (`SB_REGISTER`, `SB_COMMAND`, `SB_POLL` to the parent; `SB_STATUS`, `SB_PARENT_STATUS`, `SB_HELLO` back), with the connection class `SWITCHBOT_CLOUD` linking them
