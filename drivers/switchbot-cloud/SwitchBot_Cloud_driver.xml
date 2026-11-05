@@ -6,12 +6,15 @@
 	<model>SwitchBot Cloud (API v1.1 parent)</model>
 	<created>11/04/2026 10:50 PM</created>
 	<modified>11/04/2026 10:50 PM</modified>
-	<version>2</version>
+	<version>3</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
+	<combo>true</combo>
+	<proxies />
+	<capabilities />
 	<templatedescription>SwitchBot Cloud - holds the API token and serves SwitchBot Curtain child drivers</templatedescription>
 
 	<connections>
