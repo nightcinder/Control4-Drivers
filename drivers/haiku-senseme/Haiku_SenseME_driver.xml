@@ -5,8 +5,8 @@
 	<name>Haiku SenseME Fan</name>
 	<model>Haiku / Haiku H / Haiku L / Haiku C / i6</model>
 	<created>08/14/2026 12:00 PM</created>
-	<modified>08/15/2026 9:45 PM</modified>
-	<version>323</version>
+	<modified>11/05/2026 11:10 AM</modified>
+	<version>324</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
