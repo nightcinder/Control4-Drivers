@@ -299,9 +299,17 @@ function ParseRootMessage(bytes)
 	PBWalk(bytes, 1, #bytes, function(fn, wt, val)
 		if fn == RF_ROOT2 and wt == 2 then
 			PBWalk(val, 1, #val, function(fn2, wt2, val2)
+				LOG("RX Root2 field " .. tostring(fn2) .. " wt " .. tostring(wt2))
 				if fn2 == R2F_QUERY_RESULT and wt2 == 2 then
 					PBWalk(val2, 1, #val2, function(fn3, wt3, val3)
 						if fn3 == QRF_PROPERTIES and wt3 == 2 then
+							table.insert(results, ParseProperties(val3))
+						end
+					end)
+				elseif fn2 == R2F_COMMIT and wt2 == 2 then
+					-- Some fans push app-side changes as a Commit instead of a QueryResult
+					PBWalk(val2, 1, #val2, function(fn3, wt3, val3)
+						if fn3 == CF_PROPERTIES and wt3 == 2 then
 							table.insert(results, ParseProperties(val3))
 						end
 					end)
