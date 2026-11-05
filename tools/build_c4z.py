@@ -32,14 +32,20 @@ COMMON_FILES = [
 PACKAGE_NAMES = {
     "haiku-senseme": "Haiku_SenseME_i6",
     "haiku-senseme-nolight": "Haiku_SenseME_i6_NoLight",
+    "intellifire": "IntelliFire_driver",
+    "lifx-lan": "lifx_lan",
+    "moen-smart-shower": "Moen_Smart_Shower_Standalone_driver_v200",
+    "yale-assure-lock-2": "Yale_AssureLock2",
+    "daylight-lighting-scheduler": "daylight_lighting_scheduler",
+    "media-remote-bridge-untested": "MediaRemoteBridge",
 }
 REQUIRE_COMMON = re.compile(r"^\s*(?:\w+\s*=\s*)?require\s*\(?\s*['\"]drivers-common-public", re.M)
 
 
 def build(folder):
     path = os.path.join(DRIVERS, folder)
-    xmls = glob.glob(os.path.join(path, "*_driver.xml"))
-    luas = glob.glob(os.path.join(path, "*_driver.lua"))
+    xmls = glob.glob(os.path.join(path, "*_driver.xml")) or glob.glob(os.path.join(path, "driver.xml"))
+    luas = glob.glob(os.path.join(path, "*_driver.lua")) or glob.glob(os.path.join(path, "driver.lua"))
     if len(xmls) != 1 or len(luas) != 1:
         print(f"skip {folder}: expected one *_driver.xml and one *_driver.lua")
         return False

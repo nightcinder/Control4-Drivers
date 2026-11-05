@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Media Remote Bridge v0.4.1 - driver skeleton.
+  Media Remote Bridge v0.4.2 - driver skeleton.
   Layout follows Daylight_Lighting_Scheduler_driver.xml (software-only, no proxies,
   script and properties under <config>). See README.md for what is confirmed and what is TODO(verify).
 -->
 <devicedata>
-  <version>6</version>
+  <version>7</version>
   <manufacturer>Custom</manufacturer>
   <name>Media Remote Bridge</name>
   <model>Media Remote Bridge</model>
   <creator>Custom</creator>
   <created>11/01/2026 12:00 PM</created>
-  <modified>11/01/2026 03:28 PM</modified>
+  <modified>11/05/2026 12:00 PM</modified>
   <control>lua_gen</control>
   <controlmethod>other</controlmethod>
   <driver>DriverWorks</driver>

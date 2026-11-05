@@ -4,7 +4,7 @@
 -- the raw TCP stream is NOT from a reference driver: DLS speaks a plain line protocol.
 -- Anything not confirmed by a reference is marked TODO(verify). See README.md.
 
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 
 local LOG_PREFIX = "[MediaRemoteBridge " .. VERSION .. "] "
 local ROOM_NAMES = { "Upstairs", "Downstairs" }

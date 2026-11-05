@@ -96,6 +96,8 @@ python3 tools/build_c4z.py lifx-lan intellifire  # some
 
 Output goes to `dist/` (ignored by git). Import the `.c4z` in Composer Pro with Driver, Add or Update Driver.
 
+Composer updates an installed driver in place only when the new `.c4z` has the same file name as the original install. `PACKAGE_NAMES` in `tools/build_c4z.py` maps a folder to the name it was first installed under (for example `lifx-lan` builds `lifx_lan.c4z`). Folders not listed build under their own name, so add an entry before rebuilding a driver that was installed under a different name.
+
 ### Control4 helper files (Moen only)
 
 The Moen driver uses Control4's open-source Lua library `drivers-common-public` (JSON, URL, timer and websocket helpers), published by Control4 / Snap One on GitHub (`snap-one/drivers-common-public`, see its `LICENSE.md`). Those files are Control4's code, so this repo does not carry copies of them: they would go stale and would need Control4's license notices kept with them.
