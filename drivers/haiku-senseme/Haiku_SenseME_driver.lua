@@ -90,7 +90,7 @@ PF_IP_ADDRESS                = 120 -- string
 
 -- Root2 / Commit / Query / QueryResult field numbers
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION    = "323"
+DRIVER_VERSION    = "324"
 
 RF_ROOT2          = 2
 R2F_COMMIT        = 2
@@ -272,7 +272,9 @@ end
 -- Parses one Properties submessage into a plain Lua table.
 function ParseProperties(bytes)
 	local p = {}
+	local seen = {}
 	PBWalk(bytes, 1, #bytes, function(fn, wt, val)
+		table.insert(seen, tostring(fn) .. "=" .. ((wt == 0) and tostring(val) or ("wt" .. tostring(wt))))
 		if fn == PF_NAME and wt == 2 then p.name = val
 		elseif fn == PF_MODEL and wt == 2 then p.model = val
 		elseif fn == PF_FIRMWARE_VERSION and wt == 2 then p.firmware_version = val
@@ -292,6 +294,7 @@ function ParseProperties(bytes)
 			end)
 		end
 	end)
+	p._seen = table.concat(seen, ",")
 	return p
 end
 
@@ -525,6 +528,7 @@ end
 function HandleRootMessage(rawBytes)
 	local propsList = ParseRootMessage(rawBytes)
 	for _, p in ipairs(propsList) do
+		LOG("RX props (field=value): " .. tostring(p._seen))
 		ApplyProperties(p)
 	end
 end
@@ -551,6 +555,11 @@ function ApplyProperties(p)
 		if (HAS_LIGHT_PROXY) then
 			g_hasLight = p.has_light
 		end
+	end
+
+	-- Pushed updates may carry only speed_percent (0-100) without the 0-7 step
+	if (p.speed == nil and p.speed_percent ~= nil) then
+		p.speed = PercentToSpeed(p.speed_percent)
 	end
 
 	local fanPowerChanged = false
