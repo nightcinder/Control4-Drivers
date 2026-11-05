@@ -1,6 +1,6 @@
 --[[
   SwitchBot Curtain driver for Control4 (OS 3.4.x)
-  Version: 1.0.5
+  Version: 1.0.6
   UNTESTED against a live Control4 system or live SwitchBot account.
   Only the crypto/JSON helpers are exercised offline (tests/test_signing.lua).
 
@@ -9,7 +9,7 @@
   Never log Token or Secret.
 ]]
 
-local DRIVER_VERSION = "1.0.5"
+local DRIVER_VERSION = "1.0.6"
 local API_BASE = "https://api.switch-bot.com/v1.1"
 local PROXY_BINDING = 5001
 local SUPPORTED_TYPES = { ["Curtain"] = true, ["Curtain3"] = true, ["Blind Tilt"] = true }
@@ -608,9 +608,11 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
   tParams = tParams or {}
   print("SwitchBot " .. stamp() .. ": ReceivedFromProxy binding=" .. tostring(idBinding)
     .. " command=" .. tostring(strCommand) .. " params=" .. paramsText(tParams))
-  if strCommand == "OPEN" then
+  -- Confirmed from a live log (2026-11-04): the Navigator open/close buttons send UP and DOWN.
+  -- UP = open and DOWN = close is the assumed mapping (confirm by watching the curtain).
+  if strCommand == "OPEN" or strCommand == "UP" then
     sendCommand("turnOn", "default")
-  elseif strCommand == "CLOSE" then
+  elseif strCommand == "CLOSE" or strCommand == "DOWN" then
     sendCommand("turnOff", "default")
   elseif strCommand == "STOP" then
     sendCommand("pause", "default")

@@ -17,7 +17,7 @@ Not affiliated with Control4 or the respective device manufacturers.
 | `drivers/intellifire` | IntelliFire Fireplace (Wi-Fi Module) | 115 |
 | `drivers/moen-smart-shower` | Moen Smart Shower (U by Moen), standalone | 203 |
 | `drivers/yale-assure-lock-2` | Yale Assure Lock 2 (Wi-Fi Smart Module) | 117 |
-| `drivers/switchbot-curtain` | SwitchBot Curtain (cloud API, untested) | 6 (v1.0.5 in Lua) |
+| `drivers/switchbot-curtain` | SwitchBot Curtain (cloud API, untested) | 7 (v1.0.6 in Lua) |
 | `drivers/lifx-bulb-legacy` | LIFX Bulb (earlier driver, kept for reference) | 107 |
 
 ### Daylight Lighting Scheduler (`Daylight_Lighting_Scheduler_driver`)
@@ -68,7 +68,7 @@ Controls one SwitchBot Curtain / Curtain 3 / Blind Tilt through the SwitchBot cl
 - Polls status every 300 s by default (plus once shortly after a command); the account limit is 10,000 API calls per day
 - **Invert Level** defaults to off: on a live Curtain, SwitchBot position 100 was open, matching Control4 100 = open. Turn it on only if a curtain looks reversed
 - Offline signing test: `lua5.1 tools/switchbot-curtain/test_signing.lua drivers/switchbot-curtain/SwitchBot_Curtain_driver.lua` (SHA-256, HMAC-SHA256, Base64 and signature checks, no network)
-- Unverified: not run against a live Control4 or SwitchBot account. Control4 API names (`C4:urlGet`/`urlPost` callbacks, timers, events) are from memory of the OS 3 SDK, and the blind proxy details (class `BLIND`, `SET_LEVEL_TARGET`/`LEVEL_TARGET` in, `LEVEL_CHANGED` out) are inferred from third-party Control4 libraries and unconfirmed. v1.0.0 would not add to a project because its XML lacked the `<config>` and `<connections>` blocks; 1.0.1 follows the Haiku driver's structure. Signature is sent without uppercasing, per SwitchBot's samples; change it if auth fails. Token and Secret are plain STRING properties, not masked
+- Unverified: not run against a live Control4 or SwitchBot account. Control4 API names (`C4:urlGet`/`urlPost` callbacks, timers, events) are from memory of the OS 3 SDK, and the blind proxy details (class `BLIND`, `SET_LEVEL_TARGET`/`LEVEL_TARGET` in, `LEVEL_CHANGED` out) are inferred (the Navigator open/close buttons were confirmed to send `UP`/`DOWN`, mapped to open/close) from third-party Control4 libraries and unconfirmed. v1.0.0 would not add to a project because its XML lacked the `<config>` and `<connections>` blocks; 1.0.1 follows the Haiku driver's structure. Signature is sent without uppercasing, per SwitchBot's samples; change it if auth fails. Token and Secret are plain STRING properties, not masked
 
 ### LIFX Bulb, earlier driver (`LIFX_Bulb_driver`)
 
