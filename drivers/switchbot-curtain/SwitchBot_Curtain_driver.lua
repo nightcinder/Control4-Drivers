@@ -1,6 +1,6 @@
 --[[
   SwitchBot Curtain driver for Control4 (OS 3.4.x)
-  Version: 1.0.4
+  Version: 1.0.5
   UNTESTED against a live Control4 system or live SwitchBot account.
   Only the crypto/JSON helpers are exercised offline (tests/test_signing.lua).
 
@@ -9,7 +9,7 @@
   Never log Token or Secret.
 ]]
 
-local DRIVER_VERSION = "1.0.4"
+local DRIVER_VERSION = "1.0.5"
 local API_BASE = "https://api.switch-bot.com/v1.1"
 local PROXY_BINDING = 5001
 local SUPPORTED_TYPES = { ["Curtain"] = true, ["Curtain3"] = true, ["Blind Tilt"] = true }
@@ -367,6 +367,14 @@ local function stamp()
   return ok and v or "--:--:--"
 end
 
+local function paramsText(t)
+  if type(t) ~= "table" then return tostring(t) end
+  local parts = {}
+  for k, v in pairs(t) do parts[#parts + 1] = tostring(k) .. "=" .. tostring(v) end
+  table.sort(parts)
+  return "{" .. table.concat(parts, ", ") .. "}"
+end
+
 local function apiRequest(method, path, body, callback)
   local token, secret = prop("Token") or "", prop("Secret") or ""
   if token == "" or secret == "" then
@@ -477,6 +485,7 @@ function SwitchBot_PollStatus()
       if type(body.slidePosition) == "number" then
         local level = clamp(positionToLevel(body.slidePosition), 0, 100)
         state.lastLevel = level
+        print("SwitchBot " .. stamp() .. ": SendToProxy LEVEL_CHANGED level=" .. tostring(level))
         pcall(function() C4:SendToProxy(PROXY_BINDING, "LEVEL_CHANGED", { LEVEL = level, TARGET = level }) end)
       end
       if type(body.battery) == "number" then
@@ -597,6 +606,8 @@ end
 -- Proxy (shade) commands from Composer, UI and programming.
 function ReceivedFromProxy(idBinding, strCommand, tParams)
   tParams = tParams or {}
+  print("SwitchBot " .. stamp() .. ": ReceivedFromProxy binding=" .. tostring(idBinding)
+    .. " command=" .. tostring(strCommand) .. " params=" .. paramsText(tParams))
   if strCommand == "OPEN" then
     sendCommand("turnOn", "default")
   elseif strCommand == "CLOSE" then
