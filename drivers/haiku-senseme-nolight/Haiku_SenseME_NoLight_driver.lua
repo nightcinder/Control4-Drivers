@@ -89,6 +89,9 @@ PF_LIGHT_BRIGHTNESS_LEVEL   = 70  -- int32 0-16
 PF_IP_ADDRESS                = 120 -- string
 
 -- Root2 / Commit / Query / QueryResult field numbers
+-- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
+DRIVER_VERSION    = "102"
+
 RF_ROOT2          = 2
 R2F_COMMIT        = 2
 R2F_QUERY         = 3
@@ -269,7 +272,9 @@ end
 -- Parses one Properties submessage into a plain Lua table.
 function ParseProperties(bytes)
 	local p = {}
+	local seen = {}
 	PBWalk(bytes, 1, #bytes, function(fn, wt, val)
+		table.insert(seen, tostring(fn) .. "=" .. ((wt == 0) and tostring(val) or ("wt" .. tostring(wt))))
 		if fn == PF_NAME and wt == 2 then p.name = val
 		elseif fn == PF_MODEL and wt == 2 then p.model = val
 		elseif fn == PF_FIRMWARE_VERSION and wt == 2 then p.firmware_version = val
@@ -289,6 +294,7 @@ function ParseProperties(bytes)
 			end)
 		end
 	end)
+	p._seen = table.concat(seen, ",")
 	return p
 end
 
@@ -299,9 +305,17 @@ function ParseRootMessage(bytes)
 	PBWalk(bytes, 1, #bytes, function(fn, wt, val)
 		if fn == RF_ROOT2 and wt == 2 then
 			PBWalk(val, 1, #val, function(fn2, wt2, val2)
+				LOG("RX Root2 field " .. tostring(fn2) .. " wt " .. tostring(wt2))
 				if fn2 == R2F_QUERY_RESULT and wt2 == 2 then
 					PBWalk(val2, 1, #val2, function(fn3, wt3, val3)
 						if fn3 == QRF_PROPERTIES and wt3 == 2 then
+							table.insert(results, ParseProperties(val3))
+						end
+					end)
+				elseif fn2 == R2F_COMMIT and wt2 == 2 then
+					-- Some fans push app-side changes as a Commit instead of a QueryResult
+					PBWalk(val2, 1, #val2, function(fn3, wt3, val3)
+						if fn3 == CF_PROPERTIES and wt3 == 2 then
 							table.insert(results, ParseProperties(val3))
 						end
 					end)
@@ -315,11 +329,14 @@ end
 -- ===================== Driver lifecycle ============================
 function OnDriverInit()
 	LoadProperties()
+	C4:UpdateProperty("Driver Version", DRIVER_VERSION)
 	LOG("OnDriverInit - IP=" .. g_ip .. " Name=" .. g_name)
 end
 
 function OnDriverLateInit()
 	LoadProperties()
+	C4:UpdateProperty("Driver Version", DRIVER_VERSION)
+	LOG("Driver version " .. DRIVER_VERSION)
 	BindTo(g_ip)
 	StartPolling()
 	NotifyOnline(false) -- will flip true once OnConnectionStatusChanged reports ONLINE
@@ -511,6 +528,7 @@ end
 function HandleRootMessage(rawBytes)
 	local propsList = ParseRootMessage(rawBytes)
 	for _, p in ipairs(propsList) do
+		LOG("RX props (field=value): " .. tostring(p._seen))
 		ApplyProperties(p)
 	end
 end
