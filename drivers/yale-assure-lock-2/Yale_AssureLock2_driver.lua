@@ -128,7 +128,7 @@
 ================================================================================]]
 
 -- ===================== Constants ============================
-DRIVER_VERSION   = "117"
+DRIVER_VERSION   = "118"
 
 API_BASE         = "https://api-production.august.com"
 
@@ -341,11 +341,13 @@ end
 -- ===================== Driver lifecycle ============================
 function OnDriverInit()
 	LoadProperties()
+	C4:UpdateProperty("Driver Version", DRIVER_VERSION)
 	LoadPersisted()
 end
 
 function OnDriverLateInit()
 	LoadProperties()
+	C4:UpdateProperty("Driver Version", DRIVER_VERSION)
 	LoadPersisted()
 	LOG("Driver v" .. DRIVER_VERSION .. " late init. Auth state: " .. g_authState)
 

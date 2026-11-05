@@ -240,6 +240,10 @@ requiring a console command: OnConnectionStatusChanged's OFFLINE branch now
 clears g_pendingReq and requeues the interrupted request when this happens.
 ================================================================================]]
 
+-- ===================== Version ============================
+-- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
+DRIVER_VERSION = "116"
+
 -- ===================== Globals / Config ============================
 g_ip         = "0.0.0.0"
 g_userId     = ""      -- iftapi.net user_id (see header notes)
@@ -294,11 +298,13 @@ end
 -- ===================== Driver lifecycle ============================
 function OnDriverInit()
 	LoadProperties()
+	C4:UpdateProperty("Driver Version", DRIVER_VERSION)
 	LOG("OnDriverInit - IP=" .. g_ip)
 end
 
 function OnDriverLateInit()
 	LoadProperties()
+	C4:UpdateProperty("Driver Version", DRIVER_VERSION)
 	BindTo(g_ip)
 	StartPolling()
 	NotifyOnline(false)

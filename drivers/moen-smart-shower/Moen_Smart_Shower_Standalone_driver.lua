@@ -159,6 +159,8 @@ WebSocket = require ('drivers-common-public.module.websocket')
 -- JSON is already made global by global/url.lua (via global/lib.lua)
 
 -- ===================== Constants ============================
+-- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
+DRIVER_VERSION = "204"
 API_BASE_URL       = 'https://www.moen-iot.com'
 API_AUTHENTICATE   = '/v2/authenticate'
 API_CREDENTIALS    = '/v3/credentials'
@@ -220,6 +222,7 @@ end
 -- ===================== Driver lifecycle ============================
 function OnDriverInit ()
 	LoadProperties ()
+	C4:UpdateProperty("Driver Version", DRIVER_VERSION)
 	LOG ('OnDriverInit')
 end
 
@@ -228,6 +231,7 @@ end
 -- see the safety rule in the file header.
 function OnDriverLateInit ()
 	LoadProperties ()
+	C4:UpdateProperty("Driver Version", DRIVER_VERSION)
 	NotifyOnline (false)
 	StartAuthFlow ()
 end

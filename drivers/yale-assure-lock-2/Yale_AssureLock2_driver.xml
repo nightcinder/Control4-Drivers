@@ -5,8 +5,8 @@
 	<name>Yale Assure Lock 2 (Wi-Fi Smart Module)</name>
 	<model>YRD4xx / YRD5xx with Wi-Fi Smart Module (Yale Access cloud)</model>
 	<created>09/03/2026 12:00 PM</created>
-	<modified>09/03/2026 07:05 PM</modified>
-	<version>117</version>
+	<modified>11/05/2026 12:00 PM</modified>
+	<version>118</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -273,6 +273,12 @@
 		</actions>
 
 		<properties>
+			<property>
+				<name>Driver Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
 			<property>
 				<name>Brand</name>
 				<type>LIST</type>
