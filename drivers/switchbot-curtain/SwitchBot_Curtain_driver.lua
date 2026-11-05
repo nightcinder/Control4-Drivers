@@ -1,6 +1,6 @@
 --[[
   SwitchBot Curtain driver for Control4 (OS 3.4.x)
-  Version: 1.0.0
+  Version: 1.0.1
   UNTESTED against a live Control4 system or live SwitchBot account.
   Only the crypto/JSON helpers are exercised offline (tests/test_signing.lua).
 
@@ -9,7 +9,7 @@
   Never log Token or Secret.
 ]]
 
-local DRIVER_VERSION = "1.0.0"
+local DRIVER_VERSION = "1.0.1"
 local API_BASE = "https://api.switch-bot.com/v1.1"
 local PROXY_BINDING = 5001
 local SUPPORTED_TYPES = { ["Curtain"] = true, ["Curtain3"] = true, ["Blind Tilt"] = true }
@@ -466,7 +466,7 @@ function SwitchBot_PollStatus()
       if type(body.slidePosition) == "number" then
         local level = clamp(positionToLevel(body.slidePosition), 0, 100)
         state.lastLevel = level
-        pcall(function() C4:SendToProxy(PROXY_BINDING, "SHADE_LEVEL_CHANGED", { LEVEL = level }) end)
+        pcall(function() C4:SendToProxy(PROXY_BINDING, "LEVEL_CHANGED", { LEVEL = level, TARGET = level }) end)
       end
       if type(body.battery) == "number" then
         setProp("Battery", body.battery)
@@ -577,6 +577,22 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
     sendCommand("turnOff", "default")
   elseif strCommand == "STOP" then
     sendCommand("pause", "default")
+  elseif strCommand == "SET_LEVEL_TARGET" then
+    -- Blind proxy: LEVEL_TARGET carries 0-100, or an open/closed marker (unverified names).
+    local t = tParams.LEVEL_TARGET
+    if t == "LEVEL_TARGET_OPEN" then
+      sendCommand("turnOn", "default")
+    elseif t == "LEVEL_TARGET_CLOSED" then
+      sendCommand("turnOff", "default")
+    else
+      setLevel(t)
+    end
+  elseif strCommand == "TOGGLE" then
+    if (state.lastLevel or 0) > 0 then
+      sendCommand("turnOff", "default")
+    else
+      sendCommand("turnOn", "default")
+    end
   elseif strCommand == "SET_LEVEL" then
     setLevel(tParams.LEVEL)
   end
