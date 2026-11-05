@@ -6,7 +6,7 @@
 	<model>SwitchBot Curtain / Curtain 3 / Blind Tilt (cloud API v1.1)</model>
 	<created>11/04/2026 10:00 PM</created>
 	<modified>11/04/2026 10:30 PM</modified>
-	<version>3</version>
+	<version>4</version>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
@@ -73,6 +73,18 @@
 			<action>
 				<name>Discover Devices</name>
 				<command>DISCOVER</command>
+			</action>
+			<action>
+				<name>Test Open</name>
+				<command>ACTION_OPEN</command>
+			</action>
+			<action>
+				<name>Test Close</name>
+				<command>ACTION_CLOSE</command>
+			</action>
+			<action>
+				<name>Refresh Status</name>
+				<command>ACTION_REFRESH</command>
 			</action>
 		</actions>
 
@@ -156,7 +168,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>1.0.2</default>
+				<default>1.0.3</default>
 			</property>
 		</properties>
 	</config>
