@@ -6,15 +6,29 @@
 	<model>SwitchBot Curtain / Curtain 3 / Blind Tilt (cloud API v1.1)</model>
 	<created>11/04/2026 10:00 PM</created>
 	<modified>11/04/2026 10:30 PM</modified>
-	<version>8</version>
+	<version>9</version>
+	<small image_source="c4z">icons/device_sm.png</small>
+	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
 	<templatedescription>SwitchBot Curtain - cloud API control (open/close/position) via a SwitchBot Hub</templatedescription>
 
 	<proxies qty="1">
-		<proxy proxybindingid="5001" name="SwitchBot Curtain" primary="True">blind</proxy>
+		<proxy image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png" proxybindingid="5001" name="SwitchBot Curtain" primary="True">blind</proxy>
 	</proxies>
+
+	<capabilities>
+		<navigator_display_option proxybindingid="5001">
+			<display_icons>
+				<Icon width="1024" height="1024">controller://driver/switchbot-curtain/icons/device/blind/experience_1024.png</Icon>
+				<Icon width="512" height="512">controller://driver/switchbot-curtain/icons/device/blind/experience_512.png</Icon>
+				<Icon width="300" height="300">controller://driver/switchbot-curtain/icons/device/blind/experience_300.png</Icon>
+				<Icon width="90" height="90">controller://driver/switchbot-curtain/icons/device/blind/experience_90.png</Icon>
+				<Icon width="70" height="70">controller://driver/switchbot-curtain/icons/device/blind/experience_70.png</Icon>
+			</display_icons>
+		</navigator_display_option>
+	</capabilities>
 
 	<connections>
 		<connection>
@@ -56,7 +70,7 @@
 			</command>
 			<command>
 				<name>Set Position</name>
-				<description>Move to a Control4 level from 0 to 100 (100 = open)</description>
+				<description>Move to a Control4 level from 0 to 100 (100 = open; the driver maps it to SwitchBot position 0 when Invert Level is True)</description>
 				<params>
 					<param>
 						<name>LEVEL</name>
@@ -147,10 +161,10 @@
 				<name>Invert Level</name>
 				<type>LIST</type>
 				<readonly>false</readonly>
-				<default>False</default>
+				<default>True</default>
 				<items>
-					<item>False</item>
 					<item>True</item>
+					<item>False</item>
 				</items>
 			</property>
 			<property>
@@ -168,7 +182,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>1.0.7</default>
+				<default>1.0.8</default>
 			</property>
 		</properties>
 	</config>
