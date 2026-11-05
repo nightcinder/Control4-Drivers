@@ -5,8 +5,8 @@
 	<name>IntelliFire Fireplace (Wi-Fi Module)</name>
 	<model>IFT-WFM (Off / Pilot / Flame, variable flame height)</model>
 	<created>08/15/2026 12:00 PM</created>
-	<modified>09/03/2026 07:20 PM</modified>
-	<version>115</version>
+	<modified>11/05/2026 12:00 PM</modified>
+	<version>116</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -188,6 +188,12 @@
 		</actions>
 
 		<properties>
+			<property>
+				<name>Driver Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
 			<property>
 				<name>Fireplace IP Address</name>
 				<type>STRING</type>

@@ -5,8 +5,8 @@
 	<name>Moen Smart Shower (U by Moen) - Standalone</name>
 	<model>TS3302 / TS3304 / S3102 / S3104 Digital Shower Valve + Controller</model>
 	<created>08/16/2026 12:00 PM</created>
-	<modified>08/16/2026 12:00 PM</modified>
-	<version>203</version>
+	<modified>11/05/2026 12:00 PM</modified>
+	<version>204</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -358,6 +358,12 @@
 		</actions>
 
 		<properties>
+			<property>
+				<name>Driver Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
 			<property>
 				<name>Moen Account Email</name>
 				<type>STRING</type>
