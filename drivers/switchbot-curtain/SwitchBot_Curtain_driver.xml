@@ -6,7 +6,7 @@
 	<model>SwitchBot Curtain / Curtain 3 / Blind Tilt (cloud API v1.1)</model>
 	<created>11/04/2026 10:00 PM</created>
 	<modified>11/04/2026 10:30 PM</modified>
-	<version>4</version>
+	<version>5</version>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
@@ -56,7 +56,7 @@
 			</command>
 			<command>
 				<name>Set Position</name>
-				<description>Move to a Control4 level from 0 to 100 (100 = open when Invert Level is True)</description>
+				<description>Move to a Control4 level from 0 to 100 (100 = open)</description>
 				<params>
 					<param>
 						<name>LEVEL</name>
@@ -147,10 +147,10 @@
 				<name>Invert Level</name>
 				<type>LIST</type>
 				<readonly>false</readonly>
-				<default>True</default>
+				<default>False</default>
 				<items>
-					<item>True</item>
 					<item>False</item>
+					<item>True</item>
 				</items>
 			</property>
 			<property>
@@ -168,7 +168,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>1.0.3</default>
+				<default>1.0.4</default>
 			</property>
 		</properties>
 	</config>
