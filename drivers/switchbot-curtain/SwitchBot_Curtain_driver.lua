@@ -1,6 +1,6 @@
 --[[
   SwitchBot Curtain driver for Control4 (OS 3.4.x)
-  Version: 1.0.10
+  Version: 1.0.11
   UNTESTED against a live Control4 system or live SwitchBot account.
   Only the crypto/JSON helpers are exercised offline (tests/test_signing.lua).
 
@@ -9,7 +9,7 @@
   Never log Token or Secret.
 ]]
 
-local DRIVER_VERSION = "1.0.10"
+local DRIVER_VERSION = "1.0.11"
 local API_BASE = "https://api.switch-bot.com/v1.1"
 local PROXY_BINDING = 5001
 local SUPPORTED_TYPES = { ["Curtain"] = true, ["Curtain3"] = true, ["Blind Tilt"] = true }
@@ -341,7 +341,7 @@ end
 -- Curtain position 0 = open and 100 = closed, matching SwitchBot's API docs. Control4 uses 100 = open,
 -- so Invert Level defaults to True (level = 100 - position). Set False only for a reversed device.
 local function invertLevel()
-  return (prop("Invert Level") or "True") ~= "False"
+  return (prop("Invert Level") or "False") == "True"
 end
 
 -- Control4 level (100 = open) <-> SwitchBot position (0 = open, 100 = closed).
