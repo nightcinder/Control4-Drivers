@@ -5,8 +5,8 @@
 	<name>IntelliFire Fireplace (Wi-Fi Module)</name>
 	<model>IFT-WFM (Off / Pilot / Flame, variable flame height)</model>
 	<created>08/15/2026 12:00 PM</created>
-	<modified>11/05/2026 2:30 PM</modified>
-	<version>119</version>
+	<modified>11/05/2026 2:45 PM</modified>
+	<version>120</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -35,7 +35,7 @@
 		    fireplace's own remembered flame level.
 		  - Connection status is still reported through CONNECTION.
 
-		v119: added <proxybindingid>1</proxybindingid> to connection 5001 (stock Lux driver pattern) so the relay proxy binds to this driver; v118 taps in the app did not reach the driver.
+		v120: removed the v119 proxybindingid (did not bind); added visible RELAY output connection 5002 ("Fireplace Relay Output") so the proxy's Relay input can be bound to it in Composer (select the Relay input, pick this device in the RELAY Output Devices list).
 	-->
 	<proxies qty="1">
 		<proxy image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png" proxybindingid="5001" name="IntelliFire Fireplace">relaysingle_gasfireplace_c4</proxy>
@@ -44,10 +44,24 @@
 	<connections>
 		<connection>
 			<id>5001</id>
-			<proxybindingid>1</proxybindingid>
 			<facing>6</facing>
 			<connectionname>RELAY_PROXY</connectionname>
 			<type>2</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>RELAY</classname>
+				</class>
+			</classes>
+		</connection>
+		<connection>
+			<id>5002</id>
+			<facing>6</facing>
+			<connectionname>Fireplace Relay Output</connectionname>
+			<type>1</type>
 			<consumer>False</consumer>
 			<audiosource>False</audiosource>
 			<videosource>False</videosource>
