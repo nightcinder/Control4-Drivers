@@ -1,6 +1,6 @@
 --[[
   SwitchBot Curtain driver for Control4 (OS 3.4.x)
-  Version: 1.0.8
+  Version: 1.0.9
   UNTESTED against a live Control4 system or live SwitchBot account.
   Only the crypto/JSON helpers are exercised offline (tests/test_signing.lua).
 
@@ -9,7 +9,7 @@
   Never log Token or Secret.
 ]]
 
-local DRIVER_VERSION = "1.0.8"
+local DRIVER_VERSION = "1.0.9"
 local API_BASE = "https://api.switch-bot.com/v1.1"
 local PROXY_BINDING = 5001
 local SUPPORTED_TYPES = { ["Curtain"] = true, ["Curtain3"] = true, ["Blind Tilt"] = true }
@@ -318,6 +318,7 @@ local state = {
   followTimer = nil,   -- single follow-up status poll
   followCount = 0,
   targetLevel = nil,   -- level the last command is heading to
+  proxySetup = false,  -- SET_CAN_STOP / SET_HAS_LEVEL sent to the proxy
   holdUntil = 0,       -- os.time() until which a non-matching idle status is treated as stale
 }
 
@@ -485,16 +486,34 @@ local function handleCommon(code, strData, strError, onOk)
   if onOk then onOk(obj) end
 end
 
-local function sendLevelToProxy(level)
-  print("SwitchBot " .. stamp() .. ": SendToProxy LEVEL_CHANGED level=" .. tostring(level))
-  pcall(function() C4:SendToProxy(PROXY_BINDING, "LEVEL_CHANGED", { LEVEL = level, TARGET = level }) end)
+-- Notifications to the blind proxy. Names and argument shapes (SET_CAN_STOP, SET_HAS_LEVEL, STOPPED
+-- with LEVEL, sent with "NOTIFY", true) are taken from the open-source Control4-HA-Blinds driver
+-- (github.com/bphillips09/Control4-HA-Blinds), which works with this proxy. Without SET_HAS_LEVEL the
+-- Navigator tile shows "?". The proxy's moving/opening notification names are still unknown.
+local function sendNotify(name, params)
+  print("SwitchBot " .. stamp() .. ": SendToProxy " .. name .. " " .. paramsText(params))
+  pcall(function() C4:SendToProxy(PROXY_BINDING, name, params, "NOTIFY", true) end)
 end
 
--- Motion state for Navigator. Names OPENING / CLOSING / STOPPED are inferred from the blind
--- proxy's Opening/Closing/Stopped variables and are unconfirmed; every send is logged.
-local function sendStateToProxy(name)
-  print("SwitchBot " .. stamp() .. ": SendToProxy " .. name)
-  pcall(function() C4:SendToProxy(PROXY_BINDING, name, {}) end)
+local function sendProxySetup()
+  sendNotify("SET_CAN_STOP", { CAN_STOP = true })
+  sendNotify("SET_HAS_LEVEL", {
+    HAS_LEVEL = true,
+    LEVEL_OPEN = 100,
+    LEVEL_CLOSED = 0,
+    LEVEL_SECONDARY_CLOSED = "",
+    LEVEL_UNKNOWN = -1,
+    LEVEL_DISCRETE_CONTROL = true,
+    HAS_LEVEL_SECONDARY_CLOSED = false,
+  })
+end
+
+local function sendLevelToProxy(level)
+  if not state.proxySetup then
+    state.proxySetup = true
+    sendProxySetup()
+  end
+  sendNotify("STOPPED", { LEVEL = level })
 end
 
 local function scheduleFollowUp(ms)
@@ -534,7 +553,6 @@ function SwitchBot_PollStatus()
           state.followCount = 0
           state.lastLevel = level
           sendLevelToProxy(level)
-          sendStateToProxy("STOPPED")
         end
       end
       if type(body.battery) == "number" then
@@ -578,19 +596,13 @@ local function queueCommand(command, parameter, targetLevel)
   state.pending = { command = command, parameter = parameter }
   state.followCount = 0
   if targetLevel ~= nil then
-    local prev = state.lastLevel
     state.targetLevel = targetLevel
     state.holdUntil = os.time() + HOLD_SECONDS
     state.lastLevel = targetLevel
+    -- Shows the expected level in Navigator at once (stand-in until the moving notifications are known).
     sendLevelToProxy(targetLevel)
-    if prev == nil or targetLevel >= prev then
-      sendStateToProxy("OPENING")
-    else
-      sendStateToProxy("CLOSING")
-    end
   else
     state.targetLevel = nil
-    sendStateToProxy("STOPPED")
   end
   local ok, timer = pcall(function()
     return C4:SetTimer(COMMAND_DEBOUNCE_MS, function()
@@ -647,6 +659,12 @@ function OnDriverInit()
     SwitchBot_PollStatus()
   end
   schedulePoll(false)
+end
+
+function OnDriverLateInit()
+  state.proxySetup = false
+  sendProxySetup()
+  pcall(function() C4:SetTimer(5000, function() sendProxySetup() end) end)
 end
 
 function OnPropertyChanged(strProperty)

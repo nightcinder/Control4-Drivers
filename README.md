@@ -17,7 +17,7 @@ Not affiliated with Control4 or the respective device manufacturers.
 | `drivers/intellifire` | IntelliFire Fireplace (Wi-Fi Module) | 115 |
 | `drivers/moen-smart-shower` | Moen Smart Shower (U by Moen), standalone | 203 |
 | `drivers/yale-assure-lock-2` | Yale Assure Lock 2 (Wi-Fi Smart Module) | 117 |
-| `drivers/switchbot-curtain` | SwitchBot Curtain (cloud API, untested) | 9 (v1.0.8 in Lua) |
+| `drivers/switchbot-curtain` | SwitchBot Curtain (cloud API, untested) | 10 (v1.0.9 in Lua) |
 | `drivers/lifx-bulb-legacy` | LIFX Bulb (earlier driver, kept for reference) | 107 |
 
 ### Daylight Lighting Scheduler (`Daylight_Lighting_Scheduler_driver`)
@@ -69,7 +69,7 @@ Controls one SwitchBot Curtain / Curtain 3 / Blind Tilt through the SwitchBot cl
 - **Invert Level** defaults to on: a live Curtain went to SwitchBot position 0 when opened, so 0 = open and 100 = closed (matching SwitchBot's docs) while Control4 uses 100 = open. Turn it off only if a curtain is reversed
 - Navigator icons are original generic curtain artwork drawn by `tools/switchbot-curtain/make_icons.py` into `www/icons/`; the `controller://driver/switchbot-curtain/...` path assumes the package is named `switchbot-curtain.c4z`
 - Offline signing test: `lua5.1 tools/switchbot-curtain/test_signing.lua drivers/switchbot-curtain/SwitchBot_Curtain_driver.lua` (SHA-256, HMAC-SHA256, Base64 and signature checks, no network)
-- Unverified: not run against a live Control4 or SwitchBot account. Control4 API names (`C4:urlGet`/`urlPost` callbacks, timers, events) are from memory of the OS 3 SDK, and the blind proxy details (class `BLIND`, `SET_LEVEL_TARGET`/`LEVEL_TARGET` in, `LEVEL_CHANGED` and `OPENING`/`CLOSING`/`STOPPED` out) are inferred (the Navigator open/close buttons were confirmed to send `UP`/`DOWN`, mapped to open/close) from third-party Control4 libraries and unconfirmed. v1.0.0 would not add to a project because its XML lacked the `<config>` and `<connections>` blocks; 1.0.1 follows the Haiku driver's structure. Signature is sent without uppercasing, per SwitchBot's samples; change it if auth fails. Token and Secret are plain STRING properties, not masked
+- Unverified: not run against a live Control4 or SwitchBot account. Control4 API names (`C4:urlGet`/`urlPost` callbacks, timers, events) are from memory of the OS 3 SDK, and the blind proxy details are partly confirmed: the Navigator buttons send `UP`/`DOWN` (observed live), and the proxy setup (`SET_CAN_STOP`, `SET_HAS_LEVEL`) and `STOPPED` with `LEVEL` follow the open-source Control4-HA-Blinds driver. The proxy's notification names for opening/closing motion are unknown, so Navigator jumps to the expected level on a press instead of showing movement. v1.0.0 would not add to a project because its XML lacked the `<config>` and `<connections>` blocks; 1.0.1 follows the Haiku driver's structure. Signature is sent without uppercasing, per SwitchBot's samples; change it if auth fails. Token and Secret are plain STRING properties, not masked
 
 ### LIFX Bulb, earlier driver (`LIFX_Bulb_driver`)
 
