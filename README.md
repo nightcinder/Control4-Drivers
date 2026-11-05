@@ -17,7 +17,8 @@ Not affiliated with Control4 or the respective device manufacturers.
 | `drivers/intellifire` | IntelliFire Fireplace (Wi-Fi Module) | 115 |
 | `drivers/moen-smart-shower` | Moen Smart Shower (U by Moen), standalone | 203 |
 | `drivers/yale-assure-lock-2` | Yale Assure Lock 2 (Wi-Fi Smart Module) | 117 |
-| `drivers/switchbot-curtain` | SwitchBot Curtain (cloud API, untested) | 12 (v1.0.11 in Lua) |
+| `drivers/switchbot-cloud` | SwitchBot Cloud (parent: token, API, polling) | 1 (v2.0.0 in Lua) |
+| `drivers/switchbot-curtain` | SwitchBot Curtain (child of SwitchBot Cloud) | 13 (v2.0.0 in Lua) |
 | `drivers/lifx-bulb-legacy` | LIFX Bulb (earlier driver, kept for reference) | 107 |
 
 ### Daylight Lighting Scheduler (`Daylight_Lighting_Scheduler_driver`)
@@ -59,18 +60,21 @@ Standalone driver for U by Moen smart showers. **Needs Control4's `drivers-commo
 
 Driver for the Yale Assure Lock 2 with the Wi-Fi smart module.
 
-### SwitchBot Curtain (`SwitchBot_Curtain_driver`)
+### SwitchBot Cloud (parent) and SwitchBot Curtain (child)
 
-Controls one SwitchBot Curtain / Curtain 3 / Blind Tilt through the SwitchBot cloud API v1.1 (needs a SwitchBot Hub; there is no local API). One driver instance per curtain, using a `blind` proxy plus `Open`, `Close` and `Set Position` programming commands so the lighting scheduler can drive it later.
+Two drivers. **SwitchBot Cloud** (`SwitchBot_Cloud_driver`) holds the API Token and Secret, signs and sends every request to the SwitchBot cloud API v1.1 (needs a SwitchBot Hub; there is no local API), and polls status for all curtains. One **SwitchBot Curtain** (`SwitchBot_Curtain_driver`) per window binds to it and exposes a `blind` proxy plus `Open`, `Close` and `Set Position` programming commands, so the lighting scheduler can drive it later. 2.0.0 replaced the earlier standalone driver (last standalone version 1.0.11, commit cbfd60e).
 
-- Get the token and secret in the SwitchBot app: Profile, Preferences, About, tap the app version 10 times, then Developer Options. Paste them into the driver's **Token** and **Secret** properties in Composer. One token covers every hub and floor on the account
-- Run **Discover Devices** to list device IDs, then copy one into **Device ID**
-- **Two motors, one window** (e.g. a double curtain): put the second motor's ID in **Second Device ID**. Every command goes to both, status is combined (moving if either moves, position averaged, lowest battery). Leave it empty for a single curtain. Pairing them in the SwitchBot app and using the master ID also works.
-- Polls status every 300 s by default. After a command it shows the expected level at once, sends only the last of rapid presses (0.8 s debounce), and checks status every few seconds until the curtain stops, ignoring SwitchBot's stale just-after-command status; the account limit is 10,000 API calls per day
-- **Invert Level** defaults to off (SwitchBot position 100 = open, matching a live Den West curtain). Switch it to True per curtain if one reports 0 = open and the Navigator direction is reversed; it depends on how each motor was calibrated in the SwitchBot app
+Setup:
+- Get the token and secret in the SwitchBot app: Profile, Preferences, About, tap the app version 10 times, then Developer Options. Add one **SwitchBot Cloud** driver and paste them into **Token** and **Secret**. One token covers every hub and floor
+- Run **Discover Devices** on the parent to list device IDs (paired motors are tagged `master of pair` / `paired`)
+- Add a **SwitchBot Curtain** per window, bind its **SwitchBot Cloud** connection to the parent in Connections, and put the ID in **Device ID**. Curtains paired in the SwitchBot app: use the master ID alone
+- **Second Device ID** is only for two unpaired motors on one window: every command goes to both, status is combined (moving if either moves, position averaged, lowest battery)
+- **Invert Level** (per child) defaults to off (SwitchBot position 100 = open, as on Den West). Set True if a curtain reports 0 = open; the Lounge pair needs True. It depends on how each motor was calibrated in the SwitchBot app
+- The parent polls every 300 s by default; after a command the child shows the expected level at once, sends only the last of rapid presses (0.8 s debounce), and asks the parent for status every few seconds until the curtain stops, ignoring SwitchBot's stale just-after-command status; the account limit is 10,000 API calls per day
+- Parent and child talk with `C4:SendToDevice` (`SB_REGISTER`, `SB_COMMAND`, `SB_POLL` to the parent; `SB_STATUS`, `SB_PARENT_STATUS`, `SB_HELLO` back), with the connection class `SWITCHBOT_CLOUD` linking them
 - Navigator icons are original generic curtain artwork drawn by `tools/switchbot-curtain/make_icons.py` into `www/icons/`; the `controller://driver/switchbot-curtain/...` path assumes the package is named `switchbot-curtain.c4z`
-- Offline signing test: `lua5.1 tools/switchbot-curtain/test_signing.lua drivers/switchbot-curtain/SwitchBot_Curtain_driver.lua` (SHA-256, HMAC-SHA256, Base64 and signature checks, no network)
-- Unverified: not run against a live Control4 or SwitchBot account. Control4 API names (`C4:urlGet`/`urlPost` callbacks, timers, events) are from memory of the OS 3 SDK, and the blind proxy details are partly confirmed: the Navigator buttons send `UP`/`DOWN` (observed live), and the proxy setup (`SET_CAN_STOP`, `SET_HAS_LEVEL`) and `STOPPED` with `LEVEL` follow the open-source Control4-HA-Blinds driver. The proxy's notification names for opening/closing motion are unknown, so Navigator jumps to the expected level on a press instead of showing movement. v1.0.0 would not add to a project because its XML lacked the `<config>` and `<connections>` blocks; 1.0.1 follows the Haiku driver's structure. Signature is sent without uppercasing, per SwitchBot's samples; change it if auth fails. Token and Secret are plain STRING properties, not masked
+- Offline signing test: `lua5.1 tools/switchbot-curtain/test_signing.lua drivers/switchbot-cloud/SwitchBot_Cloud_driver.lua` (SHA-256, HMAC-SHA256, Base64 and signature checks, no network)
+- Unverified: the parent/child link (binding class, `GetBoundProviderDevice`, `SendToDevice`) has only been run against a simulation, not a live Control4. The blind proxy notifications follow the open-source Control4-HA-Blinds driver; the proxy's notification names for opening/closing motion are unknown, so Navigator jumps to the expected level on a press instead of showing movement. Signature is sent without uppercasing, per SwitchBot's samples. Token and Secret are plain STRING properties, not masked
 
 ### LIFX Bulb, earlier driver (`LIFX_Bulb_driver`)
 

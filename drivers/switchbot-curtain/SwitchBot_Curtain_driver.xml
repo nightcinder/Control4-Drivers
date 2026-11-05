@@ -6,13 +6,13 @@
 	<model>SwitchBot Curtain / Curtain 3 / Blind Tilt (cloud API v1.1)</model>
 	<created>11/04/2026 10:00 PM</created>
 	<modified>11/04/2026 10:30 PM</modified>
-	<version>12</version>
+	<version>13</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
-	<templatedescription>SwitchBot Curtain - cloud API control (open/close/position) via a SwitchBot Hub</templatedescription>
+	<templatedescription>SwitchBot Curtain (child) - open/close/position through a SwitchBot Cloud driver</templatedescription>
 
 	<proxies qty="1">
 		<proxy image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png" proxybindingid="5001" name="SwitchBot Curtain" primary="True">blind</proxy>
@@ -43,6 +43,21 @@
 			<classes>
 				<class>
 					<classname>BLIND</classname>
+				</class>
+			</classes>
+		</connection>
+		<connection>
+			<id>1</id>
+			<facing>6</facing>
+			<connectionname>SwitchBot Cloud</connectionname>
+			<type>1</type>
+			<consumer>True</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>SWITCHBOT_CLOUD</classname>
 				</class>
 			</classes>
 		</connection>
@@ -85,10 +100,6 @@
 
 		<actions>
 			<action>
-				<name>Discover Devices</name>
-				<command>DISCOVER</command>
-			</action>
-			<action>
 				<name>Test Open</name>
 				<command>ACTION_OPEN</command>
 			</action>
@@ -104,18 +115,6 @@
 
 		<properties>
 			<property>
-				<name>Token</name>
-				<type>STRING</type>
-				<readonly>false</readonly>
-				<default></default>
-			</property>
-			<property>
-				<name>Secret</name>
-				<type>STRING</type>
-				<readonly>false</readonly>
-				<default></default>
-			</property>
-			<property>
 				<name>Device ID</name>
 				<type>STRING</type>
 				<readonly>false</readonly>
@@ -125,12 +124,6 @@
 				<name>Second Device ID</name>
 				<type>STRING</type>
 				<readonly>false</readonly>
-				<default></default>
-			</property>
-			<property>
-				<name>Discovered Devices</name>
-				<type>STRING</type>
-				<readonly>true</readonly>
 				<default></default>
 			</property>
 			<property>
@@ -154,14 +147,6 @@
 				<maximum>100</maximum>
 				<readonly>false</readonly>
 				<default>20</default>
-			</property>
-			<property>
-				<name>Poll Interval Seconds</name>
-				<type>RANGED_INTEGER</type>
-				<minimum>60</minimum>
-				<maximum>3600</maximum>
-				<readonly>false</readonly>
-				<default>300</default>
 			</property>
 			<property>
 				<name>Invert Level</name>
@@ -188,7 +173,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>1.0.11</default>
+				<default>2.0.0</default>
 			</property>
 		</properties>
 	</config>
