@@ -89,6 +89,9 @@ PF_LIGHT_BRIGHTNESS_LEVEL   = 70  -- int32 0-16
 PF_IP_ADDRESS                = 120 -- string
 
 -- Root2 / Commit / Query / QueryResult field numbers
+-- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
+DRIVER_VERSION    = "323"
+
 RF_ROOT2          = 2
 R2F_COMMIT        = 2
 R2F_QUERY         = 3
@@ -323,11 +326,14 @@ end
 -- ===================== Driver lifecycle ============================
 function OnDriverInit()
 	LoadProperties()
+	C4:UpdateProperty("Driver Version", DRIVER_VERSION)
 	LOG("OnDriverInit - IP=" .. g_ip .. " Name=" .. g_name)
 end
 
 function OnDriverLateInit()
 	LoadProperties()
+	C4:UpdateProperty("Driver Version", DRIVER_VERSION)
+	LOG("Driver version " .. DRIVER_VERSION)
 	BindTo(g_ip)
 	StartPolling()
 	NotifyOnline(false) -- will flip true once OnConnectionStatusChanged reports ONLINE
