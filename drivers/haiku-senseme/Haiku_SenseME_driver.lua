@@ -90,7 +90,7 @@ PF_IP_ADDRESS                = 120 -- string
 
 -- Root2 / Commit / Query / QueryResult field numbers
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION    = "324"
+DRIVER_VERSION    = "325"
 
 RF_ROOT2          = 2
 R2F_COMMIT        = 2
@@ -555,11 +555,6 @@ function ApplyProperties(p)
 		if (HAS_LIGHT_PROXY) then
 			g_hasLight = p.has_light
 		end
-	end
-
-	-- Pushed updates may carry only speed_percent (0-100) without the 0-7 step
-	if (p.speed == nil and p.speed_percent ~= nil) then
-		p.speed = PercentToSpeed(p.speed_percent)
 	end
 
 	local fanPowerChanged = false
