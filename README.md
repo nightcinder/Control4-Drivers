@@ -17,7 +17,7 @@ Not affiliated with Control4 or the respective device manufacturers.
 | `drivers/intellifire` | IntelliFire Fireplace (Wi-Fi Module) | 115 |
 | `drivers/moen-smart-shower` | Moen Smart Shower (U by Moen), standalone | 203 |
 | `drivers/yale-assure-lock-2` | Yale Assure Lock 2 (Wi-Fi Smart Module) | 117 |
-| `drivers/switchbot-curtain` | SwitchBot Curtain (cloud API, untested) | 10 (v1.0.9 in Lua) |
+| `drivers/switchbot-curtain` | SwitchBot Curtain (cloud API, untested) | 11 (v1.0.10 in Lua) |
 | `drivers/lifx-bulb-legacy` | LIFX Bulb (earlier driver, kept for reference) | 107 |
 
 ### Daylight Lighting Scheduler (`Daylight_Lighting_Scheduler_driver`)
@@ -65,6 +65,7 @@ Controls one SwitchBot Curtain / Curtain 3 / Blind Tilt through the SwitchBot cl
 
 - Get the token and secret in the SwitchBot app: Profile, Preferences, About, tap the app version 10 times, then Developer Options. Paste them into the driver's **Token** and **Secret** properties in Composer. One token covers every hub and floor on the account
 - Run **Discover Devices** to list device IDs, then copy one into **Device ID**
+- **Two motors, one window** (e.g. a double curtain): put the second motor's ID in **Second Device ID**. Every command goes to both, status is combined (moving if either moves, position averaged, lowest battery). Leave it empty for a single curtain. Pairing them in the SwitchBot app and using the master ID also works.
 - Polls status every 300 s by default. After a command it shows the expected level at once, sends only the last of rapid presses (0.8 s debounce), and checks status every few seconds until the curtain stops, ignoring SwitchBot's stale just-after-command status; the account limit is 10,000 API calls per day
 - **Invert Level** defaults to on: a live Curtain went to SwitchBot position 0 when opened, so 0 = open and 100 = closed (matching SwitchBot's docs) while Control4 uses 100 = open. Turn it off only if a curtain is reversed
 - Navigator icons are original generic curtain artwork drawn by `tools/switchbot-curtain/make_icons.py` into `www/icons/`; the `controller://driver/switchbot-curtain/...` path assumes the package is named `switchbot-curtain.c4z`
