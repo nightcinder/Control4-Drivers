@@ -5,14 +5,14 @@
 	<name>moenshower</name>
 	<model>Moen Smart Shower</model>
 	<created>08/16/2026 12:00 PM</created>
-	<modified>11/07/2026 03:45 PM</modified>
-	<version>305</version>
+	<modified>11/07/2026 04:13 PM</modified>
+	<version>306</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
-	<templatedescription>Moen Smart Shower (U by Moen) - Local TCP bridge or direct cloud control, custom Navigator web view and keypad preset keys (v305)</templatedescription>
+	<templatedescription>Moen Smart Shower (U by Moen) - Local TCP bridge or direct cloud control, custom Navigator web view and keypad preset keys (v306)</templatedescription>
 	<search_types>
 		<type>Moen:shower:UbyMoen</type>
 	</search_types>
@@ -160,6 +160,15 @@
 		</connection>
 	</connections>
 
+	<!--
+		v306 - Navigator tile shows the water temperature, merged from the
+		friend's Moen package: W<temp> while warming, R<temp> at temperature,
+		Default when off or the bridge is down. 172 icon states (W40-W125 and
+		R40-R125) under www/icons/device/temp (516 PNGs, 70/90/300 px). The
+		Lua TileIcon() and UpdateTileIcon() choose the icon, and both bridge
+		state changes and a dropped bridge refresh it. Page and bridge
+		transport unchanged. UNTESTED ON CONTROL4 HARDWARE.
+	-->
 	<capabilities>
 		<web_view_url proxybindingid="5001">controller://driver/moenshower/shower2.html</web_view_url>
 		<mobile_web_view_enabled>true</mobile_web_view_enabled>
@@ -183,6 +192,866 @@
 					<Icon width="300" height="300">controller://driver/moenshower/icons/device/shower_running/experience_300.png</Icon>
 					<Icon width="512" height="512">controller://driver/moenshower/icons/device/shower_running/experience_512.png</Icon>
 					<Icon width="1024" height="1024">controller://driver/moenshower/icons/device/shower_running/experience_1024.png</Icon>
+				</state>
+				<state id="W40">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W40_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W40_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W40_300.png</Icon>
+				</state>
+				<state id="W41">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W41_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W41_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W41_300.png</Icon>
+				</state>
+				<state id="W42">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W42_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W42_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W42_300.png</Icon>
+				</state>
+				<state id="W43">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W43_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W43_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W43_300.png</Icon>
+				</state>
+				<state id="W44">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W44_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W44_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W44_300.png</Icon>
+				</state>
+				<state id="W45">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W45_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W45_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W45_300.png</Icon>
+				</state>
+				<state id="W46">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W46_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W46_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W46_300.png</Icon>
+				</state>
+				<state id="W47">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W47_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W47_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W47_300.png</Icon>
+				</state>
+				<state id="W48">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W48_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W48_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W48_300.png</Icon>
+				</state>
+				<state id="W49">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W49_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W49_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W49_300.png</Icon>
+				</state>
+				<state id="W50">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W50_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W50_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W50_300.png</Icon>
+				</state>
+				<state id="W51">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W51_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W51_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W51_300.png</Icon>
+				</state>
+				<state id="W52">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W52_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W52_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W52_300.png</Icon>
+				</state>
+				<state id="W53">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W53_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W53_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W53_300.png</Icon>
+				</state>
+				<state id="W54">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W54_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W54_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W54_300.png</Icon>
+				</state>
+				<state id="W55">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W55_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W55_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W55_300.png</Icon>
+				</state>
+				<state id="W56">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W56_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W56_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W56_300.png</Icon>
+				</state>
+				<state id="W57">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W57_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W57_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W57_300.png</Icon>
+				</state>
+				<state id="W58">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W58_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W58_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W58_300.png</Icon>
+				</state>
+				<state id="W59">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W59_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W59_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W59_300.png</Icon>
+				</state>
+				<state id="W60">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W60_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W60_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W60_300.png</Icon>
+				</state>
+				<state id="W61">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W61_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W61_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W61_300.png</Icon>
+				</state>
+				<state id="W62">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W62_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W62_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W62_300.png</Icon>
+				</state>
+				<state id="W63">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W63_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W63_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W63_300.png</Icon>
+				</state>
+				<state id="W64">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W64_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W64_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W64_300.png</Icon>
+				</state>
+				<state id="W65">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W65_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W65_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W65_300.png</Icon>
+				</state>
+				<state id="W66">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W66_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W66_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W66_300.png</Icon>
+				</state>
+				<state id="W67">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W67_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W67_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W67_300.png</Icon>
+				</state>
+				<state id="W68">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W68_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W68_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W68_300.png</Icon>
+				</state>
+				<state id="W69">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W69_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W69_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W69_300.png</Icon>
+				</state>
+				<state id="W70">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W70_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W70_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W70_300.png</Icon>
+				</state>
+				<state id="W71">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W71_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W71_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W71_300.png</Icon>
+				</state>
+				<state id="W72">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W72_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W72_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W72_300.png</Icon>
+				</state>
+				<state id="W73">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W73_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W73_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W73_300.png</Icon>
+				</state>
+				<state id="W74">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W74_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W74_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W74_300.png</Icon>
+				</state>
+				<state id="W75">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W75_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W75_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W75_300.png</Icon>
+				</state>
+				<state id="W76">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W76_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W76_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W76_300.png</Icon>
+				</state>
+				<state id="W77">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W77_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W77_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W77_300.png</Icon>
+				</state>
+				<state id="W78">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W78_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W78_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W78_300.png</Icon>
+				</state>
+				<state id="W79">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W79_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W79_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W79_300.png</Icon>
+				</state>
+				<state id="W80">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W80_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W80_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W80_300.png</Icon>
+				</state>
+				<state id="W81">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W81_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W81_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W81_300.png</Icon>
+				</state>
+				<state id="W82">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W82_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W82_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W82_300.png</Icon>
+				</state>
+				<state id="W83">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W83_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W83_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W83_300.png</Icon>
+				</state>
+				<state id="W84">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W84_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W84_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W84_300.png</Icon>
+				</state>
+				<state id="W85">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W85_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W85_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W85_300.png</Icon>
+				</state>
+				<state id="W86">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W86_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W86_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W86_300.png</Icon>
+				</state>
+				<state id="W87">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W87_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W87_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W87_300.png</Icon>
+				</state>
+				<state id="W88">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W88_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W88_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W88_300.png</Icon>
+				</state>
+				<state id="W89">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W89_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W89_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W89_300.png</Icon>
+				</state>
+				<state id="W90">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W90_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W90_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W90_300.png</Icon>
+				</state>
+				<state id="W91">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W91_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W91_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W91_300.png</Icon>
+				</state>
+				<state id="W92">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W92_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W92_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W92_300.png</Icon>
+				</state>
+				<state id="W93">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W93_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W93_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W93_300.png</Icon>
+				</state>
+				<state id="W94">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W94_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W94_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W94_300.png</Icon>
+				</state>
+				<state id="W95">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W95_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W95_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W95_300.png</Icon>
+				</state>
+				<state id="W96">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W96_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W96_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W96_300.png</Icon>
+				</state>
+				<state id="W97">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W97_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W97_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W97_300.png</Icon>
+				</state>
+				<state id="W98">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W98_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W98_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W98_300.png</Icon>
+				</state>
+				<state id="W99">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W99_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W99_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W99_300.png</Icon>
+				</state>
+				<state id="W100">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W100_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W100_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W100_300.png</Icon>
+				</state>
+				<state id="W101">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W101_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W101_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W101_300.png</Icon>
+				</state>
+				<state id="W102">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W102_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W102_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W102_300.png</Icon>
+				</state>
+				<state id="W103">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W103_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W103_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W103_300.png</Icon>
+				</state>
+				<state id="W104">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W104_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W104_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W104_300.png</Icon>
+				</state>
+				<state id="W105">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W105_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W105_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W105_300.png</Icon>
+				</state>
+				<state id="W106">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W106_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W106_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W106_300.png</Icon>
+				</state>
+				<state id="W107">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W107_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W107_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W107_300.png</Icon>
+				</state>
+				<state id="W108">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W108_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W108_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W108_300.png</Icon>
+				</state>
+				<state id="W109">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W109_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W109_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W109_300.png</Icon>
+				</state>
+				<state id="W110">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W110_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W110_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W110_300.png</Icon>
+				</state>
+				<state id="W111">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W111_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W111_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W111_300.png</Icon>
+				</state>
+				<state id="W112">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W112_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W112_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W112_300.png</Icon>
+				</state>
+				<state id="W113">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W113_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W113_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W113_300.png</Icon>
+				</state>
+				<state id="W114">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W114_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W114_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W114_300.png</Icon>
+				</state>
+				<state id="W115">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W115_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W115_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W115_300.png</Icon>
+				</state>
+				<state id="W116">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W116_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W116_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W116_300.png</Icon>
+				</state>
+				<state id="W117">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W117_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W117_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W117_300.png</Icon>
+				</state>
+				<state id="W118">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W118_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W118_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W118_300.png</Icon>
+				</state>
+				<state id="W119">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W119_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W119_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W119_300.png</Icon>
+				</state>
+				<state id="W120">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W120_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W120_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W120_300.png</Icon>
+				</state>
+				<state id="W121">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W121_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W121_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W121_300.png</Icon>
+				</state>
+				<state id="W122">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W122_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W122_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W122_300.png</Icon>
+				</state>
+				<state id="W123">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W123_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W123_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W123_300.png</Icon>
+				</state>
+				<state id="W124">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W124_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W124_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W124_300.png</Icon>
+				</state>
+				<state id="W125">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/W125_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/W125_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/W125_300.png</Icon>
+				</state>
+				<state id="R40">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R40_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R40_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R40_300.png</Icon>
+				</state>
+				<state id="R41">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R41_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R41_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R41_300.png</Icon>
+				</state>
+				<state id="R42">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R42_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R42_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R42_300.png</Icon>
+				</state>
+				<state id="R43">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R43_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R43_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R43_300.png</Icon>
+				</state>
+				<state id="R44">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R44_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R44_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R44_300.png</Icon>
+				</state>
+				<state id="R45">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R45_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R45_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R45_300.png</Icon>
+				</state>
+				<state id="R46">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R46_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R46_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R46_300.png</Icon>
+				</state>
+				<state id="R47">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R47_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R47_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R47_300.png</Icon>
+				</state>
+				<state id="R48">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R48_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R48_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R48_300.png</Icon>
+				</state>
+				<state id="R49">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R49_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R49_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R49_300.png</Icon>
+				</state>
+				<state id="R50">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R50_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R50_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R50_300.png</Icon>
+				</state>
+				<state id="R51">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R51_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R51_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R51_300.png</Icon>
+				</state>
+				<state id="R52">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R52_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R52_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R52_300.png</Icon>
+				</state>
+				<state id="R53">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R53_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R53_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R53_300.png</Icon>
+				</state>
+				<state id="R54">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R54_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R54_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R54_300.png</Icon>
+				</state>
+				<state id="R55">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R55_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R55_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R55_300.png</Icon>
+				</state>
+				<state id="R56">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R56_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R56_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R56_300.png</Icon>
+				</state>
+				<state id="R57">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R57_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R57_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R57_300.png</Icon>
+				</state>
+				<state id="R58">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R58_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R58_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R58_300.png</Icon>
+				</state>
+				<state id="R59">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R59_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R59_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R59_300.png</Icon>
+				</state>
+				<state id="R60">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R60_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R60_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R60_300.png</Icon>
+				</state>
+				<state id="R61">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R61_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R61_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R61_300.png</Icon>
+				</state>
+				<state id="R62">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R62_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R62_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R62_300.png</Icon>
+				</state>
+				<state id="R63">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R63_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R63_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R63_300.png</Icon>
+				</state>
+				<state id="R64">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R64_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R64_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R64_300.png</Icon>
+				</state>
+				<state id="R65">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R65_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R65_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R65_300.png</Icon>
+				</state>
+				<state id="R66">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R66_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R66_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R66_300.png</Icon>
+				</state>
+				<state id="R67">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R67_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R67_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R67_300.png</Icon>
+				</state>
+				<state id="R68">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R68_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R68_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R68_300.png</Icon>
+				</state>
+				<state id="R69">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R69_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R69_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R69_300.png</Icon>
+				</state>
+				<state id="R70">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R70_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R70_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R70_300.png</Icon>
+				</state>
+				<state id="R71">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R71_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R71_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R71_300.png</Icon>
+				</state>
+				<state id="R72">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R72_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R72_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R72_300.png</Icon>
+				</state>
+				<state id="R73">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R73_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R73_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R73_300.png</Icon>
+				</state>
+				<state id="R74">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R74_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R74_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R74_300.png</Icon>
+				</state>
+				<state id="R75">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R75_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R75_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R75_300.png</Icon>
+				</state>
+				<state id="R76">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R76_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R76_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R76_300.png</Icon>
+				</state>
+				<state id="R77">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R77_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R77_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R77_300.png</Icon>
+				</state>
+				<state id="R78">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R78_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R78_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R78_300.png</Icon>
+				</state>
+				<state id="R79">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R79_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R79_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R79_300.png</Icon>
+				</state>
+				<state id="R80">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R80_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R80_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R80_300.png</Icon>
+				</state>
+				<state id="R81">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R81_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R81_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R81_300.png</Icon>
+				</state>
+				<state id="R82">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R82_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R82_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R82_300.png</Icon>
+				</state>
+				<state id="R83">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R83_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R83_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R83_300.png</Icon>
+				</state>
+				<state id="R84">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R84_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R84_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R84_300.png</Icon>
+				</state>
+				<state id="R85">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R85_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R85_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R85_300.png</Icon>
+				</state>
+				<state id="R86">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R86_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R86_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R86_300.png</Icon>
+				</state>
+				<state id="R87">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R87_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R87_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R87_300.png</Icon>
+				</state>
+				<state id="R88">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R88_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R88_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R88_300.png</Icon>
+				</state>
+				<state id="R89">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R89_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R89_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R89_300.png</Icon>
+				</state>
+				<state id="R90">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R90_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R90_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R90_300.png</Icon>
+				</state>
+				<state id="R91">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R91_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R91_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R91_300.png</Icon>
+				</state>
+				<state id="R92">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R92_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R92_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R92_300.png</Icon>
+				</state>
+				<state id="R93">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R93_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R93_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R93_300.png</Icon>
+				</state>
+				<state id="R94">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R94_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R94_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R94_300.png</Icon>
+				</state>
+				<state id="R95">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R95_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R95_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R95_300.png</Icon>
+				</state>
+				<state id="R96">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R96_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R96_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R96_300.png</Icon>
+				</state>
+				<state id="R97">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R97_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R97_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R97_300.png</Icon>
+				</state>
+				<state id="R98">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R98_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R98_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R98_300.png</Icon>
+				</state>
+				<state id="R99">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R99_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R99_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R99_300.png</Icon>
+				</state>
+				<state id="R100">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R100_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R100_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R100_300.png</Icon>
+				</state>
+				<state id="R101">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R101_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R101_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R101_300.png</Icon>
+				</state>
+				<state id="R102">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R102_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R102_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R102_300.png</Icon>
+				</state>
+				<state id="R103">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R103_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R103_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R103_300.png</Icon>
+				</state>
+				<state id="R104">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R104_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R104_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R104_300.png</Icon>
+				</state>
+				<state id="R105">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R105_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R105_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R105_300.png</Icon>
+				</state>
+				<state id="R106">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R106_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R106_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R106_300.png</Icon>
+				</state>
+				<state id="R107">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R107_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R107_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R107_300.png</Icon>
+				</state>
+				<state id="R108">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R108_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R108_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R108_300.png</Icon>
+				</state>
+				<state id="R109">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R109_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R109_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R109_300.png</Icon>
+				</state>
+				<state id="R110">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R110_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R110_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R110_300.png</Icon>
+				</state>
+				<state id="R111">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R111_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R111_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R111_300.png</Icon>
+				</state>
+				<state id="R112">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R112_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R112_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R112_300.png</Icon>
+				</state>
+				<state id="R113">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R113_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R113_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R113_300.png</Icon>
+				</state>
+				<state id="R114">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R114_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R114_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R114_300.png</Icon>
+				</state>
+				<state id="R115">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R115_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R115_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R115_300.png</Icon>
+				</state>
+				<state id="R116">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R116_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R116_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R116_300.png</Icon>
+				</state>
+				<state id="R117">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R117_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R117_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R117_300.png</Icon>
+				</state>
+				<state id="R118">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R118_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R118_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R118_300.png</Icon>
+				</state>
+				<state id="R119">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R119_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R119_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R119_300.png</Icon>
+				</state>
+				<state id="R120">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R120_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R120_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R120_300.png</Icon>
+				</state>
+				<state id="R121">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R121_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R121_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R121_300.png</Icon>
+				</state>
+				<state id="R122">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R122_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R122_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R122_300.png</Icon>
+				</state>
+				<state id="R123">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R123_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R123_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R123_300.png</Icon>
+				</state>
+				<state id="R124">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R124_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R124_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R124_300.png</Icon>
+				</state>
+				<state id="R125">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/temp/R125_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/temp/R125_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/temp/R125_300.png</Icon>
 				</state>
 			</display_icons>
 		</navigator_display_option>
