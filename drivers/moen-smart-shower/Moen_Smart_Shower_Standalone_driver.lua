@@ -160,7 +160,7 @@ WebSocket = require ('drivers-common-public.module.websocket')
 
 -- ===================== Constants ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "204"
+DRIVER_VERSION = "205"
 API_BASE_URL       = 'https://www.moen-iot.com'
 API_AUTHENTICATE   = '/v2/authenticate'
 API_CREDENTIALS    = '/v3/credentials'
@@ -210,6 +210,32 @@ g_thermostatCapsSent = false  -- ALLOWED_HVAC_MODES_CHANGED sent once
 g_extrasSetupSignature = nil  -- last preset-list signature sent via EXTRAS_SETUP_CHANGED
 
 -- ===================== Logging helper ============================
+-- Renders a Pusher event table for the log: event name, then data. A string data field is printed as-is;
+-- a table data field has its key/value pairs printed one level deep (nested tables summarized one level).
+function MoenDescribeEvent (msg)
+	if (type (msg) ~= 'table') then
+		return tostring (msg)
+	end
+	local parts = { 'event=' .. tostring (msg.event) }
+	local d = msg.data
+	if (type (d) == 'table') then
+		for k, v in pairs (d) do
+			if (type (v) == 'table') then
+				local sub = {}
+				for k2, v2 in pairs (v) do
+					table.insert (sub, tostring (k2) .. '=' .. tostring (v2))
+				end
+				table.insert (parts, tostring (k) .. '={' .. table.concat (sub, ', ') .. '}')
+			else
+				table.insert (parts, tostring (k) .. '=' .. tostring (v))
+			end
+		end
+	else
+		table.insert (parts, 'data=' .. tostring (d))
+	end
+	return table.concat (parts, ' ')
+end
+
 function LOG(msg)
 	if (g_logMode == 'Print' or g_logMode == 'Print and Log') then
 		print ('[MoenShowerSA] ' .. tostring (msg))
@@ -507,7 +533,10 @@ function OnWSMessage (ws, data)
 		FlushPendingSends ()
 
 	elseif (event == 'pusher:error') then
-		LOG ('Pusher error: ' .. tostring (msg.data))
+		LOG ('Pusher error: ' .. MoenDescribeEvent (msg))
+
+	elseif (string.find (tostring (event), 'error') or string.find (tostring (event), 'fail')) then
+		LOG ('Pusher event ' .. tostring (event) .. ': ' .. MoenDescribeEvent (msg))
 
 	elseif (event == 'pusher:ping') then
 		if (g_ws) then
@@ -979,7 +1008,7 @@ EC ['Refresh_Status'] = function () PollDeviceDetails () end
 EC ['ACTION_REFRESH_STATUS'] = function () PollDeviceDetails () end
 
 EC ['ACTION_PRINT_DEBUG'] = function ()
-	print ('=== Moen Smart Shower Standalone Driver Debug (v202) ===')
+	print ('=== Moen Smart Shower Standalone Driver Debug (v205) ===')
 	print ('cloud_authenticated=' .. tostring (g_cloudAuthenticated) ..
 		' ws_subscribed=' .. tostring (g_wsSubscribed) ..
 		' last_error=' .. tostring (g_lastError))
