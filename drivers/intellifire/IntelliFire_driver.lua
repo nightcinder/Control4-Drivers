@@ -242,7 +242,9 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "120"
+DRIVER_VERSION = "200"
+PAGE_FILE  = 'fireplace1.html'   -- renamed every page release (Navigator caches controller:// pages)
+PAGE_BUILD = '1'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 
 -- ===================== Globals / Config ============================
 g_ip         = "0.0.0.0"
@@ -252,7 +254,6 @@ g_pollInt    = 20
 g_logMode    = "Off"
 
 FIREPLACE_BINDING = 5001
-RELAY_OUT_BINDING = 5002
 NET_BINDING       = 6001
 HTTP_PORT         = 80
 
@@ -285,6 +286,7 @@ g_pollTimerId  = nil
 g_netBound     = false
 g_netOnline    = false
 g_boundIP      = nil
+g_uiOnline     = false   -- v200: online state reported to the web page (see Web view section)
 
 -- ===================== Logging helper ============================
 function LOG(msg)
@@ -301,6 +303,11 @@ function OnDriverInit()
 	LoadProperties()
 	C4:UpdateProperty("Driver Version", DRIVER_VERSION)
 	LOG("OnDriverInit - IP=" .. g_ip)
+	-- UI_STATE must be visible or the page cannot subscribe (same as moenshower).
+	C4:AddVariable("UI_STATE", "", "STRING", true, false)
+	C4:AddVariable("FIREPLACE_ON", "0", "BOOL", true, false)
+	C4:AddVariable("PILOT_ON", "0", "BOOL", true, false)
+	C4:AddVariable("FLAME_LEVEL", "0", "NUMBER", true, false)
 end
 
 function OnDriverLateInit()
@@ -467,8 +474,9 @@ function OnOfflineGraceTimer(idTimer)
 end
 
 function NotifyOnline(bOnline)
-	local sConnected = bOnline and "true" or "false"
-	C4:SendToProxy(FIREPLACE_BINDING, "CONNECTION", { CONNECTED = sConnected }, "NOTIFY")
+	-- v200: online state rides in UI_STATE (the uibutton proxy has no CONNECTION).
+	g_uiOnline = bOnline and true or false
+	PublishUI(false)
 end
 
 -- ===================== HTTP request/response plumbing ============================
@@ -814,19 +822,21 @@ function SetpointToHeight(nSetpoint)
 	return h
 end
 
+-- Called whenever g_state changes (poll, optimistic command update, offline).
+-- Publishes UI_STATE and the tile icon, and the Composer variables/events.
+-- bInitial is true for the first real poll: it sets the baseline silently.
 function NotifyRelayState(bInitial)
-	-- Relay proxy: CLOSED = main flame on, OPENED = main flame off.
-	-- bInitial=true sends STATE_CLOSED / STATE_OPENED (the first real reading
-	-- from the fireplace); otherwise CLOSED / OPENED for a change.
 	local bOn = (g_state.power == 1)
-	local sName
-	if (bInitial) then
-		sName = bOn and "STATE_CLOSED" or "STATE_OPENED"
-	else
-		sName = bOn and "CLOSED" or "OPENED"
+	-- Events fire on transitions only, never on the first state after load.
+	if (g_prevPower ~= nil and not bInitial) then
+		if (bOn and g_prevPower ~= 1) then C4:FireEvent(EVT_FIRE_ON) end
+		if ((not bOn) and g_prevPower ~= 0) then C4:FireEvent(EVT_FIRE_OFF) end
 	end
-	C4:SendToProxy(FIREPLACE_BINDING, sName, {}, "NOTIFY")
-	C4:SendToProxy(RELAY_OUT_BINDING, sName, {}, "NOTIFY")
+	g_prevPower = bOn and 1 or 0
+	C4:SetVariable("FIREPLACE_ON", bOn and "1" or "0")
+	C4:SetVariable("PILOT_ON", (g_state.pilot == 1) and "1" or "0")
+	C4:SetVariable("FLAME_LEVEL", bOn and tostring(FlameLevel()) or "0")
+	PublishUI(bInitial == true)
 end
 
 -- ===================== Proxy commands (Navigator -> device) ============================
@@ -839,7 +849,12 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
 		return
 	end
 
-	if (idBinding == FIREPLACE_BINDING or idBinding == RELAY_OUT_BINDING) then
+	if (idBinding == FIREPLACE_BINDING) then
+		if (strCommand == "SELECT") then
+			-- Tile tap: republish only. Opening the page must never act.
+			PublishUI(true)
+			return
+		end
 		FireplaceProxyCommand(strCommand, tParams)
 	end
 end
@@ -855,26 +870,6 @@ end
 -- TurnFlameOn() as a named function (rather than inlining) since Pilot
 -- On/Off is still exposed separately via its own Composer command/action.
 function FireplaceProxyCommand(cmd, p)
-	-- Relay proxy commands (v118). CLOSE = turn the main flame on, OPEN = off.
-	if (cmd == "CLOSE") then
-		FireplaceProxyCommand("SET_MODE_HVAC", { MODE = "Heat" })
-		return
-	elseif (cmd == "OPEN") then
-		FireplaceProxyCommand("SET_MODE_HVAC", { MODE = "Off" })
-		return
-	elseif (cmd == "TOGGLE") then
-		if (g_state.power == 1) then
-			FireplaceProxyCommand("SET_MODE_HVAC", { MODE = "Off" })
-		else
-			FireplaceProxyCommand("SET_MODE_HVAC", { MODE = "Heat" })
-		end
-		return
-	elseif (cmd == "TRIGGER") then
-		-- Relay "trigger" pulse from the proxy: no state change, ignored.
-		LOG("TRIGGER ignored")
-		return
-	end
-
 	if (cmd == "SET_MODE_HVAC") then
 		local mode = p.MODE
 		if (mode == "Heat") then
@@ -939,6 +934,122 @@ function FireplaceProxyCommand(cmd, p)
 	end
 end
 
+-- ===================== Web view (uibutton proxy + www/fireplace1.html) ============================
+-- Navigator opens PAGE_FILE. The page reads UI_STATE (JSON snapshot) and sends
+-- parameter-free UI_* commands, which reach ExecuteCommand and are dispatched
+-- through EC. Opening the page or tapping the tile never performs an action.
+EC = {}
+EVT_FIRE_ON  = 1
+EVT_FIRE_OFF = 2
+g_uiSeq     = 0
+g_uiOnline  = false
+g_lastIcon  = nil
+g_prevPower = nil
+
+-- Flame level 1-5 = height + 1 (height is 0-4 from the poll).
+function FlameLevel()
+	local h = tonumber(g_state.height) or 0
+	if (h < 0) then h = 0 end
+	if (h > 4) then h = 4 end
+	return h + 1
+end
+
+-- Tile state ids. These must match the <state id> values in driver.xml.
+function IconStateId()
+	if (g_state.power == 1) then return "Flame" .. tostring(FlameLevel()) end
+	if (g_state.pilot == 1) then return "Pilot" end
+	return "Default"
+end
+
+function IconText(sId)
+	if (sId == "Default") then return "Off" end
+	if (sId == "Pilot") then return "Pilot" end
+	return "Flame " .. string.sub(sId, 6)
+end
+
+-- Sends ICON_CHANGED only when the state id changes, unless bForce.
+function UpdateTileIcon(bForce)
+	local sId = IconStateId()
+	if (bForce or sId ~= g_lastIcon) then
+		g_lastIcon = sId
+		C4:SendToProxy(FIREPLACE_BINDING, "ICON_CHANGED", { icon = sId, icon_description = IconText(sId) }, "NOTIFY")
+	end
+end
+
+function BuildUIState()
+	g_uiSeq = g_uiSeq + 1
+	local bOn = (g_state.power == 1)
+	return string.format(
+		'{"t":"ifire","seq":%d,"build":"%s","version":"%s","online":%s,"power":%d,"pilot":%d,"level":%d}',
+		g_uiSeq, PAGE_BUILD, DRIVER_VERSION, g_uiOnline and "true" or "false",
+		bOn and 1 or 0, (g_state.pilot == 1) and 1 or 0, FlameLevel())
+end
+
+function PublishUI(bForceIcon)
+	local ok, json = pcall(BuildUIState)
+	if (not ok) then
+		LOG("PublishUI failed: " .. tostring(json))
+		return
+	end
+	C4:SetVariable("UI_STATE", json)
+	pcall(C4.SendDataToUI, C4, json)
+	UpdateTileIcon(bForceIcon == true)
+end
+
+-- Page commands (ExecuteCommand -> EC). Parameter-free by design.
+EC["UI_REFRESH"] = function ()
+	PublishUI(true)
+	QueuePoll()
+end
+EC["UI_POWER_ON"]  = function () FireplaceProxyCommand("SET_MODE_HVAC", { MODE = "Heat" }) end
+EC["UI_POWER_OFF"] = function () FireplaceProxyCommand("SET_MODE_HVAC", { MODE = "Off" }) end
+EC["UI_PILOT_ON"] = function ()
+	g_state.pilot = 1
+	NotifyRelayState(false)
+	SendFireplaceCommand("pilot", 1)
+	QueuePoll()
+end
+EC["UI_PILOT_OFF"] = function ()
+	-- Same path as the Composer Set Pilot OFF: pilot off also drops the main flame.
+	g_state.power = 0
+	g_state.pilot = 0
+	g_desiredPower = 0
+	NotifyRelayState(false)
+	SendFireplaceCommand("power", 0)
+	SendFireplaceCommand("pilot", 0)
+end
+
+-- Flame height only acts while the main flame is on. It sends flame_height
+-- and never re-sends power.
+for n = 1, 5 do
+	EC["UI_FLAME_" .. n] = function ()
+		if (g_state.power ~= 1) then
+			LOG("UI_FLAME_" .. n .. " ignored: fireplace is off")
+			PublishUI(false)
+			return
+		end
+		local h = n - 1
+		g_state.height = h
+		g_desiredPower = 1
+		g_desiredHeight = h
+		NotifyRelayState(false)
+		SendFireplaceCommand("flame_height", h)
+	end
+end
+
+-- The page announces its build on open. A mismatch means Navigator is showing a cached page.
+for b = 1, 99 do
+	EC["UI_HELLO_" .. b] = function ()
+		if (tostring(b) == PAGE_BUILD) then
+			C4:UpdateProperty("Web Page Status", "Page build " .. b .. " OK")
+		else
+			C4:UpdateProperty("Web Page Status", "PAGE IS STALE: page " .. b .. ", driver expects " .. PAGE_BUILD)
+			print("[IntelliFire] PAGE IS STALE: page build " .. b .. ", driver expects " .. PAGE_BUILD)
+		end
+		PublishUI(true)
+	end
+end
+
 function TurnFlameOn()
 	SendFireplaceCommand("power", 1)
 end
@@ -969,6 +1080,11 @@ function ExecuteCommand(strCommand, tParams)
 			LOG("LUA_ACTION received with no ACTION parameter - ignoring")
 			return
 		end
+	end
+
+	-- Web view page commands (UI_*) are dispatched through EC.
+	if (EC[strCommand] ~= nil) then
+		return EC[strCommand](tParams)
 	end
 
 	LOG("ExecuteCommand: " .. tostring(strCommand))
