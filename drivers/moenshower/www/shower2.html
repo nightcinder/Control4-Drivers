@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Shower</title>
+<style>
+  :root {
+    --ground: #13212a;
+    --surface: #1b2c37;
+    --surface-2: #223644;
+    --line: #2d4352;
+    --text: #e9eff2;
+    --muted: #91a6b2;
+    --cold: #5fb4cc;
+    --hot: #ef9a5a;
+    --stop: #e0645c;
+    --ok: #8fcfa1;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--ground); color: var(--text); }
+  body {
+    font: 400 17px/1.4 -apple-system, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    font-variant-numeric: tabular-nums;
+    -webkit-user-select: none; user-select: none;
+    padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  }
+  button {
+    font: inherit; color: inherit; border: 0; background: none; cursor: pointer;
+    touch-action: manipulation;
+  }
+  button:focus-visible { outline: 3px solid var(--cold); outline-offset: 3px; }
+  button:disabled { cursor: default; }
+
+  .app {
+    max-width: 1100px; margin: 0 auto; min-height: 100%;
+    display: grid; gap: 28px;
+    grid-template-columns: minmax(300px, 420px) 1fr;
+    align-items: start;
+  }
+  @media (max-width: 760px) { .app { grid-template-columns: 1fr; gap: 24px; } }
+
+  /* ---------- left: the water ---------- */
+  .water { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+  .dial { position: relative; width: min(100%, 340px); aspect-ratio: 1; }
+  .dial svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .dial .track { stroke: var(--surface-2); }
+  .dial .fill { transition: stroke-dasharray .8s ease, stroke .8s ease; }
+  @media (prefers-reduced-motion: reduce) { .dial .fill { transition: none; } }
+  .readout {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; padding-top: 6%;
+  }
+  .now { font-size: clamp(64px, 19vw, 104px); font-weight: 200; line-height: 1; letter-spacing: -0.03em; }
+  .now sup { font-size: .38em; font-weight: 300; vertical-align: .95em; margin-left: 2px; }
+  .state { margin-top: 10px; font-size: 19px; font-weight: 500; }
+  .state.ready { color: var(--ok); }
+  .state.warming { color: var(--hot); }
+  .state.off, .state.offline { color: var(--muted); }
+
+  .setpoint { display: flex; align-items: center; gap: 14px; margin-top: -28px; }
+  .setpoint .step {
+    width: 60px; height: 60px; border-radius: 50%;
+    background: var(--surface); border: 1px solid var(--line);
+    font-size: 30px; font-weight: 300; line-height: 1;
+  }
+  .setpoint .step:active:not(:disabled) { background: var(--surface-2); }
+  .setpoint .step:disabled { opacity: .35; }
+  .setpoint .label { min-width: 120px; text-align: center; }
+  .setpoint .label b { display: block; font-size: 28px; font-weight: 400; }
+  .setpoint .label span { color: var(--muted); font-size: 15px; }
+
+  .main-action {
+    width: min(100%, 340px); height: 68px; border-radius: 34px;
+    font-size: 20px; font-weight: 600;
+    background: var(--cold); color: #0f2530;
+  }
+  .main-action.stop { background: var(--stop); color: #2b0e0c; }
+  .main-action:active:not(:disabled) { filter: brightness(.9); }
+  .main-action:disabled { opacity: .45; }
+  .second-action {
+    min-height: 48px; padding: 0 22px; border-radius: 24px;
+    border: 1px solid var(--line); color: var(--text); font-weight: 500;
+  }
+
+  /* ---------- right: presets + outlets ---------- */
+  .side { display: flex; flex-direction: column; gap: 26px; min-width: 0; }
+  h2 { margin: 0 0 10px; font-size: 15px; font-weight: 600; color: var(--muted); }
+  .presets { display: flex; flex-direction: column; gap: 10px; }
+  .preset {
+    display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 16px;
+    width: 100%; min-height: 76px; padding: 14px 20px; text-align: left;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  }
+  .preset:active:not(:disabled) { background: var(--surface-2); }
+  .preset .title { font-size: 21px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .preset .temp { grid-row: span 2; font-size: 30px; font-weight: 300; }
+  .preset .detail { color: var(--muted); font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .preset.on { border-color: var(--hot); box-shadow: inset 4px 0 0 var(--hot); }
+  .preset.on .detail { color: var(--hot); }
+  .preset.sending { opacity: .6; }
+
+  .outlets { display: flex; flex-wrap: wrap; gap: 10px; }
+  .outlet {
+    min-height: 56px; padding: 0 20px; border-radius: 28px;
+    background: var(--surface); border: 1px solid var(--line); font-weight: 500;
+  }
+  .outlet.on { background: var(--cold); border-color: var(--cold); color: #0f2530; }
+  .outlet.sending { opacity: .6; }
+
+  .note { color: var(--muted); font-size: 15px; margin: 0; }
+  .banner {
+    grid-column: 1 / -1; padding: 14px 18px; border-radius: 12px;
+    background: rgba(224,100,92,.12); border: 1px solid rgba(224,100,92,.4); color: #f3c4c0;
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main class="app" id="app">
+  <div class="banner" id="banner" hidden></div>
+
+  <section class="water" aria-label="Water">
+    <div class="dial">
+      <svg viewBox="0 0 200 200" aria-hidden="true">
+        <circle class="track" cx="100" cy="100" r="88" fill="none" stroke-width="12" stroke-linecap="round"
+                stroke-dasharray="414.69 552.92" transform="rotate(135 100 100)"/>
+        <circle class="fill" id="arc" cx="100" cy="100" r="88" fill="none" stroke="#5fb4cc" stroke-width="12"
+                stroke-linecap="round" stroke-dasharray="0 552.92" transform="rotate(135 100 100)"/>
+        <circle id="tick" r="5" fill="#e9eff2" cx="100" cy="12" hidden/>
+      </svg>
+      <div class="readout">
+        <div class="now" id="now">--<sup>°</sup></div>
+        <div class="state off" id="state" role="status" aria-live="polite">Connecting</div>
+      </div>
+    </div>
+
+    <div class="setpoint" id="setpoint">
+      <button class="step" id="down" aria-label="Cooler">−</button>
+      <div class="label"><b id="target">--°</b><span id="targetNote">set temperature</span></div>
+      <button class="step" id="up" aria-label="Warmer">+</button>
+    </div>
+
+    <button class="main-action" id="main">Start shower</button>
+    <button class="second-action" id="resume" hidden>Resume water</button>
+  </section>
+
+  <section class="side">
+    <div>
+      <h2>Presets</h2>
+      <div class="presets" id="presets"></div>
+      <p class="note" id="noPresets" hidden>No presets yet. Create them in the U by Moen app and they'll appear here.</p>
+    </div>
+    <div id="outletBlock" hidden>
+      <h2>Outlets</h2>
+      <div class="outlets" id="outlets"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var PAGE_BUILD = "2";              // must match PAGE_BUILD in the driver Lua
+  var ARC = 414.69;                  // 270 degrees of r=88
+
+  var S = null;                      // last state from the driver
+  var lastSeq = null;
+  var gotState = false;
+  var pending = {};                  // command -> expiry time
+  var localTgt = null, localTgtUntil = 0, tgtTimer = null;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var hasC4 = typeof window.C4 !== "undefined" && window.C4 && typeof window.C4.sendCommand === "function";
+
+  // ---------- talking to the driver ----------
+  function send(cmd) {
+    pending[cmd] = Date.now() + 8000;
+    if (hasC4) {
+      try { window.C4.sendCommand(cmd, "{}", false, true); } catch (e) {}
+    } else {
+      preview(cmd);
+    }
+    render();
+  }
+
+  function asList(v) { return Array.isArray(v) ? v : []; }
+
+  function findState(x, depth) {
+    if (depth > 4 || x == null) return null;
+    if (typeof x === "string") {
+      var t = x.trim();
+      if (t.charAt(0) !== "{" && t.charAt(0) !== "[") return null;
+      try { return findState(JSON.parse(t), depth + 1); } catch (e) { return null; }
+    }
+    if (typeof x === "object") {
+      if (x.t === "moen" && x.seq != null) return x;
+      for (var k in x) {
+        if (Object.prototype.hasOwnProperty.call(x, k)) {
+          var r = findState(x[k], depth + 1);
+          if (r) return r;
+        }
+      }
+    }
+    return null;
+  }
+
+  // Navigator calls several of these for the same payload; dedupe on seq.
+  function onAnything() {
+    for (var i = 0; i < arguments.length; i++) {
+      var st = findState(arguments[i], 0);
+      if (!st) continue;
+      if (st.seq === lastSeq) return;
+      lastSeq = st.seq;
+      gotState = true;
+      S = st;
+      // Any fresh state clears "sending" marks older than half a second.
+      var now = Date.now();
+      for (var c in pending) if (pending[c] - 7500 < now) delete pending[c];
+      render();
+      return;
+    }
+  }
+  ["onVariable", "onVariableChanged", "onVariableUpdate", "onDataToUi", "onDataToUI"].forEach(function (n) {
+    window[n] = onAnything;
+  });
+
+  function connect() {
+    if (!hasC4) { preview("UI_HELLO_" + PAGE_BUILD); return; }
+    try { window.C4.subscribeToVariable("UI_STATE", true); } catch (e) {}
+    try { window.C4.subscribeToDataToUi(true); } catch (e) {}
+    send("UI_HELLO_" + PAGE_BUILD);
+    setTimeout(function () {
+      if (gotState) return;
+      try { window.C4.subscribeToVariable("UI_STATE", false); } catch (e) {}
+      send("UI_REFRESH");
+    }, 5000);
+  }
+
+  // ---------- drawing ----------
+  var MODE_TEXT = {
+    off: "Off", adjusting: "Warming up", ready: "Ready",
+    "paused-by-preset": "Paused at temperature", paused: "Paused"
+  };
+
+  // Ring color is the water itself: cool blue at the bottom of the range,
+  // warm amber at the top.
+  function heatColor(t, lo, hi) {
+    var a = [95, 180, 204], b = [239, 154, 90];
+    var k = (t == null || hi <= lo) ? 0 : Math.max(0, Math.min(1, (t - lo) / (hi - lo)));
+    k = Math.pow(k, 0.8);
+    return "rgb(" + a.map(function (v, i) { return Math.round(v + (b[i] - v) * k); }).join(",") + ")";
+  }
+
+  function fmt(t) { return (t == null || isNaN(t)) ? "--" : Math.round(t); }
+
+  function render() {
+    if (!S) return;
+    var running = !!S.running;
+    var mode = S.mode || "unknown";
+    var paused = (mode === "paused-by-preset" || mode === "paused");
+    var online = !!S.online;
+    var tgt = (localTgt != null && Date.now() < localTgtUntil) ? localTgt : S.tgt;
+    if (Date.now() >= localTgtUntil) localTgt = null;
+
+    // banner
+    var banner = $("banner");
+    if (!S.configured) {
+      banner.hidden = false;
+      banner.textContent = "Add the Moen account email and password in the driver's properties in Composer.";
+    } else if (!online) {
+      banner.hidden = false;
+      banner.textContent = "Can't reach the shower right now. Controls will come back when the Moen cloud responds." +
+        (S.err ? " (" + S.err + ")" : "");
+    } else {
+      banner.hidden = true;
+    }
+
+    // dial
+    $("now").innerHTML = fmt(S.cur) + "<sup>°</sup>";
+    var state = $("state");
+    var label = online ? (MODE_TEXT[mode] || "Off") : "Offline";
+    state.textContent = label;
+    state.className = "state " + (!online ? "offline" : mode === "ready" ? "ready" : mode === "adjusting" ? "warming" : running ? "ready" : "off");
+
+    var lo = Math.min(S.min || 60, S.cur || 999);
+    var frac = 0;
+    if (running && S.cur != null && tgt != null) {
+      frac = mode === "ready" ? 1 : Math.max(0.04, Math.min(1, (S.cur - lo) / Math.max(1, tgt - lo)));
+    }
+    $("arc").setAttribute("stroke-dasharray", (ARC * frac).toFixed(2) + " 552.92");
+    $("arc").setAttribute("stroke", heatColor(S.cur, S.min, S.max));
+    $("arc").style.opacity = frac > 0 ? "1" : "0";
+
+    // target marker sits where the target falls on the min..max scale
+    var tick = $("tick");
+    if (tgt != null && S.max > S.min) {
+      var p = Math.max(0, Math.min(1, (tgt - S.min) / (S.max - S.min)));
+      var ang = (135 + 270 * p) * Math.PI / 180;
+      tick.setAttribute("cx", (100 + 88 * Math.cos(ang)).toFixed(1));
+      tick.setAttribute("cy", (100 + 88 * Math.sin(ang)).toFixed(1));
+      tick.removeAttribute("hidden");
+    } else {
+      tick.setAttribute("hidden", "");
+    }
+
+    // setpoint
+    $("target").textContent = fmt(tgt) + "°";
+    $("targetNote").textContent = running ? "set temperature" : "set when running";
+    $("down").disabled = !running || !online || tgt == null || tgt <= S.min;
+    $("up").disabled = !running || !online || tgt == null || tgt >= S.max;
+
+    // main button
+    var main = $("main");
+    main.className = "main-action" + (running ? " stop" : "");
+    main.textContent = running ? (pending.UI_SHOWER_OFF ? "Stopping…" : "Stop shower")
+                               : (pending.UI_SHOWER_ON ? "Starting…" : "Start shower");
+    main.disabled = !online;
+    $("resume").hidden = !(paused && online);
+    $("resume").textContent = pending.UI_RESUME ? "Resuming…" : "Resume water";
+
+    renderPresets(online, running);
+    renderOutlets(online, running);
+  }
+
+  function outletName(pos) {
+    var o = asList(S.outlets).filter(function (x) { return x.pos === pos; })[0];
+    return o ? o.name : "Outlet " + pos;
+  }
+
+  function renderPresets(online, running) {
+    var box = $("presets");
+    var list = asList(S.presets);
+    $("noPresets").hidden = list.length > 0;
+    box.innerHTML = "";
+    list.forEach(function (p) {
+      var cmd = "UI_PRESET_" + p.pos;
+      var isOn = running && S.active === p.pos;
+      var b = document.createElement("button");
+      b.className = "preset" + (isOn ? " on" : "") + (pending[cmd] ? " sending" : "");
+      b.disabled = !online;
+      var outs = asList(p.outlets).map(outletName).join(", ");
+      var detail = isOn ? "Running now" : pending[cmd] ? "Starting…" : (outs || "Tap to start");
+      if (!isOn && !pending[cmd] && p.timer) detail += (outs ? ", " : "") + Math.round(p.timer / 60) + " min";
+      b.innerHTML = '<span class="title"></span><span class="temp"></span><span class="detail"></span>';
+      b.querySelector(".title").textContent = p.title;
+      b.querySelector(".temp").textContent = fmt(p.temp) + "°";
+      b.querySelector(".detail").textContent = detail;
+      b.setAttribute("aria-label", p.title + ", " + fmt(p.temp) + " degrees" + (isOn ? ", running" : ""));
+      b.addEventListener("click", function () { if (!isOn) send(cmd); });
+      box.appendChild(b);
+    });
+  }
+
+  function renderOutlets(online, running) {
+    var list = asList(S.outlets);
+    $("outletBlock").hidden = !(running && online && list.length > 1);
+    var box = $("outlets");
+    box.innerHTML = "";
+    list.forEach(function (o) {
+      var cmd = "UI_OUTLET_" + o.pos + (o.on ? "_OFF" : "_ON");
+      var b = document.createElement("button");
+      b.className = "outlet" + (o.on ? " on" : "") + (pending[cmd] ? " sending" : "");
+      b.textContent = o.name;
+      b.setAttribute("aria-pressed", o.on ? "true" : "false");
+      b.addEventListener("click", function () { send(cmd); });
+      box.appendChild(b);
+    });
+  }
+
+  // ---------- controls ----------
+  function nudge(d) {
+    if (!S || !S.running) return;
+    var base = (localTgt != null) ? localTgt : S.tgt;
+    if (base == null) return;
+    localTgt = Math.max(S.min, Math.min(S.max, Math.round(base) + d));
+    localTgtUntil = Date.now() + 6000;
+    render();
+    clearTimeout(tgtTimer);
+    tgtTimer = setTimeout(function () { send("UI_TEMP_SET_" + localTgt); }, 700);
+  }
+  $("down").addEventListener("click", function () { nudge(-1); });
+  $("up").addEventListener("click", function () { nudge(1); });
+  $("main").addEventListener("click", function () {
+    if (!S) return;
+    send(S.running ? "UI_SHOWER_OFF" : "UI_SHOWER_ON");
+  });
+  $("resume").addEventListener("click", function () { send("UI_RESUME"); });
+
+  // Expire stale "sending" marks so nothing sticks if a reply never comes.
+  setInterval(function () {
+    var now = Date.now(), changed = false;
+    for (var c in pending) if (pending[c] < now) { delete pending[c]; changed = true; }
+    if (changed) render();
+  }, 1000);
+
+  // ---------- browser preview (only when not inside Navigator) ----------
+  var P = null;
+  function preview(cmd) {
+    if (!P) {
+      P = { t: "moen", seq: 0, build: PAGE_BUILD, online: true, configured: true, linked: true, err: "",
+        name: "Primary bath", mode: "off", running: false, cur: 72, tgt: 104, min: 60, max: 115, active: null,
+        presets: [
+          { pos: 1, title: "Morning", temp: 104, outlets: [1] },
+          { pos: 2, title: "Rain soak", temp: 106, outlets: [1, 2], timer: 900 },
+          { pos: 3, title: "Kids", temp: 98, outlets: [3] }
+        ],
+        outlets: [{ pos: 1, name: "Shower Head", on: false }, { pos: 2, name: "Rain Shower", on: false },
+                  { pos: 3, name: "Hand Shower", on: false }] };
+      setInterval(function () {
+        if (P.running && P.mode === "adjusting") {
+          P.cur = Math.min(P.tgt, P.cur + 4);
+          if (P.cur >= P.tgt) P.mode = "ready";
+          push();
+        }
+      }, 900);
+    }
+    var m;
+    if (cmd === "UI_SHOWER_ON") { P.running = true; P.mode = "adjusting"; }
+    else if (cmd === "UI_SHOWER_OFF") { P.running = false; P.mode = "off"; P.active = null; P.cur = 72;
+      P.outlets.forEach(function (o) { o.on = false; }); }
+    else if ((m = /^UI_PRESET_(\d+)$/.exec(cmd))) {
+      var pr = P.presets.filter(function (x) { return x.pos === +m[1]; })[0];
+      P.running = true; P.mode = "adjusting"; P.active = pr.pos; P.tgt = pr.temp;
+      P.outlets.forEach(function (o) { o.on = pr.outlets.indexOf(o.pos) >= 0; });
+    }
+    else if ((m = /^UI_TEMP_SET_(\d+)$/.exec(cmd))) { P.tgt = +m[1]; if (P.cur < P.tgt) P.mode = "adjusting"; }
+    else if ((m = /^UI_OUTLET_(\d+)_(ON|OFF)$/.exec(cmd))) {
+      P.outlets.forEach(function (o) { if (o.pos === +m[1]) o.on = m[2] === "ON"; });
+    }
+    setTimeout(push, 500);
+  }
+  function push() { P.seq++; onAnything(JSON.stringify(P)); onAnything(JSON.stringify(P)); }
+
+  connect();
+})();
+</script>
+</body>
+</html>
