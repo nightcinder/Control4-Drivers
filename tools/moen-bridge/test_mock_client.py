@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""Exercise moen_bridge.py in --mock mode over TCP. No hardware or HomeKit needed.
+
+It starts the bridge itself with a temporary config, runs every command, checks
+the safety rules, then stops the bridge. Exit code 0 means all checks passed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from typing import Any, Callable
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+BRIDGE = os.path.join(HERE, "moen_bridge.py")
+
+PASSED = 0
+
+
+def check(cond: bool, label: str) -> None:
+    global PASSED
+    if not cond:
+        raise AssertionError(f"FAILED: {label}")
+    PASSED += 1
+    print(f"  ok  {label}")
+
+
+class Client:
+    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        self.r = reader
+        self.w = writer
+        self.last_state: dict[str, Any] | None = None
+        self.last_seq = 0
+
+    async def send_raw(self, text: str) -> None:
+        self.w.write((text + "\n").encode())
+        await self.w.drain()
+
+    async def send(self, obj: dict[str, Any]) -> None:
+        await self.send_raw(json.dumps(obj))
+
+    async def line(self, timeout: float = 5.0) -> dict[str, Any]:
+        raw = await asyncio.wait_for(self.r.readline(), timeout)
+        if not raw:
+            raise EOFError("connection closed")
+        msg = json.loads(raw)
+        if msg.get("event") == "state":
+            check(msg["seq"] >= self.last_seq, "seq never goes backwards")
+            self.last_seq = msg["seq"]
+            self.last_state = msg
+        return msg
+
+    async def until(self, pred: Callable[[dict[str, Any]], bool], timeout: float = 5.0) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise AssertionError("timed out waiting for a matching line")
+            msg = await self.line(left)
+            if msg["event"] == "error" or pred(msg):
+                return msg
+
+    async def ok(self, obj: dict[str, Any], pred: Callable[[dict[str, Any]], bool], label: str) -> dict[str, Any]:
+        await self.send(obj)
+        msg = await self.until(lambda m: m["event"] == "error" or (m["event"] == "state" and pred(m)))
+        check(msg["event"] == "state", f"{label} (got {msg})")
+        check(pred(msg), label)
+        return msg
+
+    async def err(self, obj: dict[str, Any] | str, substr: str, label: str) -> None:
+        if isinstance(obj, str):
+            await self.send_raw(obj)
+        else:
+            await self.send(obj)
+        msg = await self.until(lambda m: m["event"] == "error")
+        check(msg["event"] == "error" and substr in msg["msg"], f"{label} (got {msg})")
+
+
+async def connect(port: int) -> Client:
+    for _ in range(100):
+        try:
+            r, w = await asyncio.open_connection("127.0.0.1", port)
+            return Client(r, w)
+        except OSError:
+            await asyncio.sleep(0.1)
+    raise RuntimeError(f"bridge not listening on port {port}")
+
+
+def write_config(path: str, extra: dict[str, Any] | None = None) -> None:
+    cfg: dict[str, Any] = {
+        "pairing_file": "/nonexistent/unused-in-mock.json",
+        "bind": "127.0.0.1",
+        "min_f": 80,
+        "max_f": 120,
+        "write_heater_active_on_start": False,
+        "presets": [
+            {"n": 1, "title": "Hot", "temp_f": 117, "outlets": [1, 2]},
+            {"n": 2, "title": "Comfortable", "temp_f": 108, "outlets": [1, 2]},
+        ],
+    }
+    cfg.update(extra or {})
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, indent=2)
+
+
+def start_bridge(cfg_path: str, port: int, log_path: str) -> subprocess.Popen:
+    log_fh = open(log_path, "w", encoding="utf-8")
+    return subprocess.Popen(
+        [sys.executable, BRIDGE, "--mock", "--config", cfg_path, "--port", str(port),
+         "--log-level", "INFO"],
+        stdout=log_fh, stderr=subprocess.STDOUT)
+
+
+async def run_main_suite(port: int, cfg_path: str) -> None:
+    c = await connect(port)
+    print("startup and safety")
+    first = json.loads(await c.r.readline())
+    check(first["event"] == "state" and first["shower_connected"] is True, "state line sent on connect")
+    check(first["on"] is False, "shower starts off")
+    check(first["max_f"] == 120 and first["min_f"] == 80, "limits reported")
+    check(len(first["presets"]) == 2, "default presets present")
+    check(first["target_f"] == 100 and first["current_f"] == 84, "mock start values are 100F target, 84F current")
+
+    await c.err({"cmd": "set_temp", "f": 110}, "shower not running", "set_temp refused while off")
+    await c.ok({"cmd": "get_state"}, lambda m: m["on"] is False, "get_state does not start water")
+
+    print("outlets")
+    await c.ok({"cmd": "outlet", "n": 1, "on": True}, lambda m: m["outlets"] == [True, False], "outlet 1 on")
+    await c.err({"cmd": "outlet", "n": 3, "on": True}, "n must be 1 or 2", "outlet 3 rejected")
+    await c.err({"cmd": "outlet", "n": 1, "on": "yes"}, "on must be true or false", "outlet value must be bool")
+    await c.ok({"cmd": "outlet", "n": 2, "on": True}, lambda m: m["outlets"] == [True, True], "outlet 2 on")
+
+    print("on / temperature clamping")
+    await c.ok({"cmd": "on"}, lambda m: m["on"] is True and m["target_f"] == 100 and m["outlets"] == [True, True],
+               "on uses current target and outlets")
+    await c.ok({"cmd": "set_temp", "f": 130}, lambda m: m["target_f"] == 120, "130F clamped to 120F")
+    await c.ok({"cmd": "set_temp", "f": 50}, lambda m: m["target_f"] == 80, "50F clamped to 80F")
+    await c.ok({"cmd": "set_temp", "f": 110}, lambda m: m["target_f"] == 110, "set_temp 110F")
+
+    print("presets")
+    await c.ok({"cmd": "off"}, lambda m: m["on"] is False, "off")
+    await c.ok({"cmd": "preset", "n": 1}, lambda m: m["on"] is True and m["target_f"] == 117
+               and m["outlets"] == [True, True] and m["active_preset"] == 1, "preset 1 starts Hot 117F")
+    await c.ok({"cmd": "off"}, lambda m: m["on"] is False, "off again")
+    await c.err({"cmd": "preset", "n": 9}, "no such preset", "unknown preset rejected")
+    await c.ok({"cmd": "preset", "n": 2}, lambda m: m["on"] is True and m["target_f"] == 108
+               and m["active_preset"] == 2, "preset 2 starts Comfortable 108F")
+
+    print("set_preset (config only, must not start water)")
+    await c.ok({"cmd": "off"}, lambda m: m["on"] is False, "off before set_preset")
+    await c.ok({"cmd": "set_preset", "n": 3, "title": "Test", "temp_f": 130, "outlets": [2]},
+               lambda m: len(m["presets"]) == 3 and m["presets"][2]["temp_f"] == 120
+               and m["presets"][2]["outlets"] == [2] and m["on"] is False,
+               "set_preset clamps 130F to 120F and does not start water")
+    with open(cfg_path, encoding="utf-8") as fh:
+        saved = json.load(fh)
+    check(any(p["n"] == 3 and p["temp_f"] == 120 and p["outlets"] == [2] for p in saved["presets"]),
+          "set_preset written to config file")
+    check(not os.path.exists(cfg_path + ".tmp"), "no temp file left behind")
+    await c.err({"cmd": "set_preset", "n": 0, "title": "x", "temp_f": 100, "outlets": []},
+                "n must be a positive integer", "set_preset rejects n=0")
+    await c.err({"cmd": "set_preset", "n": 4, "title": "x", "temp_f": 100, "outlets": [3]},
+                "outlets must be", "set_preset rejects outlet 3")
+    await c.ok({"cmd": "preset", "n": 3}, lambda m: m["on"] is True and m["target_f"] == 120
+               and m["outlets"] == [False, True] and m["active_preset"] == 3, "preset 3 runs at 120F, outlet 2 only")
+    await c.ok({"cmd": "off"}, lambda m: m["on"] is False, "off")
+
+    print("errors and robustness")
+    await c.err("not json", "bad json", "bad json answered with error, connection kept")
+    await c.err({"cmd": "dance"}, "unknown cmd", "unknown cmd rejected")
+    await c.err({"foo": 1}, "missing cmd", "missing cmd rejected")
+    await c.err({"cmd": "set_temp", "f": "hot"}, "shower not running", "set_temp refused while off, before type check")
+
+    print("mock drift")
+    await c.ok({"cmd": "on"}, lambda m: m["on"] is True, "on")
+    before = c.last_state["current_f"]
+    await asyncio.sleep(3.5)
+    await c.send({"cmd": "get_state"})
+    while True:  # read everything queued, including drift broadcasts; the reply comes last
+        try:
+            await c.line(0.5)
+        except TimeoutError:
+            break
+    check(c.last_state["on"] is True, "get_state while running reports on")
+    check(c.last_state["current_f"] != before,
+          f"water temperature drifts ({before}F -> {c.last_state['current_f']}F)")
+    await c.ok({"cmd": "off"}, lambda m: m["on"] is False, "off after drift test")
+    await c.ok({"cmd": "get_state"}, lambda m: m["on"] is False, "still off after waiting (no spontaneous start)")
+    await asyncio.sleep(2.5)
+    await c.ok({"cmd": "get_state"}, lambda m: m["on"] is False, "still off after waiting 2.5 s")
+
+    c.w.close()
+
+
+async def run_allowed_clients_check(port: int, tmpdir: str) -> None:
+    print("allowed_clients")
+    cfg_path = os.path.join(tmpdir, "allowed.json")
+    write_config(cfg_path, {"allowed_clients": ["203.0.113.9"]})
+    log_path = os.path.join(tmpdir, "allowed.log")
+    proc = start_bridge(cfg_path, port, log_path)
+    try:
+        c = await connect(port)
+        try:
+            data = await asyncio.wait_for(c.r.readline(), 5)
+        except ConnectionResetError:
+            data = b""
+        check(data == b"", "client not in allowed_clients is disconnected")
+        c.w.close()
+    finally:
+        proc.terminate()
+        proc.wait(5)
+
+
+async def main_async(port: int) -> None:
+    tmpdir = tempfile.mkdtemp(prefix="moen-bridge-test-")
+    cfg_path = os.path.join(tmpdir, "test-config.json")
+    write_config(cfg_path)
+    log_path = os.path.join(tmpdir, "bridge.log")
+    proc = start_bridge(cfg_path, port, log_path)
+    try:
+        await run_main_suite(port, cfg_path)
+    except Exception:
+        with open(log_path, encoding="utf-8") as fh:
+            print("--- bridge log tail ---")
+            print("".join(fh.readlines()[-40:]))
+        raise
+    finally:
+        proc.terminate()
+        proc.wait(5)
+    await run_allowed_clients_check(port + 1, tmpdir)
+    print(f"\nALL {PASSED} CHECKS PASSED (log dir: {tmpdir})")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--port", type=int, default=8799)
+    args = ap.parse_args()
+    asyncio.run(main_async(args.port))
+
+
+if __name__ == "__main__":
+    main()

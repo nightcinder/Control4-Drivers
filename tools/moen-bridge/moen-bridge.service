@@ -1,0 +1,15 @@
+[Unit]
+Description=U by Moen shower bridge (HomeKit to TCP JSON for Control4)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=liesa
+WorkingDirectory=/home/liesa
+ExecStart=/home/liesa/hk/bin/python /home/liesa/moen_bridge.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
