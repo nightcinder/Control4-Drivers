@@ -6,7 +6,7 @@
 <title>Fireplace</title>
 <style>
   :root { --bg:#1a1412; --panel:#2a1f1b; --line:#4a3328; --text:#f4e9e1; --muted:#b09a8c;
-          --ember:#ff7a1a; --gold:#ffd34d; --off:#6d5d55; }
+          --ember:#ff7a1a; --gold:#ffd34d; --off:#6d5d55; --blue:#7fc4ff; }
   @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --bg:#1a1412; } }
   [data-theme="dark"] { --bg:#1a1412; }
   html, body { margin:0; background:var(--bg); color:var(--text); font:400 17px/1.4 -apple-system,"Segoe UI",Roboto,sans-serif; }
@@ -18,16 +18,21 @@
   .status .big { font-size:40px; font-weight:600; letter-spacing:.01em; }
   .status .sub { color:var(--muted); margin-top:4px; }
   .status.on .big { color:var(--ember); text-shadow:0 0 18px rgba(255,122,26,.45); }
-  .status.pilot .big { color:#7fc4ff; }
+  .status.pilot .big { color:var(--blue); }
   .status.offline .big { color:var(--muted); }
   h2 { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:0 0 8px; }
-  .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   button { font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:14px;
            min-height:58px; padding:0 12px; font-weight:600; cursor:pointer; -webkit-tap-highlight-color:transparent; }
   button:active:not(:disabled) { filter:brightness(1.15); }
   button:disabled { opacity:.4; cursor:default; }
-  button.primary.on { background:linear-gradient(#ff8c3a,#d9561a); border-color:#ff8c3a; color:#2b0f04; }
   button:focus-visible { outline:3px solid var(--gold); outline-offset:2px; }
+  /* Three-way mode selector: Off | Pilot | On. The active segment is highlighted. */
+  .modes { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .modes button { min-height:64px; font-size:19px; }
+  .modes button.act-off   { background:#5b4c44; border-color:#a18e83; color:#fff; }
+  .modes button.act-pilot { background:linear-gradient(#5aa9ff,#2f7fd6); border-color:var(--blue); color:#06203f; }
+  .modes button.act-on    { background:linear-gradient(#ff8c3a,#d9561a); border-color:#ff8c3a; color:#2b0f04; }
+  .modes button[aria-pressed="true"] { cursor:default; }
   .levels { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; }
   .levels button { min-height:64px; font-size:20px; }
   .levels button.cur { background:linear-gradient(#ffb347,#e0601e); color:#2b0f04; border-color:#ffb347; }
@@ -45,30 +50,34 @@
   </section>
 
   <section>
-    <h2>Power</h2>
-    <div class="row">
-      <button class="primary" id="power">Fireplace On</button>
-      <button id="pilot">Pilot On</button>
+    <h2>Mode</h2>
+    <div class="modes" id="modes" role="group" aria-label="Fireplace mode">
+      <button type="button" data-m="off"   id="m-off"   aria-pressed="false">Off</button>
+      <button type="button" data-m="pilot" id="m-pilot" aria-pressed="false">Pilot</button>
+      <button type="button" data-m="on"    id="m-on"    aria-pressed="false">On</button>
     </div>
   </section>
 
   <section>
     <h2>Flame level</h2>
     <div class="levels" id="levels">
-      <button data-n="1">1</button><button data-n="2">2</button><button data-n="3">3</button>
-      <button data-n="4">4</button><button data-n="5">5</button>
+      <button type="button" data-n="1">1</button><button type="button" data-n="2">2</button><button type="button" data-n="3">3</button>
+      <button type="button" data-n="4">4</button><button type="button" data-n="5">5</button>
     </div>
-    <div class="hint" id="hint">Turn the fireplace on to set the flame level.</div>
+    <div class="hint" id="hint">Set the mode to On to choose a flame level.</div>
   </section>
 </main>
 
 <script>
 (function () {
   "use strict";
-  var PAGE_BUILD = "1";              // must match PAGE_BUILD in the driver Lua
+  var PAGE_BUILD = "2";              // must match PAGE_BUILD in the driver Lua
   var S = null, lastSeq = null, gotState = false, pending = {};
   var hasC4 = typeof window.C4 !== "undefined" && window.C4 && typeof window.C4.sendCommand === "function";
   var $ = function (id) { return document.getElementById(id); };
+
+  // Pending marks debounce double taps. Each one expires on its own (see interval below).
+  var MODE_CMDS = ["UI_POWER_ON", "UI_POWER_OFF", "UI_SET_PILOT"];
 
   function send(cmd) {
     pending[cmd] = Date.now() + 8000;
@@ -126,49 +135,62 @@
     }, 5000);
   }
 
+  // Current mode from the snapshot: On beats Pilot beats Off.
+  function currentMode() {
+    if (!S) return null;
+    if (S.power === 1) return "on";
+    if (S.pilot === 1) return "pilot";
+    return "off";
+  }
+
   function render() {
     if (!S) return;
-    var online = !!S.online, on = S.power === 1, pilot = S.pilot === 1;
+    var online = !!S.online, mode = currentMode();
     var level = Math.max(1, Math.min(5, S.level || 1));
     var now = Date.now();
+    var modeBusy = MODE_CMDS.some(function (c) { return pending[c] > now; });
 
     $("banner").className = "banner" + (online ? "" : " show");
     $("banner").textContent = online ? "" : "Fireplace offline. Controls return when it reconnects.";
 
     var st = $("status"), big = $("big"), sub = $("sub");
     if (!online) { st.className = "status offline"; big.textContent = "Offline"; sub.textContent = "last known state shown below"; }
-    else if (on) { st.className = "status on"; big.textContent = "Flame " + level; sub.textContent = "main flame on"; }
-    else if (pilot) { st.className = "status pilot"; big.textContent = "Pilot"; sub.textContent = "pilot lit, main flame off"; }
+    else if (mode === "on") { st.className = "status on"; big.textContent = "Flame " + level; sub.textContent = "main flame on"; }
+    else if (mode === "pilot") { st.className = "status pilot"; big.textContent = "Pilot"; sub.textContent = "pilot lit, main flame off"; }
     else { st.className = "status"; big.textContent = "Off"; sub.textContent = "fireplace is off"; }
 
-    var pw = $("power");
-    pw.textContent = on ? "Fireplace Off" : "Fireplace On";
-    pw.className = "primary" + (on ? " on" : "");
-    pw.disabled = !online || (pending.UI_POWER_ON || pending.UI_POWER_OFF) > now;
-    var pl = $("pilot");
-    pl.textContent = pilot ? "Pilot Off" : "Pilot On";
-    pl.disabled = !online || on || pending.UI_PILOT_ON > now || pending.UI_PILOT_OFF > now;
-    $("hint").textContent = on ? "Tap a level to change the flame height." :
-                                 "Turn the fireplace on to set the flame level.";
+    // Three equal segments: the active one is highlighted and does nothing when tapped.
+    var segs = $("modes").querySelectorAll("button");
+    for (var i = 0; i < segs.length; i++) {
+      var m = segs[i].getAttribute("data-m");
+      var active = (m === mode);
+      segs[i].className = active ? "act-" + m : "";
+      segs[i].setAttribute("aria-pressed", active ? "true" : "false");
+      segs[i].disabled = !online || modeBusy;
+    }
+
+    $("hint").textContent = mode === "on" ? "Tap a level to change the flame height." :
+                                             "Set the mode to On to choose a flame level.";
     var btns = $("levels").querySelectorAll("button");
-    for (var i = 0; i < btns.length; i++) {
-      var n = +btns[i].getAttribute("data-n");
-      btns[i].className = (on && n === level) ? "cur" : "";
-      btns[i].disabled = !online || !on;
+    for (var j = 0; j < btns.length; j++) {
+      var n = +btns[j].getAttribute("data-n");
+      btns[j].className = (mode === "on" && n === level) ? "cur" : "";
+      btns[j].disabled = !online || mode !== "on" || modeBusy;
     }
   }
 
-  $("power").addEventListener("click", function () {
-    if (!S) return;
-    send(S.power === 1 ? "UI_POWER_OFF" : "UI_POWER_ON");
-  });
-  $("pilot").addEventListener("click", function () {
-    if (!S) return;
-    send(S.pilot === 1 ? "UI_PILOT_OFF" : "UI_PILOT_ON");
+  $("modes").addEventListener("click", function (e) {
+    var b = e.target.closest ? e.target.closest("button") : null;
+    if (!b || b.disabled || !S) return;
+    var target = b.getAttribute("data-m");
+    if (target === currentMode()) return;          // tapping the active segment does nothing
+    if (target === "off") send("UI_POWER_OFF");
+    else if (target === "on") send("UI_POWER_ON");
+    else if (target === "pilot") send("UI_SET_PILOT");
   });
   $("levels").addEventListener("click", function (e) {
     var b = e.target.closest ? e.target.closest("button") : null;
-    if (!b || b.disabled || !S || S.power !== 1) return;
+    if (!b || b.disabled || !S || currentMode() !== "on") return;
     send("UI_FLAME_" + b.getAttribute("data-n"));
   });
 
@@ -180,18 +202,21 @@
   }, 1000);
 
   // Browser preview, used only when not inside Navigator.
+  // Off clears power and pilot. Pilot from On drops power to 0 and keeps pilot 1.
+  // On restores the last flame level, which the mock keeps while it is off.
   var P = null;
   function preview(cmd) {
     if (!P) {
-      P = { t: "ifire", seq: 0, build: PAGE_BUILD, version: "200", online: true, power: 0, pilot: 0, level: 3 };
+      P = { t: "ifire", seq: 0, build: PAGE_BUILD, version: "202", online: true, power: 0, pilot: 0, level: 3 };
     }
-    if (cmd === "UI_POWER_ON") { P.power = 1; }
-    else if (cmd === "UI_POWER_OFF") { P.power = 0; }
-    else if (cmd === "UI_PILOT_ON") { P.pilot = 1; }
-    else if (cmd === "UI_PILOT_OFF") { P.pilot = 0; P.power = 0; }
-    else if (/^UI_FLAME_\d$/.test(cmd) && P.power === 1) { P.level = +cmd.slice(-1); }
+    if (cmd === "UI_POWER_ON") { P.power = 1; P.pilot = 1; }
+    else if (cmd === "UI_POWER_OFF") { P.power = 0; P.pilot = 0; }
+    else if (cmd === "UI_SET_PILOT") { P.power = 0; P.pilot = 1; }
+    else if (cmd.indexOf("UI_FLAME_") === 0 && P.power === 1) { P.level = +cmd.slice(9); }
     P.seq++;
-    setTimeout(function () { onAnything(JSON.stringify(P)); }, 300);
+    S = { t: "ifire", seq: P.seq, build: P.build, version: P.version, online: P.online,
+          power: P.power, pilot: P.pilot, level: P.level };
+    render();
   }
 
   connect();

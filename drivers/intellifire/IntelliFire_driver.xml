@@ -5,8 +5,8 @@
 	<name>IntelliFire_driver</name>
 	<model>IntelliFire Fireplace</model>
 	<created>08/15/2026 12:00 PM</created>
-	<modified>11/07/2026 05:20 PM</modified>
-	<version>201</version>
+	<modified>11/07/2026 05:24 PM</modified>
+	<version>202</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -18,11 +18,17 @@
 	</search_types>
 
 	<!--
+		v202 - three-way Off / Pilot / On mode selector; last flame height restored (UNTESTED)
+		Page is now www/fireplace2.html (page build 2). The Power row is replaced by one
+		Off | Pilot | On selector: Off = UI_POWER_OFF, On = UI_POWER_ON, Pilot = UI_SET_PILOT.
+		The driver remembers the last flame height while the fireplace is on and re-applies
+		it after power comes on. Nothing on page open, refresh or reconnect turns anything on.
+		
 		v200 - uibutton + web view rebuild (UNTESTED on hardware and in Composer)
 		=========================================================================
 		The v120 relay proxy (relaysingle_gasfireplace_c4) is replaced by a
-		uibutton proxy on binding 5001. The tile opens www/fireplace1.html in
-		Navigator: a status header, Fireplace On/Off, Pilot On/Off and a 5-step
+		uibutton proxy on binding 5001. The tile opens www/fireplace2.html in
+		Navigator: a status header, an Off / Pilot / On mode selector and a 5-step
 		flame level selector. The tile icon changes with the fireplace state:
 		Off (fp_off), Pilot (fp_pilot), Flame1..Flame5 (flame1..flame5).
 
@@ -93,7 +99,7 @@
 	</connections>
 
 	<capabilities>
-		<web_view_url proxybindingid="5001">controller://driver/IntelliFire_driver/fireplace1.html</web_view_url>
+		<web_view_url proxybindingid="5001">controller://driver/IntelliFire_driver/fireplace2.html</web_view_url>
 		<mobile_web_view_enabled>true</mobile_web_view_enabled>
 		<navigator_display_option proxybindingid="5001">
 			<display_icons>

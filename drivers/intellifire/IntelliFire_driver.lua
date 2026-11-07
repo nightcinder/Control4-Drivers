@@ -242,9 +242,9 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "201"
-PAGE_FILE  = 'fireplace1.html'   -- renamed every page release (Navigator caches controller:// pages)
-PAGE_BUILD = '1'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
+DRIVER_VERSION = "202"
+PAGE_FILE  = 'fireplace2.html'   -- renamed every page release (Navigator caches controller:// pages)
+PAGE_BUILD = '2'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 
 -- ===================== Globals / Config ============================
 g_ip         = "0.0.0.0"
@@ -275,6 +275,8 @@ g_haveRealState = false
 -- back to the old state while the fireplace was still audibly igniting.
 g_desiredPower      = nil
 g_desiredHeight     = nil
+g_restoreHeight    = nil   -- v202: flame height to re-apply once a poll confirms power on
+g_lastHeight       = nil   -- v202: last flame height 0-4 seen while ON (persisted as lastHeight)
 g_reconcileAttempts = 0
 MAX_RECONCILE_ATTEMPTS  = 14   -- ~1.5s + 13*2s =~ 27.5s of retrying before giving up
 RECONCILE_RETRY_MS      = 2000
@@ -299,6 +301,15 @@ function LOG(msg)
 end
 
 -- ===================== Driver lifecycle ============================
+-- v202: remember the last flame height (0-4) seen while the fireplace was ON.
+-- Persisted so it survives a driver restart. Never fed from a power-0 poll.
+function SetLastHeight(h)
+	h = tonumber(h)
+	if (h == nil or h < 0 or h > 4) then return end
+	g_lastHeight = h
+	pcall(function () C4:PersistSetValue("lastHeight", tostring(h)) end)
+end
+
 function OnDriverInit()
 	LoadProperties()
 	C4:UpdateProperty("Driver Version", DRIVER_VERSION)
@@ -312,6 +323,10 @@ end
 
 function OnDriverLateInit()
 	LoadProperties()
+	-- v202: restore the remembered flame height (only ever stored while ON).
+	local okLH, rawLH = pcall(function () return C4:PersistGetValue("lastHeight") end)
+	local savedLH = (okLH and rawLH) and tonumber(rawLH) or nil
+	if (savedLH ~= nil and savedLH >= 0 and savedLH <= 4) then g_lastHeight = savedLH end
 	C4:UpdateProperty("Driver Version", DRIVER_VERSION)
 	BindTo(g_ip)
 	StartPolling()
@@ -724,7 +739,27 @@ function OnPollResponse(statusCode, body)
 	end
 	if (power ~= nil and power ~= g_state.power) then g_state.power = power; changed = true end
 	if (pilot ~= nil and pilot ~= g_state.pilot) then g_state.pilot = pilot; changed = true end
-	if (height ~= nil and height ~= g_state.height) then g_state.height = height; changed = true end
+	-- v202: an off-state poll height is not a real flame level (it can read 0), so only
+	-- take height from a poll that does not say the fireplace is off.
+	if (height ~= nil and power ~= 0 and height ~= g_state.height) then g_state.height = height; changed = true end
+
+	-- v202: re-apply the last flame height once a poll confirms the fireplace is on.
+	local restoreSent = false
+	if (power == 1 and g_restoreHeight ~= nil) then
+		if (height ~= g_restoreHeight) then
+			LOG("Restoring flame height " .. tostring(g_restoreHeight))
+			SendFireplaceCommand("flame_height", g_restoreHeight)
+			g_state.height = g_restoreHeight
+			g_desiredPower = 1
+			g_desiredHeight = g_restoreHeight
+			ScheduleReconcilePoll()
+			restoreSent = true
+			changed = true
+		end
+		g_restoreHeight = nil
+	end
+	-- v202: remember the height only from an ON poll that is not the stale one we just corrected.
+	if (power == 1 and height ~= nil and not restoreSent and g_restoreHeight == nil) then SetLastHeight(height) end
 
 	if (changed) then
 		NotifyRelayState(firstReal)
@@ -884,6 +919,10 @@ function FireplaceProxyCommand(cmd, p)
 			-- ignition - see the reconcile notes above OnPollResponse.
 			g_desiredPower = 1
 			g_desiredHeight = nil
+			-- v202: show the last known level now and re-apply it once a poll confirms power on.
+			-- flame_height is never sent before power.
+			g_restoreHeight = g_lastHeight
+			if (g_lastHeight ~= nil) then g_state.height = g_lastHeight end
 			NotifyRelayState(false)
 			TurnFlameOn()
 		else -- "Off" (or anything unrecognized - fail safe to off)
@@ -891,6 +930,7 @@ function FireplaceProxyCommand(cmd, p)
 			g_state.pilot = 0
 			g_desiredPower = 0
 			g_desiredHeight = nil
+			g_restoreHeight = nil
 			NotifyRelayState(false)
 			SendFireplaceCommand("power", 0)
 			SendFireplaceCommand("pilot", 0)
@@ -918,6 +958,8 @@ function FireplaceProxyCommand(cmd, p)
 		g_state.height = height
 		g_desiredPower = 1
 		g_desiredHeight = height
+		g_restoreHeight = nil
+		SetLastHeight(height)
 		NotifyRelayState(false)
 		-- "flame_height" is the real local /post command name (confirmed
 		-- against intellifire4py's const.py) - "height" is only the /poll
@@ -934,7 +976,7 @@ function FireplaceProxyCommand(cmd, p)
 	end
 end
 
--- ===================== Web view (uibutton proxy + www/fireplace1.html) ============================
+-- ===================== Web view (uibutton proxy + www/fireplace2.html) ============================
 -- Navigator opens PAGE_FILE. The page reads UI_STATE (JSON snapshot) and sends
 -- parameter-free UI_* commands, which reach ExecuteCommand and are dispatched
 -- through EC. Opening the page or tapping the tile never performs an action.
@@ -1014,9 +1056,28 @@ EC["UI_PILOT_OFF"] = function ()
 	g_state.power = 0
 	g_state.pilot = 0
 	g_desiredPower = 0
+	g_restoreHeight = nil
 	NotifyRelayState(false)
 	SendFireplaceCommand("power", 0)
 	SendFireplaceCommand("pilot", 0)
+end
+
+-- v202: Pilot segment of the page's Off | Pilot | On selector.
+EC["UI_SET_PILOT"] = function ()
+	if (g_state.power == 1) then
+		-- Main flame drops to pilot only: power 0, pilot stays 1 (pilot=0 is NOT sent).
+		g_state.power = 0
+		g_state.pilot = 1
+		g_desiredPower = 0
+		g_restoreHeight = nil
+		NotifyRelayState(false)
+		SendFireplaceCommand("power", 0)
+	else
+		g_state.pilot = 1
+		NotifyRelayState(false)
+		SendFireplaceCommand("pilot", 1)
+		QueuePoll()
+	end
 end
 
 -- Flame height only acts while the main flame is on. It sends flame_height
@@ -1032,6 +1093,8 @@ for n = 1, 5 do
 		g_state.height = h
 		g_desiredPower = 1
 		g_desiredHeight = h
+		g_restoreHeight = nil
+		SetLastHeight(h)
 		NotifyRelayState(false)
 		SendFireplaceCommand("flame_height", h)
 	end
