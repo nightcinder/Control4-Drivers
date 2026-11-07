@@ -160,7 +160,7 @@ WebSocket = require ('drivers-common-public.module.websocket')
 
 -- ===================== Constants ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "207"
+DRIVER_VERSION = "208"
 API_BASE_URL       = 'https://www.moen-iot.com'
 API_AUTHENTICATE   = '/v2/authenticate'
 API_CREDENTIALS    = '/v3/credentials'
@@ -993,7 +993,7 @@ g_bridgeWanted  = false
 g_bridgeLinked  = false
 g_bridgeBuffer  = ''
 g_bridgeBackoff = BRIDGE_RECONNECT_FIRST
-g_bridgeOpen    = false    -- v207: a NetConnect is outstanding or live on BRIDGE_BINDING
+g_bridgeOpen    = false    -- v208: a TCPClient is open (connecting or connected)
 g_bridgeConnHost = ''      -- v207: host/port the open socket was made with
 g_bridgeConnPort = nil
 
@@ -1025,12 +1025,21 @@ function Bridge_Start ()
 	Bridge_Connect ()
 end
 
--- v207: closes the socket this driver opened, on the port it was opened with.
--- Runs on every teardown, linked or not.
+-- v208: the bridge link is a Control4 TCPClient. Earlier versions used
+-- C4:CreateNetworkConnection / NetConnect / SendToNetwork on dynamic binding
+-- 7001: the socket came up and state lines arrived, but nothing the driver
+-- sent reached the bridge. BRIDGE_BINDING stays in driver.xml (removing it
+-- forces a project rework) but this driver no longer uses it for the bridge.
+g_bridgeClient = nil       -- the one TCPClient whose callbacks are acted on
+
+-- Closes the current client, if any. Its callbacks are ignored from here on,
+-- so the disconnect that Close() causes cannot schedule a second reconnect.
 function Bridge_CloseSocket ()
-	if (g_bridgeOpen and g_bridgeConnPort ~= nil) then
+	local c = g_bridgeClient
+	g_bridgeClient = nil
+	if (c ~= nil) then
 		LOG ('Bridge: closing socket to ' .. tostring (g_bridgeConnHost) .. ':' .. tostring (g_bridgeConnPort))
-		pcall (function () C4:NetDisconnect (BRIDGE_BINDING, g_bridgeConnPort) end)
+		pcall (function () c:Close () end)
 	end
 	g_bridgeOpen = false
 	g_bridgeConnPort = nil
@@ -1041,24 +1050,68 @@ end
 function Bridge_Connect ()
 	if (not g_bridgeWanted or g_bridgeHost == '') then return end
 	CancelTimer ('MoenBridgeReconnect')
+	-- never leave a second client open next to the new one
 	Bridge_CloseSocket ()
 	g_bridgeBuffer = ''
-	OCS [BRIDGE_BINDING] = Bridge_OnConnectionStatus
-	RFN [BRIDGE_BINDING] = Bridge_OnData
 	g_bridgeConnHost = g_bridgeHost
 	g_bridgeConnPort = g_bridgePort
 	g_bridgeOpen = true
-	C4:CreateNetworkConnection (BRIDGE_BINDING, g_bridgeHost, 'TCP')
-	C4:NetConnect (BRIDGE_BINDING, g_bridgePort)
+
+	local client = C4:CreateTCPClient ()
+	g_bridgeClient = client
+	client
+		:OnResolve (function (c)
+			if (c ~= g_bridgeClient) then return end
+			LOG ('Bridge: resolved ' .. tostring (g_bridgeConnHost))
+		end)
+		:OnConnect (function (c)
+			if (c ~= g_bridgeClient) then
+				LOG ('Bridge: ignored connect from a stale client')
+				return
+			end
+			g_bridgeLinked = true
+			g_bridgeBackoff = BRIDGE_RECONNECT_FIRST
+			g_bridgeBuffer = ''
+			Bridge_SetStatus ('Connected; waiting for state')
+			c:ReadUpTo (4096)
+			Bridge_Send ({ cmd = 'get_state' })
+		end)
+		:OnRead (function (c, data)
+			if (c ~= g_bridgeClient) then return end
+			Bridge_OnData (data)
+			c:ReadUpTo (4096)
+		end)
+		:OnWrite (function (c)
+			-- nothing to do: Bridge_Send logs each write's result itself
+		end)
+		:OnDisconnect (function (c, errCode, errMsg)
+			if (c ~= g_bridgeClient) then
+				LOG ('Bridge: ignored disconnect from a stale client')
+				return
+			end
+			LOG ('Bridge: disconnected (' .. tostring (errCode) .. ') ' .. tostring (errMsg))
+			g_bridgeClient = nil
+			g_bridgeOpen = false
+			g_bridgeLinked = false
+			g_bridgeBuffer = ''
+			NotifyOnline (false)
+			if (g_bridgeWanted) then Bridge_ScheduleReconnect () end
+		end)
+
 	Bridge_SetStatus ('Connecting to ' .. g_bridgeHost .. ':' .. tostring (g_bridgePort))
+	local ok, err = pcall (function () client:Connect (g_bridgeHost, g_bridgePort) end)
+	if (not ok) then
+		LOG ('Bridge: Connect call failed: ' .. tostring (err))
+		g_bridgeClient = nil
+		g_bridgeOpen = false
+		if (g_bridgeWanted) then Bridge_ScheduleReconnect () end
+	end
 end
 
 function Bridge_Stop ()
 	g_bridgeWanted = false
 	CancelTimer ('MoenBridgeReconnect')
 	Bridge_CloseSocket ()
-	OCS [BRIDGE_BINDING] = nil
-	RFN [BRIDGE_BINDING] = nil
 	g_bridgeBackoff = BRIDGE_RECONNECT_FIRST
 end
 
@@ -1069,29 +1122,8 @@ function Bridge_ScheduleReconnect ()
 	SetTimer ('MoenBridgeReconnect', delay * ONE_SECOND, Bridge_Connect)
 end
 
-function Bridge_OnConnectionStatus (idBinding, nPort, strStatus)
-	if (nPort ~= nil and g_bridgeConnPort ~= nil and nPort ~= g_bridgeConnPort) then
-		LOG ('Bridge: ignored ' .. tostring (strStatus) .. ' from stale port ' .. tostring (nPort))
-		return
-	end
-	if (strStatus == 'ONLINE') then
-		g_bridgeLinked = true
-		g_bridgeBackoff = BRIDGE_RECONNECT_FIRST
-		g_bridgeBuffer = ''
-		Bridge_SetStatus ('Connected; waiting for state')
-		Bridge_Send ({ cmd = 'get_state' })
-	else
-		g_bridgeLinked = false
-		g_bridgeOpen = false
-		g_bridgeBuffer = ''
-		NotifyOnline (false)
-		if (g_bridgeWanted) then Bridge_ScheduleReconnect () end
-	end
-end
-
 -- Line buffering: TCP delivers arbitrary chunks; split on \n only.
-function Bridge_OnData (idBinding, nPort, strData)
-	if (nPort ~= nil and g_bridgeConnPort ~= nil and nPort ~= g_bridgeConnPort) then return end
+function Bridge_OnData (strData)
 	g_bridgeBuffer = g_bridgeBuffer .. (strData or '')
 	if (#g_bridgeBuffer > 65536) then g_bridgeBuffer = '' end
 	while (true) do
@@ -1154,14 +1186,30 @@ function Bridge_OnState (msg)
 end
 
 function Bridge_Send (tCmd)
-	if (not g_bridgeLinked) then
+	local client = g_bridgeClient
+	if (not g_bridgeLinked or client == nil) then
 		LOG ('Bridge not connected; command dropped: ' .. tostring (tCmd.cmd))
 		return false
 	end
-	local ok, s = pcall (function () return C4:JsonEncode (tCmd) end)
-	if (not ok or s == nil) then return false end
+	local okJ, s = pcall (function () return C4:JsonEncode (tCmd) end)
+	if (not okJ or s == nil) then
+		LOG ('Bridge: could not encode command ' .. tostring (tCmd.cmd) .. ': ' .. tostring (s))
+		return false
+	end
 	LOG ('Bridge cmd sent: ' .. tostring (tCmd.cmd) .. ' ' .. s)
-	C4:SendToNetwork (BRIDGE_BINDING, g_bridgeConnPort or g_bridgePort, s .. '\n')
+	local okW, res, werr = pcall (function ()
+		local r, e = client:Write (s .. '\n')
+		return r, e
+	end)
+	if (not okW) then
+		LOG ('Bridge write FAILED for ' .. tostring (tCmd.cmd) .. ': ' .. tostring (res))
+		return false
+	end
+	if (res == false) then
+		LOG ('Bridge write FAILED for ' .. tostring (tCmd.cmd) .. ': ' .. tostring (werr or 'TCP client refused the data'))
+		return false
+	end
+	LOG ('Bridge write OK for ' .. tostring (tCmd.cmd) .. ' (' .. tostring (#s + 1) .. ' bytes)')
 	return true
 end
 
