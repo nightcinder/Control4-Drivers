@@ -2,11 +2,11 @@
 	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Hearth &amp; Home Technologies or Control4</copyright>
 	<creator>Custom Driver Project</creator>
 	<manufacturer>Hearth &amp; Home Technologies</manufacturer>
-	<name>intellifire</name>
+	<name>IntelliFire_driver</name>
 	<model>IntelliFire Fireplace</model>
 	<created>08/15/2026 12:00 PM</created>
-	<modified>11/07/2026 05:30 PM</modified>
-	<version>202</version>
+	<modified>11/07/2026 05:20 PM</modified>
+	<version>201</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -21,7 +21,7 @@
 		v200 - uibutton + web view rebuild (UNTESTED on hardware and in Composer)
 		=========================================================================
 		The v120 relay proxy (relaysingle_gasfireplace_c4) is replaced by a
-		uibutton proxy on binding 5001. The tile opens www/fireplace2.html in
+		uibutton proxy on binding 5001. The tile opens www/fireplace1.html in
 		Navigator: a status header, Fireplace On/Off, Pilot On/Off and a 5-step
 		flame level selector. The tile icon changes with the fireplace state:
 		Off (fp_off), Pilot (fp_pilot), Flame1..Flame5 (flame1..flame5).
@@ -30,11 +30,11 @@
 		connection 6001 (TCP port 80) is unchanged. Changing proxy type means the
 		device must be deleted and re-added in Composer.
 
-		PACKAGE NAME: intellifire.c4z, and <name> is the same slug. Navigator
-		resolves controller://driver/intellifire/... from it; if they do
+		PACKAGE NAME: IntelliFire_driver.c4z, and <name> is the same slug. Navigator
+		resolves controller://driver/IntelliFire_driver/... from it; if they do
 		not match, Navigator hides the tile. The display name is <model>.
 
-		PAGE FILE IS RENAMED EVERY PAGE RELEASE (fireplace2, fireplace2, ...)
+		PAGE FILE IS RENAMED EVERY PAGE RELEASE (fireplace1, fireplace2, ...)
 		because Navigator caches controller:// pages. web_view_url below,
 		PAGE_FILE / PAGE_BUILD in the Lua and the file in www/ must agree.
 
@@ -93,63 +93,63 @@
 	</connections>
 
 	<capabilities>
-		<web_view_url proxybindingid="5001">controller://driver/intellifire/fireplace2.html</web_view_url>
+		<web_view_url proxybindingid="5001">controller://driver/IntelliFire_driver/fireplace1.html</web_view_url>
 		<mobile_web_view_enabled>true</mobile_web_view_enabled>
 		<navigator_display_option proxybindingid="5001">
 			<display_icons>
-				<Icon width="70" height="70">controller://driver/intellifire/icons/device/fp_off/experience_70.png</Icon>
-				<Icon width="90" height="90">controller://driver/intellifire/icons/device/fp_off/experience_90.png</Icon>
-				<Icon width="300" height="300">controller://driver/intellifire/icons/device/fp_off/experience_300.png</Icon>
-				<Icon width="512" height="512">controller://driver/intellifire/icons/device/fp_off/experience_512.png</Icon>
-				<Icon width="1024" height="1024">controller://driver/intellifire/icons/device/fp_off/experience_1024.png</Icon>
+				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_1024.png</Icon>
 						<state id="Default">
-				<Icon width="70" height="70">controller://driver/intellifire/icons/device/fp_off/experience_70.png</Icon>
-				<Icon width="90" height="90">controller://driver/intellifire/icons/device/fp_off/experience_90.png</Icon>
-				<Icon width="300" height="300">controller://driver/intellifire/icons/device/fp_off/experience_300.png</Icon>
-				<Icon width="512" height="512">controller://driver/intellifire/icons/device/fp_off/experience_512.png</Icon>
-				<Icon width="1024" height="1024">controller://driver/intellifire/icons/device/fp_off/experience_1024.png</Icon>
+				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_1024.png</Icon>
 			</state>
 			<state id="Pilot">
-				<Icon width="70" height="70">controller://driver/intellifire/icons/device/fp_pilot/experience_70.png</Icon>
-				<Icon width="90" height="90">controller://driver/intellifire/icons/device/fp_pilot/experience_90.png</Icon>
-				<Icon width="300" height="300">controller://driver/intellifire/icons/device/fp_pilot/experience_300.png</Icon>
-				<Icon width="512" height="512">controller://driver/intellifire/icons/device/fp_pilot/experience_512.png</Icon>
-				<Icon width="1024" height="1024">controller://driver/intellifire/icons/device/fp_pilot/experience_1024.png</Icon>
+				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/fp_pilot/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/fp_pilot/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/fp_pilot/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/fp_pilot/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/fp_pilot/experience_1024.png</Icon>
 			</state>
 			<state id="Flame1">
-				<Icon width="70" height="70">controller://driver/intellifire/icons/device/flame1/experience_70.png</Icon>
-				<Icon width="90" height="90">controller://driver/intellifire/icons/device/flame1/experience_90.png</Icon>
-				<Icon width="300" height="300">controller://driver/intellifire/icons/device/flame1/experience_300.png</Icon>
-				<Icon width="512" height="512">controller://driver/intellifire/icons/device/flame1/experience_512.png</Icon>
-				<Icon width="1024" height="1024">controller://driver/intellifire/icons/device/flame1/experience_1024.png</Icon>
+				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/flame1/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/flame1/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/flame1/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/flame1/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/flame1/experience_1024.png</Icon>
 			</state>
 			<state id="Flame2">
-				<Icon width="70" height="70">controller://driver/intellifire/icons/device/flame2/experience_70.png</Icon>
-				<Icon width="90" height="90">controller://driver/intellifire/icons/device/flame2/experience_90.png</Icon>
-				<Icon width="300" height="300">controller://driver/intellifire/icons/device/flame2/experience_300.png</Icon>
-				<Icon width="512" height="512">controller://driver/intellifire/icons/device/flame2/experience_512.png</Icon>
-				<Icon width="1024" height="1024">controller://driver/intellifire/icons/device/flame2/experience_1024.png</Icon>
+				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/flame2/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/flame2/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/flame2/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/flame2/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/flame2/experience_1024.png</Icon>
 			</state>
 			<state id="Flame3">
-				<Icon width="70" height="70">controller://driver/intellifire/icons/device/flame3/experience_70.png</Icon>
-				<Icon width="90" height="90">controller://driver/intellifire/icons/device/flame3/experience_90.png</Icon>
-				<Icon width="300" height="300">controller://driver/intellifire/icons/device/flame3/experience_300.png</Icon>
-				<Icon width="512" height="512">controller://driver/intellifire/icons/device/flame3/experience_512.png</Icon>
-				<Icon width="1024" height="1024">controller://driver/intellifire/icons/device/flame3/experience_1024.png</Icon>
+				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/flame3/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/flame3/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/flame3/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/flame3/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/flame3/experience_1024.png</Icon>
 			</state>
 			<state id="Flame4">
-				<Icon width="70" height="70">controller://driver/intellifire/icons/device/flame4/experience_70.png</Icon>
-				<Icon width="90" height="90">controller://driver/intellifire/icons/device/flame4/experience_90.png</Icon>
-				<Icon width="300" height="300">controller://driver/intellifire/icons/device/flame4/experience_300.png</Icon>
-				<Icon width="512" height="512">controller://driver/intellifire/icons/device/flame4/experience_512.png</Icon>
-				<Icon width="1024" height="1024">controller://driver/intellifire/icons/device/flame4/experience_1024.png</Icon>
+				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/flame4/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/flame4/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/flame4/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/flame4/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/flame4/experience_1024.png</Icon>
 			</state>
 			<state id="Flame5">
-				<Icon width="70" height="70">controller://driver/intellifire/icons/device/flame5/experience_70.png</Icon>
-				<Icon width="90" height="90">controller://driver/intellifire/icons/device/flame5/experience_90.png</Icon>
-				<Icon width="300" height="300">controller://driver/intellifire/icons/device/flame5/experience_300.png</Icon>
-				<Icon width="512" height="512">controller://driver/intellifire/icons/device/flame5/experience_512.png</Icon>
-				<Icon width="1024" height="1024">controller://driver/intellifire/icons/device/flame5/experience_1024.png</Icon>
+				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/flame5/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/flame5/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/flame5/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/flame5/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/flame5/experience_1024.png</Icon>
 			</state>
 		</display_icons>
 		</navigator_display_option>

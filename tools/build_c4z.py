@@ -32,6 +32,7 @@ COMMON_FILES = [
 PACKAGE_NAMES = {
     "haiku-senseme": "Haiku_SenseME_i6",
     "haiku-senseme-nolight": "Haiku_SenseME_i6_NoLight",
+    "intellifire": "IntelliFire_driver",
     "lifx-lan": "lifx_lan",
     "moen-smart-shower": "Moen_Smart_Shower_Standalone_driver_v200",
     "yale-assure-lock-2": "Yale_AssureLock2",
