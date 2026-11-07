@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import json
 import os
 import subprocess
@@ -217,8 +218,103 @@ async def run_allowed_clients_check(port: int, tmpdir: str) -> None:
         proc.wait(5)
 
 
+def run_unit_checks(tmpdir: str) -> None:
+    """In-process checks of the current-temperature rules. No sockets, no HomeKit."""
+    print("current temperature (in-process)")
+    import logging
+    sys.path.insert(0, HERE)
+    import moen_bridge as mb
+
+    def cfg_with(source: str) -> dict[str, Any]:
+        cfg = copy.deepcopy(mb.DEFAULT_CONFIG)
+        cfg["current_temp_source"] = source
+        return cfg
+
+    def published_f(b: Any) -> int:
+        return mb.c_to_f(b.values[mb.IID_CURRENT_TEMP_C])
+
+    # 1. Under "poll", a temperature event is ignored; other events still apply.
+    hk = mb.HomeKitShower(cfg_with("poll"))
+    hk.values = {mb.IID_FAUCET_ACTIVE: True, mb.IID_CURRENT_TEMP_C: mb.f_to_c(71)}
+    hk._on_event({(1, mb.IID_CURRENT_TEMP_C): {"value": mb.f_to_c(108)}})
+    check(published_f(hk) == 71, "poll mode: iid 13 from an event is ignored")
+    hk._on_event({(1, mb.IID_TARGET_TEMP_C): {"value": mb.f_to_c(110)}})
+    check(hk.values[mb.IID_TARGET_TEMP_C] == mb.f_to_c(110), "poll mode: other events still applied")
+
+    # 2. Under "events", the same event is published.
+    hk2 = mb.HomeKitShower(cfg_with("events"))
+    hk2.values = {mb.IID_FAUCET_ACTIVE: True, mb.IID_CURRENT_TEMP_C: mb.f_to_c(71)}
+    hk2._on_event({(1, mb.IID_CURRENT_TEMP_C): {"value": mb.f_to_c(108)}})
+    check(published_f(hk2) == 108, "events mode: iid 13 from an event is published")
+
+    # 3. Shower off, alternating polls 108/71 never change the published value.
+    b = mb.MockShower(cfg_with("poll"))
+    b.values = {mb.IID_FAUCET_ACTIVE: False, mb.IID_CURRENT_TEMP_C: mb.f_to_c(71)}
+    seen = []
+    for f in [108, 71, 108, 71, 108, 71]:
+        b._apply({mb.IID_CURRENT_TEMP_C: mb.f_to_c(f)}, "poll")
+        seen.append(published_f(b))
+    check(set(seen) == {71}, f"debounce: alternating readings never publish ({seen})")
+
+    # 4. Shower off, a 2 F change seen in two consecutive polls is published.
+    b._apply({mb.IID_CURRENT_TEMP_C: mb.f_to_c(108)}, "poll")
+    check(published_f(b) == 71, "debounce: one reading of 108 is not enough")
+    b._apply({mb.IID_CURRENT_TEMP_C: mb.f_to_c(108)}, "command-poll")
+    check(published_f(b) == 108, "debounce: same value in two consecutive polls is published")
+
+    # 5. A change smaller than 2 F is never published while off.
+    b.values[mb.IID_CURRENT_TEMP_C] = mb.f_to_c(71)
+    b._prev_poll_f = None
+    for _ in range(3):
+        b._apply({mb.IID_CURRENT_TEMP_C: mb.f_to_c(72)}, "poll")
+    check(published_f(b) == 71, "debounce: 1 F change is not published while off")
+
+    # 6. Shower running: no debounce, a single reading is published.
+    b.values[mb.IID_FAUCET_ACTIVE] = True
+    b._apply({mb.IID_CURRENT_TEMP_C: mb.f_to_c(90)}, "poll")
+    check(published_f(b) == 90, "shower on: a single poll reading is published at once")
+
+    # 7. Log lines for published changes are rate limited to one per second.
+    records: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = _Capture(level=logging.INFO)
+    old_level = mb.log.level
+    mb.log.setLevel(logging.INFO)
+    mb.log.addHandler(handler)
+    try:
+        b2 = mb.MockShower(cfg_with("poll"))
+        b2.values = {mb.IID_FAUCET_ACTIVE: True, mb.IID_CURRENT_TEMP_C: mb.f_to_c(71)}
+        for f in [108, 71, 108, 71, 108]:
+            b2._apply({mb.IID_CURRENT_TEMP_C: mb.f_to_c(f)}, "command-poll")
+    finally:
+        mb.log.removeHandler(handler)
+        mb.log.setLevel(old_level)
+    lines = [r.getMessage() for r in records if "current_f now" in r.getMessage()]
+    check(len(lines) == 1, f"log: flapping values produce one line per second ({len(lines)})")
+    check("iid 13" in lines[0] and "source command-poll" in lines[0] and "raw" in lines[0],
+          "log: line carries iid, source and raw Celsius")
+
+    # 8. Config validation rejects unknown values.
+    bad = os.path.join(tmpdir, "bad-source.json")
+    with open(bad, "w", encoding="utf-8") as fh:
+        json.dump({"current_temp_source": "both"}, fh)
+    try:
+        mb.load_config(bad)
+        rejected = False
+    except SystemExit:
+        rejected = True
+    check(rejected, "config: current_temp_source other than poll/events is rejected")
+    check(mb.load_config(os.path.join(tmpdir, "missing.json"))["current_temp_source"] == "poll",
+          "config: default current_temp_source is poll")
+
+
 async def main_async(port: int) -> None:
     tmpdir = tempfile.mkdtemp(prefix="moen-bridge-test-")
+    run_unit_checks(tmpdir)
     cfg_path = os.path.join(tmpdir, "test-config.json")
     write_config(cfg_path)
     log_path = os.path.join(tmpdir, "bridge.log")
