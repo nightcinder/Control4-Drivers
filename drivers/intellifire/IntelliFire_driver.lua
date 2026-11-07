@@ -242,7 +242,7 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "200"
+DRIVER_VERSION = "201"
 PAGE_FILE  = 'fireplace1.html'   -- renamed every page release (Navigator caches controller:// pages)
 PAGE_BUILD = '1'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 
