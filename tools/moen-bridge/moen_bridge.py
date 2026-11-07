@@ -36,6 +36,10 @@ MAX_LINE = 4096                  # longest accepted protocol line, in bytes
 FAST_POLL_SECONDS = 1.0          # poll rate right after a command ...
 FAST_POLL_WINDOW = 10.0          # ... for this many seconds
 DEVICE_CMDS = {"on", "off", "set_temp", "outlet", "preset"}
+CURRENT_SOURCES = ("poll", "events")  # values of config current_temp_source
+POLL_SOURCES = ("poll", "command-poll")
+CURRENT_DEBOUNCE_F = 2              # shower off: min change in F to publish a new current_f
+CURRENT_LOG_INTERVAL = 1.0          # at most one "current_f" INFO line per this many seconds
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "pairing_file": "/home/liesa/moen-hk.json",
@@ -47,6 +51,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "max_f": 120,
     "poll_interval": 5,
     "write_heater_active_on_start": True,
+    "current_temp_source": "poll",
     "presets": [
         {"n": 1, "title": "Hot", "temp_f": 117, "outlets": [1, 2]},
         {"n": 2, "title": "Comfortable", "temp_f": 108, "outlets": [1, 2]},
@@ -95,6 +100,8 @@ def load_config(path: str) -> dict[str, Any]:
         log.warning("config %s not found, using built-in defaults", path)
     if int(cfg["min_f"]) > int(cfg["max_f"]):
         raise SystemExit("config error: min_f is greater than max_f")
+    if cfg["current_temp_source"] not in CURRENT_SOURCES:
+        raise SystemExit("config error: current_temp_source must be \"poll\" or \"events\"")
     cfg["presets"] = [normalize_preset(p, cfg) for p in cfg["presets"]]
     return cfg
 
@@ -121,6 +128,9 @@ class ShowerBackend:
         self.on_change = lambda: None        # set by Bridge
         self._wake: asyncio.Event | None = None
         self._fast_until = 0.0
+        self._prev_poll_f: int | None = None   # last polled current reading, for the debounce
+        self._log_last = 0.0
+        self._log_suppressed = 0
 
     def _set_connected(self, flag: bool) -> None:
         if flag != self.connected:
@@ -128,14 +138,61 @@ class ShowerBackend:
             log.info("shower %s", "connected" if flag else "disconnected")
             self.on_change()
 
-    def _apply(self, changes: dict[int, Any]) -> None:
+    def _apply(self, changes: dict[int, Any], source: str = "poll") -> None:
         changed = False
         for iid, val in changes.items():
+            if iid == IID_CURRENT_TEMP_C:
+                changed = self._apply_current(val, source) or changed
+                continue
             if self.values.get(iid) != val:
                 self.values[iid] = val
                 changed = True
         if changed:
             self.on_change()
+
+    def _apply_current(self, raw_c: Any, source: str) -> bool:
+        """Decide whether a current-temperature reading (iid 13) changes current_f.
+
+        Returns True if the published value changed. Only this method writes
+        the iid 13 entry of self.values, so current_f always comes from here.
+        """
+        if raw_c is None:
+            return False
+        if source == "event" and self.cfg["current_temp_source"] == "poll":
+            log.debug("ignored current temperature event %.2f C (current_temp_source=poll)", raw_c)
+            return False
+        new_f = c_to_f(raw_c)
+        pub_c = self.values.get(IID_CURRENT_TEMP_C)
+        pub_f = c_to_f(pub_c) if pub_c is not None else None
+        if source not in POLL_SOURCES or pub_f is None or self.values.get(IID_FAUCET_ACTIVE):
+            # Shower running, first reading, or an event in "events" mode: no debounce.
+            self._prev_poll_f = None
+            accept = True
+        else:
+            # Shower off: publish only if the reading differs by CURRENT_DEBOUNCE_F or more
+            # AND the previous poll gave the same value (alternating readings never publish).
+            prev = self._prev_poll_f
+            self._prev_poll_f = new_f
+            accept = abs(new_f - pub_f) >= CURRENT_DEBOUNCE_F and new_f == prev
+        if not accept:
+            log.debug("current %d F (%.2f C, %s) not published (debounce)", new_f, raw_c, source)
+            return False
+        if pub_c == raw_c:
+            return False
+        self.values[IID_CURRENT_TEMP_C] = raw_c
+        self._log_current(new_f, raw_c, source)
+        return True
+
+    def _log_current(self, f: int, raw_c: float, source: str) -> None:
+        now = time.monotonic()
+        if now - self._log_last < CURRENT_LOG_INTERVAL:
+            self._log_suppressed += 1
+            return
+        extra = f", {self._log_suppressed} earlier lines suppressed" if self._log_suppressed else ""
+        log.info("current_f now %d (raw %.2f C, iid %d, source %s%s)",
+                 f, raw_c, IID_CURRENT_TEMP_C, source, extra)
+        self._log_last = now
+        self._log_suppressed = 0
 
     def outlets_on(self) -> list[bool]:
         return [bool(self.values.get(IID_OUTLET_IID[1])),
@@ -152,7 +209,7 @@ class ShowerBackend:
             if self._wake is not None:
                 self._wake.set()
             raise BackendError(str(exc)) from exc
-        self._apply({iid: value})
+        self._apply({iid: value}, "write")
 
     def request_fast_poll(self) -> None:
         self._fast_until = time.monotonic() + FAST_POLL_WINDOW
@@ -265,7 +322,7 @@ class HomeKitShower(ShowerBackend):
             if aid == AID and isinstance(data, dict) and "value" in data:
                 updates[iid] = data["value"]
         if updates:
-            self._apply(updates)
+            self._apply(updates, "event")
 
     async def _read_all(self) -> dict[int, Any]:
         res = await self._pairing.get_characteristics([(AID, iid) for iid in POLL_IIDS])
@@ -318,7 +375,8 @@ class HomeKitShower(ShowerBackend):
                     backoff = min(60.0, backoff * 2)
                     continue
             try:
-                self._apply(await self._read_all())
+                source = "command-poll" if time.monotonic() < self._fast_until else "poll"
+                self._apply(await self._read_all(), source)
             except Exception as exc:
                 log.warning("poll failed: %s", exc)
                 self._set_connected(False)

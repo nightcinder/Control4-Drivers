@@ -52,3 +52,23 @@ Default: `true`. Starting the shower requires both the Faucet Active
 characteristic (iid 9) and the heater Active characteristic (iid 12) set to 1.
 Writing iid 9 alone does not start the water. Verified on real hardware
 2026-11-07. Leave this `true`; set it to `false` only for testing.
+
+## Config: current_temp_source
+
+Default: `"poll"`. Controls where `current_f` (the water temperature, HomeKit
+iid 13) comes from.
+
+- `"poll"`: iid 13 values that arrive as HomeKit push events are ignored.
+  Only the bridge's own reads (the periodic poll and the fast poll after a
+  command) update `current_f`. While the shower is off, a new `current_f` is
+  published only if it differs from the last published value by 2 F or more
+  AND the same value was read in two consecutive polls. Alternating readings
+  therefore never change the published state.
+- `"events"`: the previous behaviour. Event values for iid 13 are published
+  directly, with no debounce.
+
+Every change of the published `current_f` is logged at INFO with the source
+(`poll`, `command-poll`, `event`), the raw Celsius value and the iid. At most
+one such line is written per second. Use the journal to compare what the
+shower reports through each path. Target and other values are not affected by
+this setting, and it does not change any water safety rule.
