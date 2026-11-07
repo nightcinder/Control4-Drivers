@@ -2,50 +2,60 @@
 	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Hearth &amp; Home Technologies or Control4</copyright>
 	<creator>Custom Driver Project</creator>
 	<manufacturer>Hearth &amp; Home Technologies</manufacturer>
-	<name>IntelliFire Fireplace (Wi-Fi Module)</name>
-	<model>IFT-WFM (Off / Pilot / Flame, variable flame height)</model>
+	<name>IntelliFire_driver</name>
+	<model>IntelliFire Fireplace</model>
 	<created>08/15/2026 12:00 PM</created>
-	<modified>11/05/2026 2:45 PM</modified>
-	<version>120</version>
+	<modified>11/07/2026 04:51 PM</modified>
+	<version>200</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
-	<templatedescription>IntelliFire Wi-Fi Fireplace Module - HTTP/JSON Local Control (Off/Pilot/Flame + Level)</templatedescription>
+	<templatedescription>IntelliFire Wi-Fi Fireplace Module - HTTP/JSON local control with a Navigator web view (Off / Pilot / Flame 1-5)</templatedescription>
 	<search_types>
 		<type>IntelliFire:fireplace:IFT-WFM</type>
 	</search_types>
 
 	<!--
-		NOTE ON PROXY CHOICE (updated 2026-11-05, v118): this driver now uses
-		Control4's native relaysingle_gasfireplace_c4 proxy, the same proxy stock
-		Control4 fireplace drivers use. Navigator and Composer show the fireplace
-		in the Comfort category as a plain on/off device, with no thermostat card,
-		no Mode button and no flame-level dial. The thermostatV2 proxy used in
-		v117 has been removed. v117 is the rollback point.
+		v200 - uibutton + web view rebuild (UNTESTED on hardware and in Composer)
+		=========================================================================
+		The v120 relay proxy (relaysingle_gasfireplace_c4) is replaced by a
+		uibutton proxy on binding 5001. The tile opens www/fireplace1.html in
+		Navigator: a status header, Fireplace On/Off, Pilot On/Off and a 5-step
+		flame level selector. The tile icon changes with the fireplace state:
+		Off (fp_off), Pilot (fp_pilot), Flame1..Flame5 (flame1..flame5).
 
-		Mapping used here:
-		  - Relay CLOSED = main flame on, OPENED = main flame off. The proxy's
-		    CLOSE / OPEN / TOGGLE commands use the same ignition path as the
-		    Fireplace On / Fireplace Off Composer commands (power=1 / power=0,
-		    pilot=0 on off).
-		  - Pilot-only stays a separate Composer command/action.
-		  - No flame-level control is exposed any more. Turning on uses the
-		    fireplace's own remembered flame level.
-		  - Connection status is still reported through CONNECTION.
+		Relay connections 5001/5002 and the relay notifications are gone; Network
+		connection 6001 (TCP port 80) is unchanged. Changing proxy type means the
+		device must be deleted and re-added in Composer.
 
-		v120: removed the v119 proxybindingid (did not bind); added visible RELAY output connection 5002 ("Fireplace Relay Output") so the proxy's Relay input can be bound to it in Composer (select the Relay input, pick this device in the RELAY Output Devices list).
+		PACKAGE NAME: IntelliFire_driver.c4z, and <name> is the same slug. Navigator
+		resolves controller://driver/IntelliFire_driver/... from it; if they do
+		not match, Navigator hides the tile. The display name is <model>.
+
+		PAGE FILE IS RENAMED EVERY PAGE RELEASE (fireplace1, fireplace2, ...)
+		because Navigator caches controller:// pages. web_view_url below,
+		PAGE_FILE / PAGE_BUILD in the Lua and the file in www/ must agree.
+
+		Composer commands and actions (Set Pilot, Fireplace On/Off, Pilot On/Off,
+		Refresh Status, Print Debug Info) are kept. Composer variables FIREPLACE_ON,
+		PILOT_ON and FLAME_LEVEL are updated on state changes; the events Fireplace
+		Turned On and Fireplace Turned Off fire on transitions only.
+
+		Rollback points in git history: v120 (relay proxy) and v117 (thermostat).
+		HTTP polling, SHA-256 signing, SendFireplaceCommand and the reconcile logic
+		are unchanged from v120.
 	-->
 	<proxies qty="1">
-		<proxy image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png" proxybindingid="5001" name="IntelliFire Fireplace">relaysingle_gasfireplace_c4</proxy>
+		<proxy proxybindingid="5001" name="IntelliFire Fireplace" primary="True" image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png">uibutton</proxy>
 	</proxies>
 
 	<connections>
 		<connection>
 			<id>5001</id>
 			<facing>6</facing>
-			<connectionname>RELAY_PROXY</connectionname>
+			<connectionname>UIBUTTON</connectionname>
 			<type>2</type>
 			<consumer>False</consumer>
 			<audiosource>False</audiosource>
@@ -53,22 +63,7 @@
 			<linelevel>False</linelevel>
 			<classes>
 				<class>
-					<classname>RELAY</classname>
-				</class>
-			</classes>
-		</connection>
-		<connection>
-			<id>5002</id>
-			<facing>6</facing>
-			<connectionname>Fireplace Relay Output</connectionname>
-			<type>1</type>
-			<consumer>False</consumer>
-			<audiosource>False</audiosource>
-			<videosource>False</videosource>
-			<linelevel>False</linelevel>
-			<classes>
-				<class>
-					<classname>RELAY</classname>
+					<classname>UIBUTTON</classname>
 				</class>
 			</classes>
 		</connection>
@@ -98,15 +93,66 @@
 	</connections>
 
 	<capabilities>
-	    <navigator_display_option proxybindingid="5001">
-      <display_icons>
-        <Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/flame/experience_1024.png</Icon>
-        <Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/flame/experience_512.png</Icon>
-        <Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/flame/experience_300.png</Icon>
-        <Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/flame/experience_90.png</Icon>
-        <Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/flame/experience_70.png</Icon>
-      </display_icons>
-    </navigator_display_option>
+		<web_view_url proxybindingid="5001">controller://driver/IntelliFire_driver/fireplace1.html</web_view_url>
+		<mobile_web_view_enabled>true</mobile_web_view_enabled>
+		<navigator_display_option proxybindingid="5001">
+			<display_icons>
+				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_1024.png</Icon>
+			</display_icons>
+			<state id="Default">
+				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_1024.png</Icon>
+			</state>
+			<state id="Pilot">
+				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/fp_pilot/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/fp_pilot/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/fp_pilot/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/fp_pilot/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/fp_pilot/experience_1024.png</Icon>
+			</state>
+			<state id="Flame1">
+				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/flame1/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/flame1/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/flame1/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/flame1/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/flame1/experience_1024.png</Icon>
+			</state>
+			<state id="Flame2">
+				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/flame2/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/flame2/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/flame2/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/flame2/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/flame2/experience_1024.png</Icon>
+			</state>
+			<state id="Flame3">
+				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/flame3/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/flame3/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/flame3/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/flame3/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/flame3/experience_1024.png</Icon>
+			</state>
+			<state id="Flame4">
+				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/flame4/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/flame4/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/flame4/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/flame4/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/flame4/experience_1024.png</Icon>
+			</state>
+			<state id="Flame5">
+				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/flame5/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/flame5/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/flame5/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/flame5/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/flame5/experience_1024.png</Icon>
+			</state>
+		</navigator_display_option>
 	</capabilities>
 
 	<config>
@@ -177,6 +223,12 @@
 				<default></default>
 			</property>
 			<property>
+				<name>Web Page Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Not opened yet</default>
+			</property>
+			<property>
 				<name>Fireplace IP Address</name>
 				<type>STRING</type>
 				<readonly>false</readonly>
@@ -188,15 +240,6 @@
 				<readonly>false</readonly>
 				<default></default>
 			</property>
-			<!--
-				NOTE: type is STRING, not PASSWORD/masked. The reference
-				Haiku_SenseME_driver.xml in this project only uses STRING and
-				LIST for property types - no masked/secret type appears there,
-				so PASSWORD was not carried over unverified. Newer Control4 OS
-				versions may support a masked property type; if DriverEditor's
-				property-type autocomplete offers one, it's worth switching to
-				for this field, but confirm it in the editor first.
-			-->
 			<property>
 				<name>API Key</name>
 				<type>STRING</type>
@@ -229,6 +272,19 @@
 			</property>
 		</properties>
 	</config>
+
+	<events>
+		<event>
+			<id>1</id>
+			<name>Fireplace Turned On</name>
+			<description>Main flame went from off to on</description>
+		</event>
+		<event>
+			<id>2</id>
+			<name>Fireplace Turned Off</name>
+			<description>Main flame went from on to off</description>
+		</event>
+	</events>
 
 	<composer_categories>
 		<category>Comfort</category>
