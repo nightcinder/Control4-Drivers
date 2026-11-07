@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package each driver folder under drivers/ into dist/<folder>.c4z (a .c4z is a zip).
+"""Package each driver folder under drivers/ into c4z/<package>.c4z (a .c4z is a zip).
 
 Each driver folder holds <Name>_driver.xml + <Name>_driver.lua (stable names) plus optional www/ (icons, docs).
 The XML's <script file="..."> says what Composer expects the Lua file to be called inside the package; this script
@@ -21,7 +21,7 @@ import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DRIVERS = os.path.join(ROOT, "drivers")
-DIST = os.path.join(ROOT, "dist")
+DIST = os.path.join(ROOT, "c4z")
 COMMON = os.environ.get("C4_COMMON_PUBLIC")
 COMMON_FILES = [
     "global/handlers.lua", "global/lib.lua", "global/timer.lua", "global/url.lua",

@@ -94,7 +94,7 @@ python3 tools/build_c4z.py                       # all drivers
 python3 tools/build_c4z.py lifx-lan intellifire  # some
 ```
 
-Output goes to `dist/` (ignored by git). Import the `.c4z` in Composer Pro with Driver, Add or Update Driver.
+Output goes to `c4z/`, which is committed so the repo always holds ready-to-import packages next to the source. Rebuild and commit the matching `.c4z` with every driver change. Import the `.c4z` in Composer Pro with Driver, Add or Update Driver.
 
 Composer updates an installed driver in place only when the new `.c4z` has the same file name as the original install. `PACKAGE_NAMES` in `tools/build_c4z.py` maps a folder to the name it was first installed under (for example `lifx-lan` builds `lifx_lan.c4z`). Folders not listed build under their own name, so add an entry before rebuilding a driver that was installed under a different name.
 
