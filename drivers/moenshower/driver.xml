@@ -3,16 +3,16 @@
 	<creator>Custom Driver Project</creator>
 	<manufacturer>Moen</manufacturer>
 	<name>moenshower</name>
-	<model>Moen Smart Shower (U by Moen) - Web View</model>
+	<model>Moen Smart Shower</model>
 	<created>08/16/2026 12:00 PM</created>
-	<modified>11/07/2026 01:00 PM</modified>
-	<version>302</version>
+	<modified>11/07/2026 03:29 PM</modified>
+	<version>303</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
-	<templatedescription>Moen Smart Shower (U by Moen) - Local TCP bridge or direct cloud control, custom Navigator web view and keypad preset keys (v302)</templatedescription>
+	<templatedescription>Moen Smart Shower (U by Moen) - Local TCP bridge or direct cloud control, custom Navigator web view and keypad preset keys (v303)</templatedescription>
 	<search_types>
 		<type>Moen:shower:UbyMoen</type>
 	</search_types>

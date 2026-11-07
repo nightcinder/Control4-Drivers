@@ -185,7 +185,7 @@ WebSocket = require ('drivers-common-public.module.websocket')
 
 -- ===================== Constants ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "302"
+DRIVER_VERSION = "303"
 API_BASE_URL       = 'https://www.moen-iot.com'
 API_AUTHENTICATE   = '/v2/authenticate'
 API_CREDENTIALS    = '/v3/credentials'
