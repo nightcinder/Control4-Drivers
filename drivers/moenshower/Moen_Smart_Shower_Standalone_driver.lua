@@ -185,7 +185,7 @@ WebSocket = require ('drivers-common-public.module.websocket')
 
 -- ===================== Constants ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "305"
+DRIVER_VERSION = "306"
 API_BASE_URL       = 'https://www.moen-iot.com'
 API_AUTHENTICATE   = '/v2/authenticate'
 API_CREDENTIALS    = '/v3/credentials'
@@ -387,6 +387,7 @@ function NotifyOnline (bOnline)
 	local changed = (g_online ~= bOnline)
 	g_online = bOnline
 	if (changed) then PublishUI () end
+	UpdateTileIcon ()
 end
 
 -- Repeating poll at the idle rate, or the faster running rate while the
@@ -800,6 +801,49 @@ function ExtrasXMLEncode (s)
 	return s
 end
 
+-- ===================== Navigator tile icon (v306) ============================
+-- The tile shows the water temperature by switching between icon states
+-- that have the number drawn in: W<temp> (amber, warming) and R<temp> (green,
+-- at temperature). States exist for 40-125 F (www/icons/device/temp); outside
+-- that the number is clamped. Off, unknown, or no controllable link (bridge
+-- down or shower not connected) shows the plain shower icon (Default).
+-- Running with no temperature reported shows the Running icon.
+-- icon_description is what List Navigator shows instead of the picture.
+-- Local Bridge reports no 'ready' mode, so ready is inferred there: the
+-- current temperature is within 1 F of the target.
+-- Temperatures are Fahrenheit throughout (bridge current_f / target_f).
+TILE_TEMP_MIN, TILE_TEMP_MAX = 40, 125
+function TileIcon (mode)
+	local running = (mode ~= 'off' and mode ~= 'unknown')
+	if (not running or not ControlsAvailable ()) then
+		return 'Default', 'Shower off'
+	end
+	local t = tonumber (g_device.current_temperature)
+	if (t == nil) then
+		return 'Running', 'Shower running'
+	end
+	t = math.floor (t + 0.5)
+	local shown = math.max (TILE_TEMP_MIN, math.min (TILE_TEMP_MAX, t))
+	local target = tonumber (g_device.target_temperature)
+	local atTarget = (IsBridge () and target ~= nil and math.abs (t - target) < 1)
+	if (mode == 'ready' or mode == 'paused-by-preset' or atTarget) then
+		return 'R' .. shown, 'Ready ' .. t .. ' F'
+	end
+	return 'W' .. shown, 'Warming ' .. t .. ' F'
+end
+
+-- Sends ICON_CHANGED only when the icon name changes. Called from
+-- SyncProxiesFromState and from NotifyOnline, so a dropped bridge also
+-- puts the default icon back on the tile.
+function UpdateTileIcon ()
+	local mode = g_device.mode or 'unknown'
+	local icon, iconText = TileIcon (mode)
+	if (icon ~= g_lastIcon) then
+		C4:SendToProxy (MASTER_BINDING, 'ICON_CHANGED', { icon = icon, icon_description = iconText }, 'NOTIFY')
+		g_lastIcon = icon
+	end
+end
+
 -- ===================== State sync (Moen state -> page, variables, events) ====
 function SyncProxiesFromState ()
 	local mode = g_device.mode or 'unknown'
@@ -820,12 +864,7 @@ function SyncProxiesFromState ()
 	C4:SetVariable ('TARGET_TEMP', tostring (math.floor ((tonumber (g_device.target_temperature) or 0) + 0.5)))
 	C4:SetVariable ('ACTIVE_PRESET', tostring (tonumber (g_device.active_preset) or 0))
 
-	local icon = isRunning and 'Running' or 'Default'
-	if (icon ~= g_lastIcon) then
-		C4:SendToProxy (MASTER_BINDING, 'ICON_CHANGED',
-			{ icon = icon, icon_description = isRunning and 'Shower running' or 'Shower off' }, 'NOTIFY')
-		g_lastIcon = icon
-	end
+	UpdateTileIcon ()
 
 	PublishUI ()
 	UpdateKeyLeds ()
