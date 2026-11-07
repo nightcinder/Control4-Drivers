@@ -5,8 +5,8 @@
 	<name>IntelliFire_driver</name>
 	<model>IntelliFire Fireplace</model>
 	<created>08/15/2026 12:00 PM</created>
-	<modified>11/07/2026 04:51 PM</modified>
-	<version>200</version>
+	<modified>11/07/2026 05:20 PM</modified>
+	<version>201</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -102,8 +102,7 @@
 				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_300.png</Icon>
 				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_512.png</Icon>
 				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_1024.png</Icon>
-			</display_icons>
-			<state id="Default">
+						<state id="Default">
 				<Icon width="70" height="70">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_70.png</Icon>
 				<Icon width="90" height="90">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_90.png</Icon>
 				<Icon width="300" height="300">controller://driver/IntelliFire_driver/icons/device/fp_off/experience_300.png</Icon>
@@ -152,6 +151,7 @@
 				<Icon width="512" height="512">controller://driver/IntelliFire_driver/icons/device/flame5/experience_512.png</Icon>
 				<Icon width="1024" height="1024">controller://driver/IntelliFire_driver/icons/device/flame5/experience_1024.png</Icon>
 			</state>
+		</display_icons>
 		</navigator_display_option>
 	</capabilities>
 
