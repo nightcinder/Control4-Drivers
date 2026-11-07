@@ -5,14 +5,14 @@
 	<name>Moen Smart Shower (U by Moen) - Standalone</name>
 	<model>TS3302 / TS3304 / S3102 / S3104 Digital Shower Valve + Controller</model>
 	<created>08/16/2026 12:00 PM</created>
-	<modified>11/07/2026 12:00 PM</modified>
-	<version>205</version>
+	<modified>11/07/2026 01:00 PM</modified>
+	<version>206</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
-	<templatedescription>Moen Smart Shower (U by Moen) - direct cloud control, Thermostat + Extras proxy (v205)</templatedescription>
+	<templatedescription>Moen Smart Shower (U by Moen) - Local TCP bridge or direct cloud control, Thermostat + Extras proxy (v206)</templatedescription>
 	<search_types>
 		<type>Moen:shower:UbyMoen</type>
 	</search_types>
@@ -447,6 +447,34 @@
 					<item>Log</item>
 					<item>Print and Log</item>
 				</items>
+			</property>
+			<property>
+				<name>Transport</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Local Bridge</default>
+				<items>
+					<item>Local Bridge</item>
+					<item>Moen Cloud</item>
+				</items>
+			</property>
+			<property>
+				<name>Bridge Host</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Bridge Port</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>8765</default>
+			</property>
+			<property>
+				<name>Bridge Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Unknown</default>
 			</property>
 			<property>
 				<name>Cloud Status</name>

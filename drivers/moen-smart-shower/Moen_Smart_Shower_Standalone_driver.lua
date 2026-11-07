@@ -160,7 +160,7 @@ WebSocket = require ('drivers-common-public.module.websocket')
 
 -- ===================== Constants ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "205"
+DRIVER_VERSION = "206"
 API_BASE_URL       = 'https://www.moen-iot.com'
 API_AUTHENTICATE   = '/v2/authenticate'
 API_CREDENTIALS    = '/v3/credentials'
@@ -286,6 +286,9 @@ function LoadProperties ()
 	g_outletPos [2] = tonumber (Properties ['Outlet 2 Position']) or g_outletPos [2]
 	g_outletPos [3] = tonumber (Properties ['Outlet 3 Position']) or g_outletPos [3]
 	g_outletPos [4] = tonumber (Properties ['Outlet 4 Position']) or g_outletPos [4]
+	g_transport        = Properties ['Transport'] or g_transport
+	g_bridgeHost       = Properties ['Bridge Host'] or g_bridgeHost
+	g_bridgePort       = tonumber (Properties ['Bridge Port']) or g_bridgePort
 end
 
 -- ===================== Property change dispatch (handlers.lua convention) ==========
@@ -336,6 +339,7 @@ OPC ['Outlet_3_Position'] = function (value) g_outletPos [3] = tonumber (value) 
 OPC ['Outlet_4_Position'] = function (value) g_outletPos [4] = tonumber (value) or g_outletPos [4] end
 
 function RestartEverything ()
+	Bridge_Stop ()
 	CancelTimer ('MoenPollTimer')
 	CancelTimer ('MoenAuthRetryTimer')
 	CancelTimer ('MoenWSReconnectTimer')
@@ -366,6 +370,11 @@ function AuthHeaders ()
 end
 
 function StartAuthFlow ()
+	-- v206: Local Bridge transport replaces the cloud start-up path.
+	if (g_transport == 'Local Bridge') then
+		Bridge_Start ()
+		return
+	end
 	g_cloudAuthenticated = false
 	C4:UpdateProperty ('Cloud Status', 'Authenticating...')
 	if (g_email == '' or g_password == '') then
@@ -441,6 +450,10 @@ function OnShowersResponse (strError, code, headers, data, context, url)
 end
 
 function PollDeviceDetails ()
+	if (g_transport == 'Local Bridge') then
+		Bridge_Send ({ cmd = 'get_state' })
+		return
+	end
 	local path = string.format (API_SHOWER_DETAIL, g_serial)
 	urlGet (API_BASE_URL .. path, AuthHeaders (), OnDeviceDetailsResponse)
 end
@@ -624,6 +637,7 @@ end
 -- these is reachable only from an explicit RFP proxy command or EC Composer
 -- command below - never from driver load/reconnect/property-change/resync.
 function Action_ShowerOn ()
+	if (g_transport == 'Local Bridge') then Bridge_Power (true) return end
 	if (g_device.mode == 'paused-by-preset' and g_device.active_preset) then
 		SendControlEvent ('shower_on', { preset = tostring (g_device.active_preset) })
 	else
@@ -632,10 +646,12 @@ function Action_ShowerOn ()
 end
 
 function Action_ShowerOff ()
+	if (g_transport == 'Local Bridge') then Bridge_Power (false) return end
 	SendControlEvent ('shower_off', {})
 end
 
 function Action_Resume ()
+	if (g_transport == 'Local Bridge') then Bridge_Power (true) return end
 	local activePreset = g_device.active_preset
 	if (activePreset == nil) then
 		LOG ('Cannot resume: no active_preset known')
@@ -645,10 +661,12 @@ function Action_Resume ()
 end
 
 function Action_SetTemperature (tempF)
+	if (g_transport == 'Local Bridge') then Bridge_SetTemperature (tempF) return end
 	SendControlEvent ('temperature_set', { target_temperature = math.floor (tempF + 0.5) })
 end
 
 function Action_SetOutlet (position, active)
+	if (g_transport == 'Local Bridge') then Bridge_Outlet (position, active) return end
 	local outlets = g_device.outlets or {}
 	local outletStates = {}
 	for _, o in ipairs (outlets) do
@@ -660,6 +678,7 @@ function Action_SetOutlet (position, active)
 end
 
 function Action_ActivatePreset (position)
+	if (g_transport == 'Local Bridge') then Bridge_Preset (position) return end
 	local presets = g_device.presets or {}
 	local preset
 	for _, p in ipairs (presets) do
@@ -770,9 +789,9 @@ function SyncProxiesFromState ()
 	if (g_lastError ~= nil and g_lastError ~= '') then
 		cloudStr = cloudStr .. ' (last error: ' .. g_lastError .. ')'
 	end
-	C4:UpdateProperty ('Cloud Status', cloudStr)
+	C4:UpdateProperty ('Cloud Status', (g_transport == 'Local Bridge') and 'Not used (Local Bridge)' or cloudStr)
 
-	C4:UpdateProperty ('Pusher Status', g_wsSubscribed and 'Connected / subscribed' or 'Connecting...')
+	C4:UpdateProperty ('Pusher Status', (g_transport == 'Local Bridge') and 'Not used (Local Bridge)' or (g_wsSubscribed and 'Connected / subscribed' or 'Connecting...'))
 end
 
 -- Extras: one Switch ("Shower") + one Button per real preset (never a fixed
@@ -870,7 +889,7 @@ RFP = RFP or {}
 -- logged, never acted on.
 RFP [MASTER_BINDING] = function (idBinding, strCommand, tParams, args)
 	if (strCommand == 'GET_CONNECTED_STATE') then
-		NotifyOnline (g_cloudAuthenticated)
+		NotifyOnline (OnlineNow ())
 		return
 	end
 
@@ -946,6 +965,212 @@ function OnDeferredSetOutlet ()
 		g_pendingOutletPos = nil
 		g_pendingOutletState = nil
 	end
+end
+
+-- ===================== Local Bridge transport (v206) ============================
+-- Talks to a small TCP bridge on the LAN (JSON lines, default port 8765)
+-- instead of Moen's cloud. Selected by the "Transport" property. The cloud
+-- code above is unchanged and remains selectable as "Moen Cloud".
+-- SAFETY: connecting, reconnecting, the state line the bridge sends on
+-- connect, and page open never start water. Only an explicit Action_* call
+-- (shower on, resume, thermostat on, preset) sends on/preset. Setpoint
+-- changes are ignored while the shower is not running.
+BRIDGE_BINDING         = 7001   -- dynamic network binding, outside websocket's 6000-6200 scan
+BRIDGE_RECONNECT_FIRST = 5
+BRIDGE_RECONNECT_MAX   = 60
+g_transport     = 'Local Bridge'
+g_bridgeHost    = ''
+g_bridgePort    = 8765
+g_bridgeStatus  = 'Unknown'
+g_bridgeWanted  = false
+g_bridgeLinked  = false
+g_bridgeBuffer  = ''
+g_bridgeBackoff = BRIDGE_RECONNECT_FIRST
+
+function Bridge_SetStatus (s)
+	g_bridgeStatus = s
+	C4:UpdateProperty ('Bridge Status', s)
+	LOG ('Bridge: ' .. s)
+end
+
+function OnlineNow ()
+	if (g_transport == 'Local Bridge') then
+		return (g_bridgeLinked and g_device.shower_connected == true) and true or false
+	end
+	return g_cloudAuthenticated
+end
+
+function Bridge_Start ()
+	g_bridgeWanted = true
+	if (g_bridgeHost == nil or g_bridgeHost == '') then
+		Bridge_SetStatus ('Set Bridge Host to the IP of the bridge machine')
+		return
+	end
+	Bridge_Connect ()
+end
+
+function Bridge_Connect ()
+	if (not g_bridgeWanted or g_bridgeHost == '') then return end
+	CancelTimer ('MoenBridgeReconnect')
+	g_bridgeBuffer = ''
+	OCS [BRIDGE_BINDING] = Bridge_OnConnectionStatus
+	RFN [BRIDGE_BINDING] = Bridge_OnData
+	C4:CreateNetworkConnection (BRIDGE_BINDING, g_bridgeHost, 'TCP')
+	C4:NetConnect (BRIDGE_BINDING, g_bridgePort)
+	Bridge_SetStatus ('Connecting to ' .. g_bridgeHost .. ':' .. tostring (g_bridgePort))
+end
+
+function Bridge_Stop ()
+	g_bridgeWanted = false
+	CancelTimer ('MoenBridgeReconnect')
+	if (g_bridgeLinked and g_bridgeHost ~= '') then
+		pcall (function () C4:NetDisconnect (BRIDGE_BINDING, g_bridgePort) end)
+	end
+	OCS [BRIDGE_BINDING] = nil
+	RFN [BRIDGE_BINDING] = nil
+	g_bridgeLinked = false
+	g_bridgeBuffer = ''
+	g_bridgeBackoff = BRIDGE_RECONNECT_FIRST
+end
+
+function Bridge_ScheduleReconnect ()
+	local delay = g_bridgeBackoff
+	g_bridgeBackoff = math.min (g_bridgeBackoff * 2, BRIDGE_RECONNECT_MAX)
+	Bridge_SetStatus ('Disconnected; retrying in ' .. delay .. 's')
+	SetTimer ('MoenBridgeReconnect', delay * ONE_SECOND, Bridge_Connect)
+end
+
+function Bridge_OnConnectionStatus (idBinding, nPort, strStatus)
+	if (strStatus == 'ONLINE') then
+		g_bridgeLinked = true
+		g_bridgeBackoff = BRIDGE_RECONNECT_FIRST
+		g_bridgeBuffer = ''
+		Bridge_SetStatus ('Connected; waiting for state')
+		Bridge_Send ({ cmd = 'get_state' })
+	else
+		g_bridgeLinked = false
+		g_bridgeBuffer = ''
+		NotifyOnline (false)
+		if (g_bridgeWanted) then Bridge_ScheduleReconnect () end
+	end
+end
+
+-- Line buffering: TCP delivers arbitrary chunks; split on \n only.
+function Bridge_OnData (idBinding, nPort, strData)
+	g_bridgeBuffer = g_bridgeBuffer .. (strData or '')
+	if (#g_bridgeBuffer > 65536) then g_bridgeBuffer = '' end
+	while (true) do
+		local nl = string.find (g_bridgeBuffer, '\n', 1, true)
+		if (nl == nil) then break end
+		local line = string.sub (g_bridgeBuffer, 1, nl - 1)
+		g_bridgeBuffer = string.sub (g_bridgeBuffer, nl + 1)
+		line = string.gsub (line, '\r$', '')
+		if (line ~= '') then Bridge_OnLine (line) end
+	end
+end
+
+function Bridge_OnLine (line)
+	local ok, msg = pcall (function () return C4:JsonDecode (line) end)
+	if (not ok or type (msg) ~= 'table') then
+		LOG ('Bridge: could not decode line')
+		return
+	end
+	if (msg.event == 'state') then
+		Bridge_OnState (msg)
+	elseif (msg.event == 'error') then
+		Bridge_SetStatus ('Bridge error: ' .. tostring (msg.msg))
+	end
+end
+
+-- Maps the bridge state line onto g_device so SyncProxiesFromState and the
+-- Extras preset list work unchanged for both transports.
+function Bridge_OnState (msg)
+	g_device = g_device or {}
+	g_device.shower_connected = (msg.shower_connected == true)
+	g_device.mode = (msg.on == true) and 'adjusting' or 'off'
+	g_device.current_temperature = msg.current_f
+	g_device.target_temperature = msg.target_f
+	g_device.active_preset = msg.active_preset
+	g_tempMin = tonumber (msg.min_f) or g_tempMin
+	g_tempMax = tonumber (msg.max_f) or g_tempMax
+
+	g_device.outlets = {}
+	for i, v in ipairs (msg.outlets or {}) do
+		table.insert (g_device.outlets, { position = i, active = (v == true) })
+	end
+
+	g_device.presets = {}
+	for _, p in ipairs (msg.presets or {}) do
+		local outl = {}
+		for _, n in ipairs (p.outlets or {}) do
+			table.insert (outl, { position = tonumber (n), active = true })
+		end
+		table.insert (g_device.presets, {
+			position = tonumber (p.n),
+			title = p.title or '',
+			target_temperature = p.temp_f,
+			outlets = outl,
+		})
+	end
+
+	if (g_bridgeStatus ~= 'Connected') then Bridge_SetStatus ('Connected') end
+	NotifyOnline (OnlineNow ())
+	SyncProxiesFromState ()
+end
+
+function Bridge_Send (tCmd)
+	if (not g_bridgeLinked) then
+		LOG ('Bridge not connected; command dropped: ' .. tostring (tCmd.cmd))
+		return false
+	end
+	local ok, s = pcall (function () return C4:JsonEncode (tCmd) end)
+	if (not ok or s == nil) then return false end
+	C4:SendToNetwork (BRIDGE_BINDING, g_bridgePort, s .. '\n')
+	return true
+end
+
+-- Explicit user actions only. Optimistic mode update is corrected by the
+-- next state line from the bridge.
+function Bridge_Power (wantOn)
+	if (Bridge_Send ({ cmd = (wantOn and 'on' or 'off') })) then
+		g_device = g_device or {}
+		g_device.mode = wantOn and 'adjusting' or 'off'
+		SyncProxiesFromState ()
+	end
+end
+
+function Bridge_SetTemperature (tempF)
+	if (g_device == nil or g_device.mode == nil or g_device.mode == 'off') then
+		LOG ('Setpoint change ignored: shower is not running')
+		return
+	end
+	Bridge_Send ({ cmd = 'set_temp', f = math.floor (ClampTemp (tempF) + 0.5) })
+end
+
+function Bridge_Outlet (position, active)
+	Bridge_Send ({ cmd = 'outlet', n = position, on = (active == true) })
+end
+
+function Bridge_Preset (position)
+	if (Bridge_Send ({ cmd = 'preset', n = position })) then
+		g_device = g_device or {}
+		g_device.mode = 'adjusting'
+		SyncProxiesFromState ()
+	end
+end
+
+OPC = OPC or {}
+OPC ['Transport'] = function (value)
+	g_transport = value or g_transport
+	RestartEverything ()
+end
+OPC ['Bridge_Host'] = function (value)
+	g_bridgeHost = value or ''
+	RestartEverything ()
+end
+OPC ['Bridge_Port'] = function (value)
+	g_bridgePort = tonumber (value) or g_bridgePort
+	RestartEverything ()
 end
 
 -- ===================== Driver commands / Composer actions ============================
