@@ -160,7 +160,7 @@ WebSocket = require ('drivers-common-public.module.websocket')
 
 -- ===================== Constants ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "206"
+DRIVER_VERSION = "207"
 API_BASE_URL       = 'https://www.moen-iot.com'
 API_AUTHENTICATE   = '/v2/authenticate'
 API_CREDENTIALS    = '/v3/credentials'
@@ -263,6 +263,7 @@ function OnDriverLateInit ()
 end
 
 function OnDriverDestroyed ()
+	Bridge_Stop ()
 	CancelTimer ('MoenPollTimer')
 	CancelTimer ('MoenAuthRetryTimer')
 	CancelTimer ('MoenWSReconnectTimer')
@@ -888,6 +889,8 @@ RFP = RFP or {}
 -- above - unrecognized commands fall through to the else branch and are
 -- logged, never acted on.
 RFP [MASTER_BINDING] = function (idBinding, strCommand, tParams, args)
+	tParams = tParams or {}
+	LOG ('Proxy cmd ' .. tostring (strCommand))
 	if (strCommand == 'GET_CONNECTED_STATE') then
 		NotifyOnline (OnlineNow ())
 		return
@@ -925,6 +928,10 @@ RFP [MASTER_BINDING] = function (idBinding, strCommand, tParams, args)
 	elseif (strCommand == 'SET_SETPOINT_HEAT') then
 		local temp = ClampTemp (tParams.SETPOINT)
 		local mode = g_device.mode or 'off'
+		if (mode == 'off' and not SetpointStartsWater ()) then
+			LOG ('Setpoint ' .. tostring (temp) .. ' ignored: shower not running (Local Bridge)')
+			return
+		end
 		if (mode == 'off') then
 			Action_ShowerOn ()
 			g_deferredTemp = temp
@@ -986,6 +993,9 @@ g_bridgeWanted  = false
 g_bridgeLinked  = false
 g_bridgeBuffer  = ''
 g_bridgeBackoff = BRIDGE_RECONNECT_FIRST
+g_bridgeOpen    = false    -- v207: a NetConnect is outstanding or live on BRIDGE_BINDING
+g_bridgeConnHost = ''      -- v207: host/port the open socket was made with
+g_bridgeConnPort = nil
 
 function Bridge_SetStatus (s)
 	g_bridgeStatus = s
@@ -1000,6 +1010,12 @@ function OnlineNow ()
 	return g_cloudAuthenticated
 end
 
+-- v207: setpoint changes never start the water on the Local Bridge (the bridge
+-- is not asked to turn on from a setpoint). Cloud behaviour is unchanged.
+function SetpointStartsWater ()
+	return g_transport ~= 'Local Bridge'
+end
+
 function Bridge_Start ()
 	g_bridgeWanted = true
 	if (g_bridgeHost == nil or g_bridgeHost == '') then
@@ -1009,12 +1025,29 @@ function Bridge_Start ()
 	Bridge_Connect ()
 end
 
+-- v207: closes the socket this driver opened, on the port it was opened with.
+-- Runs on every teardown, linked or not.
+function Bridge_CloseSocket ()
+	if (g_bridgeOpen and g_bridgeConnPort ~= nil) then
+		LOG ('Bridge: closing socket to ' .. tostring (g_bridgeConnHost) .. ':' .. tostring (g_bridgeConnPort))
+		pcall (function () C4:NetDisconnect (BRIDGE_BINDING, g_bridgeConnPort) end)
+	end
+	g_bridgeOpen = false
+	g_bridgeConnPort = nil
+	g_bridgeLinked = false
+	g_bridgeBuffer = ''
+end
+
 function Bridge_Connect ()
 	if (not g_bridgeWanted or g_bridgeHost == '') then return end
 	CancelTimer ('MoenBridgeReconnect')
+	Bridge_CloseSocket ()
 	g_bridgeBuffer = ''
 	OCS [BRIDGE_BINDING] = Bridge_OnConnectionStatus
 	RFN [BRIDGE_BINDING] = Bridge_OnData
+	g_bridgeConnHost = g_bridgeHost
+	g_bridgeConnPort = g_bridgePort
+	g_bridgeOpen = true
 	C4:CreateNetworkConnection (BRIDGE_BINDING, g_bridgeHost, 'TCP')
 	C4:NetConnect (BRIDGE_BINDING, g_bridgePort)
 	Bridge_SetStatus ('Connecting to ' .. g_bridgeHost .. ':' .. tostring (g_bridgePort))
@@ -1023,13 +1056,9 @@ end
 function Bridge_Stop ()
 	g_bridgeWanted = false
 	CancelTimer ('MoenBridgeReconnect')
-	if (g_bridgeLinked and g_bridgeHost ~= '') then
-		pcall (function () C4:NetDisconnect (BRIDGE_BINDING, g_bridgePort) end)
-	end
+	Bridge_CloseSocket ()
 	OCS [BRIDGE_BINDING] = nil
 	RFN [BRIDGE_BINDING] = nil
-	g_bridgeLinked = false
-	g_bridgeBuffer = ''
 	g_bridgeBackoff = BRIDGE_RECONNECT_FIRST
 end
 
@@ -1041,6 +1070,10 @@ function Bridge_ScheduleReconnect ()
 end
 
 function Bridge_OnConnectionStatus (idBinding, nPort, strStatus)
+	if (nPort ~= nil and g_bridgeConnPort ~= nil and nPort ~= g_bridgeConnPort) then
+		LOG ('Bridge: ignored ' .. tostring (strStatus) .. ' from stale port ' .. tostring (nPort))
+		return
+	end
 	if (strStatus == 'ONLINE') then
 		g_bridgeLinked = true
 		g_bridgeBackoff = BRIDGE_RECONNECT_FIRST
@@ -1049,6 +1082,7 @@ function Bridge_OnConnectionStatus (idBinding, nPort, strStatus)
 		Bridge_Send ({ cmd = 'get_state' })
 	else
 		g_bridgeLinked = false
+		g_bridgeOpen = false
 		g_bridgeBuffer = ''
 		NotifyOnline (false)
 		if (g_bridgeWanted) then Bridge_ScheduleReconnect () end
@@ -1057,6 +1091,7 @@ end
 
 -- Line buffering: TCP delivers arbitrary chunks; split on \n only.
 function Bridge_OnData (idBinding, nPort, strData)
+	if (nPort ~= nil and g_bridgeConnPort ~= nil and nPort ~= g_bridgeConnPort) then return end
 	g_bridgeBuffer = g_bridgeBuffer .. (strData or '')
 	if (#g_bridgeBuffer > 65536) then g_bridgeBuffer = '' end
 	while (true) do
@@ -1125,7 +1160,8 @@ function Bridge_Send (tCmd)
 	end
 	local ok, s = pcall (function () return C4:JsonEncode (tCmd) end)
 	if (not ok or s == nil) then return false end
-	C4:SendToNetwork (BRIDGE_BINDING, g_bridgePort, s .. '\n')
+	LOG ('Bridge cmd sent: ' .. tostring (tCmd.cmd) .. ' ' .. s)
+	C4:SendToNetwork (BRIDGE_BINDING, g_bridgeConnPort or g_bridgePort, s .. '\n')
 	return true
 end
 
@@ -1185,6 +1221,10 @@ EC ['ACTION_SHOWER_OFF'] = function () Action_ShowerOff () end
 EC ['Set_Temperature'] = function (tParams)
 	local temp = ClampTemp (tParams ['Temperature'])
 	local mode = g_device.mode or 'off'
+	if (mode == 'off' and not SetpointStartsWater ()) then
+		LOG ('Setpoint ' .. tostring (temp) .. ' ignored: shower not running (Local Bridge)')
+		return
+	end
 	if (mode == 'off') then
 		Action_ShowerOn ()
 		g_deferredTemp = temp
