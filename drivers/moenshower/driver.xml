@@ -1,0 +1,611 @@
+<devicedata>
+	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Moen, Fortune Brands, or Control4</copyright>
+	<creator>Custom Driver Project</creator>
+	<manufacturer>Moen</manufacturer>
+	<name>moenshower</name>
+	<model>Moen Smart Shower (U by Moen) - Web View</model>
+	<created>08/16/2026 12:00 PM</created>
+	<modified>11/07/2026 01:00 PM</modified>
+	<version>302</version>
+	<small image_source="c4z">icons/device_sm.png</small>
+	<large image_source="c4z">icons/device_lg.png</large>
+	<control>lua_gen</control>
+	<controlmethod>ip</controlmethod>
+	<driver>DriverWorks</driver>
+	<templatedescription>Moen Smart Shower (U by Moen) - Local TCP bridge or direct cloud control, custom Navigator web view and keypad preset keys (v302)</templatedescription>
+	<search_types>
+		<type>Moen:shower:UbyMoen</type>
+	</search_types>
+
+	<!--
+		v300 - UI Button + web view instead of Thermostat + Extras
+		=========================================================
+		The thermostatV2 proxy (v200-v204) made the shower look like a second
+		thermostat in the room and put its temperature in the room header.
+		Rooms with a real HVAC thermostat need the shower to sit NEXT to it,
+		so the shower is now a uibutton proxy whose tile opens a custom page
+		(www/shower2.html) in Navigator: temperature ring, start/stop, preset
+		tiles, temp stepper and outlet toggles.
+
+		PACKAGE NAME: moenshower.c4z, and <name> is the same slug. Navigator
+		resolves controller://driver/moenshower/... from it; if the two do
+		not match, Navigator hides the tile. Changing proxy type means this
+		must be ADDED as a new device (delete the v20x device first) - so the
+		old Moen_Smart_Shower_Standalone_driver_v200 package name is retired
+		here, and every build after this keeps moenshower.c4z.
+
+		PAGE FILE IS RENAMED EVERY PAGE RELEASE (shower1, shower2, ...)
+		because Navigator caches controller:// pages. web_view_url below,
+		PAGE_FILE / PAGE_BUILD in the Lua and the file in www/ must agree.
+
+		Protocol layer (REST auth, polling, Pusher websocket, Action_*
+		payloads) is unchanged from v204.
+	-->
+	<!--
+		v302 - Local Bridge transport (default) or Moen Cloud, as in the
+		standalone driver v206. Bridge = JSON lines over TCP, port 8765, on
+		dynamic binding 7001. Page renamed to shower2.html.
+	-->
+	<proxies qty="1">
+		<proxy proxybindingid="5001" name="Shower" primary="True" image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png">uibutton</proxy>
+	</proxies>
+
+	<connections>
+		<connection>
+			<id>5001</id>
+			<facing>6</facing>
+			<connectionname>UIBUTTON</connectionname>
+			<type>2</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>UIBUTTON</classname>
+				</class>
+			</classes>
+		</connection>
+		<connection>
+			<id>901</id>
+			<facing>6</facing>
+			<connectionname>Preset Key 1</connectionname>
+			<type>1</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>True</linelevel>
+			<classes>
+				<class>
+					<classname>BUTTON_LINK</classname>
+				</class>
+			</classes>
+		</connection>
+		<connection>
+			<id>902</id>
+			<facing>6</facing>
+			<connectionname>Preset Key 2</connectionname>
+			<type>1</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>True</linelevel>
+			<classes>
+				<class>
+					<classname>BUTTON_LINK</classname>
+				</class>
+			</classes>
+		</connection>
+		<connection>
+			<id>903</id>
+			<facing>6</facing>
+			<connectionname>Preset Key 3</connectionname>
+			<type>1</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>True</linelevel>
+			<classes>
+				<class>
+					<classname>BUTTON_LINK</classname>
+				</class>
+			</classes>
+		</connection>
+		<connection>
+			<id>904</id>
+			<facing>6</facing>
+			<connectionname>Preset Key 4</connectionname>
+			<type>1</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>True</linelevel>
+			<classes>
+				<class>
+					<classname>BUTTON_LINK</classname>
+				</class>
+			</classes>
+		</connection>
+		<connection>
+			<id>905</id>
+			<facing>6</facing>
+			<connectionname>Shower Key</connectionname>
+			<type>1</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>True</linelevel>
+			<classes>
+				<class>
+					<classname>BUTTON_LINK</classname>
+				</class>
+			</classes>
+		</connection>
+	</connections>
+
+	<capabilities>
+		<web_view_url proxybindingid="5001">controller://driver/moenshower/shower2.html</web_view_url>
+		<mobile_web_view_enabled>true</mobile_web_view_enabled>
+		<navigator_display_option proxybindingid="5001">
+			<display_icons>
+				<Icon width="70" height="70">controller://driver/moenshower/icons/device/shower/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/moenshower/icons/device/shower/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/moenshower/icons/device/shower/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/moenshower/icons/device/shower/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/moenshower/icons/device/shower/experience_1024.png</Icon>
+				<state id="Default">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/shower/experience_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/shower/experience_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/shower/experience_300.png</Icon>
+					<Icon width="512" height="512">controller://driver/moenshower/icons/device/shower/experience_512.png</Icon>
+					<Icon width="1024" height="1024">controller://driver/moenshower/icons/device/shower/experience_1024.png</Icon>
+				</state>
+				<state id="Running">
+					<Icon width="70" height="70">controller://driver/moenshower/icons/device/shower_running/experience_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/moenshower/icons/device/shower_running/experience_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/moenshower/icons/device/shower_running/experience_300.png</Icon>
+					<Icon width="512" height="512">controller://driver/moenshower/icons/device/shower_running/experience_512.png</Icon>
+					<Icon width="1024" height="1024">controller://driver/moenshower/icons/device/shower_running/experience_1024.png</Icon>
+				</state>
+			</display_icons>
+		</navigator_display_option>
+	</capabilities>
+
+	<events>
+		<event>
+			<id>1</id>
+			<name>Shower Started</name>
+			<description>NAME: the shower turned on (any mode other than off)</description>
+		</event>
+		<event>
+			<id>2</id>
+			<name>Shower Ready</name>
+			<description>NAME: the water reached the target temperature</description>
+		</event>
+		<event>
+			<id>3</id>
+			<name>Shower Stopped</name>
+			<description>NAME: the shower turned off</description>
+		</event>
+	</events>
+
+	<config>
+		<power_management_method>AlwaysOn</power_management_method>
+		<power_command_delay>0</power_command_delay>
+		<power_delay>0</power_delay>
+		<power_command_needed>False</power_command_needed>
+		<documentation file="www/documentation.html" />
+		<script file="Moen_Smart_Shower_Standalone_driver.lua" />
+
+		<commands>
+			<command>
+				<name>Shower On</name>
+				<description>Turn the shower on (resumes the active preset if one is paused, otherwise a plain on with no preset)</description>
+			</command>
+			<command>
+				<name>Shower Off</name>
+				<description>Turn the shower off</description>
+			</command>
+			<command>
+				<name>Set Temperature</name>
+				<description>Set the target temperature (F) while the shower is running</description>
+				<params>
+					<param>
+						<name>Temperature</name>
+						<type>STRING</type>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>Activate Preset</name>
+				<description>Activate a saved Moen shower preset by its position number</description>
+				<params>
+					<param>
+						<name>Position</name>
+						<type>LIST</type>
+						<items>
+							<item>1</item>
+							<item>2</item>
+							<item>3</item>
+							<item>4</item>
+						</items>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>Resume Paused Shower</name>
+				<description>Resume water flow after a preset paused it at temperature (mode = paused-by-preset)</description>
+			</command>
+			<command>
+				<name>Refresh Status</name>
+				<description>Poll Moen's cloud immediately instead of waiting for the next scheduled poll</description>
+			</command>
+			<!--
+				Set Outlet is also reachable from the web view's outlet toggles.
+			-->
+			<command>
+				<name>Set Outlet</name>
+				<description>Turn a single outlet on/off directly (bypasses presets)</description>
+				<params>
+					<param>
+						<name>Outlet</name>
+						<type>LIST</type>
+						<items>
+							<item>1</item>
+							<item>2</item>
+							<item>3</item>
+							<item>4</item>
+						</items>
+					</param>
+					<param>
+						<name>State</name>
+						<type>LIST</type>
+						<items>
+							<item>ON</item>
+							<item>OFF</item>
+						</items>
+					</param>
+				</params>
+			</command>
+		</commands>
+
+		<actions>
+			<action>
+				<name> - Shower On</name>
+				<command>ACTION_SHOWER_ON</command>
+			</action>
+			<action>
+				<name> - Shower Off</name>
+				<command>ACTION_SHOWER_OFF</command>
+			</action>
+			<action>
+				<name> - Preset 1</name>
+				<command>ACTION_PRESET_1</command>
+			</action>
+			<action>
+				<name> - Preset 2</name>
+				<command>ACTION_PRESET_2</command>
+			</action>
+			<action>
+				<name> - Preset 3</name>
+				<command>ACTION_PRESET_3</command>
+			</action>
+			<action>
+				<name> - Preset 4</name>
+				<command>ACTION_PRESET_4</command>
+			</action>
+			<action>
+				<name> - Resume Paused Shower</name>
+				<command>ACTION_RESUME</command>
+			</action>
+			<action>
+				<name> - Refresh Status</name>
+				<command>ACTION_REFRESH_STATUS</command>
+			</action>
+			<action>
+				<name> - Repaint Key LEDs</name>
+				<command>ACTION_REPAINT_KEYS</command>
+			</action>
+			<action>
+				<name> - Print Debug Info</name>
+				<command>ACTION_PRINT_DEBUG</command>
+			</action>
+		</actions>
+
+		<properties>
+			<property>
+				<name>Driver Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Moen Account Email</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<!--
+				CONFIRMED (carried over from v102): type PASSWORD is not a
+				valid Composer property type in this environment - crashes
+				Composer's property-type lookup. STRING is not masked -
+				worth knowing when entering it with anyone else present.
+			-->
+			<property>
+				<name>Moen Account Password</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Device Serial Number Override</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Target Temp Min (F)</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>60</default>
+			</property>
+			<property>
+				<name>Target Temp Max (F)</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>115</default>
+			</property>
+			<!--
+				Outlet "position" numbering is a per-device field, not
+				guaranteed 1-4 across every Moen shower model. Still needed
+				to interpret the API and for the "Set Outlet" Composer
+				command above.
+			-->
+			<property>
+				<name>Outlet 1 Position</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>1</default>
+			</property>
+			<property>
+				<name>Outlet 2 Position</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>2</default>
+			</property>
+			<property>
+				<name>Outlet 3 Position</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>3</default>
+			</property>
+			<property>
+				<name>Outlet 4 Position</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>4</default>
+			</property>
+			<property>
+				<name>Poll Interval (seconds)</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>20</default>
+			</property>
+			<property>
+				<name>Running Poll Interval (seconds)</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>4</default>
+			</property>
+			<property>
+				<name>Web Page Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Not opened yet</default>
+			</property>
+			<property>
+				<name>Preset Key 1 Preset</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>1</default>
+				<items>
+					<item>1</item>
+					<item>2</item>
+					<item>3</item>
+					<item>4</item>
+					<item>5</item>
+					<item>6</item>
+					<item>7</item>
+					<item>8</item>
+					<item>9</item>
+					<item>10</item>
+					<item>11</item>
+					<item>12</item>
+				</items>
+			</property>
+			<property>
+				<name>Preset Key 2 Preset</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>2</default>
+				<items>
+					<item>1</item>
+					<item>2</item>
+					<item>3</item>
+					<item>4</item>
+					<item>5</item>
+					<item>6</item>
+					<item>7</item>
+					<item>8</item>
+					<item>9</item>
+					<item>10</item>
+					<item>11</item>
+					<item>12</item>
+				</items>
+			</property>
+			<property>
+				<name>Preset Key 3 Preset</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>3</default>
+				<items>
+					<item>1</item>
+					<item>2</item>
+					<item>3</item>
+					<item>4</item>
+					<item>5</item>
+					<item>6</item>
+					<item>7</item>
+					<item>8</item>
+					<item>9</item>
+					<item>10</item>
+					<item>11</item>
+					<item>12</item>
+				</items>
+			</property>
+			<property>
+				<name>Preset Key 4 Preset</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>4</default>
+				<items>
+					<item>1</item>
+					<item>2</item>
+					<item>3</item>
+					<item>4</item>
+					<item>5</item>
+					<item>6</item>
+					<item>7</item>
+					<item>8</item>
+					<item>9</item>
+					<item>10</item>
+					<item>11</item>
+					<item>12</item>
+				</items>
+			</property>
+			<property>
+				<name>Keypad Pause When Ready</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Yes</default>
+				<items>
+					<item>Yes</item>
+					<item>No</item>
+				</items>
+			</property>
+			<property>
+				<name>If Another Preset Is Running</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Ignore the key</default>
+				<items>
+					<item>Ignore the key</item>
+					<item>Switch to this preset</item>
+				</items>
+			</property>
+			<property>
+				<name>Key Hold Time (ms)</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>300</minimum>
+				<maximum>3000</maximum>
+				<default>1000</default>
+				<readonly>false</readonly>
+			</property>
+			<property>
+				<name>Idle Color</name>
+				<type>COLOR_SELECTOR</type>
+				<readonly>false</readonly>
+				<default>0,0,0</default>
+			</property>
+			<property>
+				<name>Warming Color</name>
+				<type>COLOR_SELECTOR</type>
+				<readonly>false</readonly>
+				<default>255,140,0</default>
+			</property>
+			<property>
+				<name>Ready Color</name>
+				<type>COLOR_SELECTOR</type>
+				<readonly>false</readonly>
+				<default>0,255,0</default>
+			</property>
+			<property>
+				<name>Log Mode</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Off</default>
+				<items>
+					<item>Off</item>
+					<item>Print</item>
+					<item>Log</item>
+					<item>Print and Log</item>
+				</items>
+			</property>
+			<property>
+				<name>Transport</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Local Bridge</default>
+				<items>
+					<item>Local Bridge</item>
+					<item>Moen Cloud</item>
+				</items>
+			</property>
+			<property>
+				<name>Bridge Host</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Bridge Port</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>8765</default>
+			</property>
+			<property>
+				<name>Bridge Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Unknown</default>
+			</property>
+			<property>
+				<name>Cloud Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Unknown</default>
+			</property>
+			<property>
+				<name>Pusher Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Unknown</default>
+			</property>
+			<property>
+				<name>Shower Mode</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Unknown</default>
+			</property>
+			<property>
+				<name>Device Serial Number</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Device Name</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+		</properties>
+	</config>
+
+	<composer_categories>
+		<category>Comfort</category>
+	</composer_categories>
+	<navigator_categories>
+		<category>Comfort</category>
+	</navigator_categories>
+</devicedata>

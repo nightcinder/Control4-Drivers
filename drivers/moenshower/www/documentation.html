@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Moen Smart Shower</title>
+<style>
+  body { font-family: Segoe UI, Arial, sans-serif; font-size: 13px; color: #222; background: #fff; margin: 16px; line-height: 1.45; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 24px 0 6px; padding-bottom: 3px; border-bottom: 1px solid #ccc; }
+  h3 { font-size: 13px; margin: 14px 0 4px; }
+  .sub { color: #666; margin: 0 0 12px; }
+  table { border-collapse: collapse; width: 100%; margin: 6px 0 10px; }
+  th, td { border: 1px solid #d4d4d4; padding: 5px 7px; text-align: left; vertical-align: top; }
+  th { background: #f2f2f2; }
+  td:first-child { white-space: nowrap; font-weight: 600; }
+  code { background: #f2f2f2; padding: 1px 4px; border-radius: 3px; font-family: Consolas, monospace; }
+  .note { background: #fff8e1; border-left: 4px solid #f9a500; padding: 7px 10px; margin: 10px 0; }
+  .warn { background: #fdecea; border-left: 4px solid #d9534f; padding: 7px 10px; margin: 10px 0; }
+  .sw { display: inline-block; width: 11px; height: 11px; border: 1px solid #888; vertical-align: middle; margin-right: 4px; }
+  ol, ul { padding-left: 22px; margin: 4px 0; }
+  li { margin: 2px 0; }
+</style>
+</head>
+<body>
+
+<h1>Moen Smart Shower (U by Moen)</h1>
+<p class="sub">Driver version 301 &middot; unofficial driver, not affiliated with Moen, Fortune Brands or Control4</p>
+
+<p>Controls a U by Moen digital shower valve from Control4. The driver signs in to the Moen cloud with the homeowner's
+U by Moen account, reads the shower's state, and sends commands over Moen's real-time channel. It runs entirely on the
+Control4 controller; no extra computer is needed.</p>
+
+<p>It gives you three ways to run the shower:</p>
+<ul>
+  <li><b>A Shower tile in Navigator</b> that opens a full shower page: live water temperature, Start/Stop, the presets, a temperature control and outlet buttons.</li>
+  <li><b>Keypad keys</b> bound directly to the driver: one key per preset plus a Shower key, with LEDs that turn amber while the water warms and green when it's ready.</li>
+  <li><b>Composer programming</b>: commands, actions, variables and events.</li>
+</ul>
+
+<h2>Before you install</h2>
+<div class="warn">
+  <b>This replaces earlier versions of this driver</b> (v204 and older used a thermostat-style device;
+  package name <code>Moen_Smart_Shower_Standalone_driver_v200.c4z</code>). Composer can't change a device from a thermostat
+  to a button in place, so <b>delete the old Moen device and add this one as a new device</b>. Any programming that used the old
+  device has to be redone. From this version on the package is always named <code>moenshower.c4z</code>, so future
+  updates install in place with <b>Add or Update Driver</b>.
+</div>
+<p>You need:</p>
+<ul>
+  <li>The U by Moen account email and password the shower is registered to.</li>
+  <li>Presets already set up in the U by Moen phone app (see <a href="#presets">Presets</a>).</li>
+  <li>Internet access on the controller (the shower is controlled through Moen's cloud).</li>
+</ul>
+
+<h2>Setup</h2>
+<ol>
+  <li>Add <code>moenshower.c4z</code> to the room the shower is in.</li>
+  <li>In <b>Properties</b>, enter <b>Moen Account Email</b> and <b>Moen Account Password</b>.</li>
+  <li>Within about a minute, <b>Cloud Status</b> should read <i>Authenticated</i> and <b>Pusher Status</b> <i>Connected / subscribed</i>.
+      Leave <b>Device Serial Number Override</b> blank unless the account has more than one shower.</li>
+  <li>Run the <b>Print Debug Info</b> action and check the Lua output: it lists the presets the driver found, with their position numbers.</li>
+  <li>If the Shower tile doesn't appear in Navigator under Comfort, open the room's Navigator settings in Composer and make sure the Shower button is shown.</li>
+  <li>Open the Shower tile once on a touchscreen or the app. <b>Web Page Status</b> should read <i>Page build 1 OK</i>.</li>
+  <li>Bind keypad buttons if you want them (see <a href="#keys">Keypad keys</a>), then refresh Navigators.</li>
+</ol>
+
+<h2 id="presets">Presets</h2>
+<p>Presets are created and edited <b>only in the U by Moen phone app</b>. Each one stores a name, temperature, which outlets run,
+an optional timer, and what happens at temperature (pause the water, chime, notify). They live in the shower and Moen's cloud.
+This driver reads the list live, so a preset added or renamed in the app shows up on the Shower page on the next status check.
+The driver cannot create, edit or delete presets.</p>
+<p>Each preset has a <b>position number</b> in the app's list. Keys, commands and actions refer to presets by that number.
+Print Debug Info shows the numbers.</p>
+
+<h2>The Shower page (Navigator)</h2>
+<table>
+  <tr><th>Part</th><th>What it does</th></tr>
+  <tr><td>Temperature ring</td><td>The large number is the water temperature now. While running, the ring fills toward the set temperature and changes from blue to amber as the water warms. The dot on the ring marks the set temperature. Under the number: Off, Warming up, Ready, or Paused at temperature.</td></tr>
+  <tr><td>Start / Stop shower</td><td>Start turns the water on with the shower's current settings (or resumes a paused preset). Stop turns it off.</td></tr>
+  <tr><td>Resume water</td><td>Appears only when a preset has paused the water at temperature.</td></tr>
+  <tr><td>&minus; / +</td><td>Changes the set temperature 1&deg; per tap. Works only while the water is running. The change is sent 0.7 s after the last tap.</td></tr>
+  <tr><td>Presets</td><td>One row per preset from the Moen app with its temperature, outlets and timer. Tapping a row starts it. The running preset is outlined in amber.</td></tr>
+  <tr><td>Outlets</td><td>Shown only while running, if the shower has more than one outlet. Tapping turns that outlet on or off.</td></tr>
+</table>
+<div class="note">Opening, closing or refreshing the page never turns water on. Only Start, a preset row, or an outlet button does.</div>
+
+<h2 id="keys">Keypad keys</h2>
+<p>Bind keypad buttons on the <b>Connections</b> tab, with no programming. Each connection can take buttons from several keypads.
+Delete any old shower programming on those buttons first, or it will fight with the driver.</p>
+<table>
+  <tr><th>Connection</th><th>Tap</th><th>Hold (1 s)</th></tr>
+  <tr><td>Preset Key 1&ndash;4</td>
+      <td>Shower off: starts that key's preset.<br>
+          That preset running: stops the shower.<br>
+          That preset paused at temperature: resumes the water.<br>
+          A different preset running: does nothing (see <b>If Another Preset Is Running</b>).</td>
+      <td>Stops the shower.</td></tr>
+  <tr><td>Shower Key</td>
+      <td>Shower off: starts the last-used preset.<br>
+          Running: stops the shower.<br>
+          Paused at temperature: resumes the water.</td>
+      <td>Stops the shower.</td></tr>
+</table>
+<p>Which preset a Preset Key starts is set by <b>Preset Key N Preset</b> (defaults: key 1 = preset 1, and so on).
+A key whose preset position doesn't exist in the Moen app does nothing.</p>
+
+<h3>Key LEDs</h3>
+<table>
+  <tr><th>LED</th><th>Meaning</th></tr>
+  <tr><td><span class="sw" style="background:#ff8c00"></span>Warming</td><td>This key's preset is running and the water is heating up.</td></tr>
+  <tr><td><span class="sw" style="background:#00ff00"></span>Ready</td><td>The water is at temperature (running, or paused and waiting).</td></tr>
+  <tr><td><span class="sw" style="background:#000"></span>Idle</td><td>Shower off, or a different preset is running.</td></tr>
+</table>
+<p>The Shower Key lights for any running preset. LEDs change the moment a key is pressed, then follow the shower's real state.
+The shower is checked every 4 s while running and every 20 s while off, so a change made in the Moen app or at the shower
+can take that long to show. Colors are set by <b>Idle Color</b>, <b>Warming Color</b> and <b>Ready Color</b>.</p>
+
+<h3>Starting the shower from outside the bathroom</h3>
+<div class="warn">
+  With <b>Keypad Pause When Ready</b> set to <i>Yes</i> (the default), a preset started from a keypad is sent with
+  "pause water when ready" on: the valve heats the water, stops at temperature, and the key turns green. Step in and tap the
+  key (or Resume on the shower) to start the water. With it set to <i>No</i>, the water keeps running from the moment the key is pressed.
+</div>
+<ul>
+  <li>Only a tap ever starts water. A hold always stops it.</li>
+  <li>While one preset is running, other Preset Keys do nothing, so a tap elsewhere can't change the temperature on someone in the shower.
+      Change <b>If Another Preset Is Running</b> to <i>Switch to this preset</i> if you want them to switch.</li>
+  <li>The page and Composer actions do <b>not</b> force the pause; they use the preset exactly as saved in the Moen app.</li>
+</ul>
+
+<h2>Properties</h2>
+<table>
+  <tr><th>Property</th><th>Description</th></tr>
+  <tr><td>Driver Version</td><td>Read only. The running driver version.</td></tr>
+  <tr><td>Moen Account Email / Password</td><td>The U by Moen account. The password field is not masked in Composer.</td></tr>
+  <tr><td>Device Serial Number Override</td><td>Blank: use the first shower on the account. Enter a serial number to pick a specific shower.</td></tr>
+  <tr><td>Target Temp Min / Max (F)</td><td>Limits for the page's temperature control and the Set Temperature command. Defaults 60&ndash;115.</td></tr>
+  <tr><td>Outlet 1&ndash;4 Position</td><td>Outlet position numbers used by the Set Outlet command. Defaults 1&ndash;4.</td></tr>
+  <tr><td>Poll Interval (seconds)</td><td>How often the shower is checked while it's off. Default 20.</td></tr>
+  <tr><td>Running Poll Interval (seconds)</td><td>How often it's checked while the water is on, so the page and LEDs follow warm-up. Default 4, minimum 2.</td></tr>
+  <tr><td>Web Page Status</td><td>Read only. The page build last opened on a touchscreen or phone.</td></tr>
+  <tr><td>Preset Key 1&ndash;4 Preset</td><td>The Moen preset position each Preset Key starts.</td></tr>
+  <tr><td>Keypad Pause When Ready</td><td>Yes: keypad starts pause the water at temperature. No: use the preset as saved.</td></tr>
+  <tr><td>If Another Preset Is Running</td><td>What a Preset Key does while a different preset runs: <i>Ignore the key</i> (default) or <i>Switch to this preset</i>.</td></tr>
+  <tr><td>Key Hold Time (ms)</td><td>How long a key must be held to stop the shower. Default 1000.</td></tr>
+  <tr><td>Idle / Warming / Ready Color</td><td>Key LED colors.</td></tr>
+  <tr><td>Log Mode</td><td>Off, Print (Lua tab), Log (driver log), or both.</td></tr>
+  <tr><td>Cloud Status / Pusher Status</td><td>Read only. Moen sign-in and real-time connection state, with the last error.</td></tr>
+  <tr><td>Shower Mode / Device Serial Number / Device Name</td><td>Read only. Live values from Moen.</td></tr>
+</table>
+
+<h2>Actions</h2>
+<table>
+  <tr><th>Action</th><th>Description</th></tr>
+  <tr><td>Shower On / Shower Off</td><td>Start or stop the water.</td></tr>
+  <tr><td>Preset 1&ndash;4</td><td>Start that preset as saved in the Moen app.</td></tr>
+  <tr><td>Resume Paused Shower</td><td>Resume after a preset paused at temperature.</td></tr>
+  <tr><td>Refresh Status</td><td>Check the shower now instead of waiting for the next check.</td></tr>
+  <tr><td>Repaint Key LEDs</td><td>Resend every bound key's LED.</td></tr>
+  <tr><td>Print Debug Info</td><td>Print state, presets with position numbers, outlets and connection details to the Lua tab.</td></tr>
+</table>
+
+<h2>Programming</h2>
+<h3>Commands</h3>
+<table>
+  <tr><th>Command</th><th>Description</th></tr>
+  <tr><td>Shower On</td><td>Start the water (resumes a paused preset, otherwise starts with current settings).</td></tr>
+  <tr><td>Shower Off</td><td>Stop the water.</td></tr>
+  <tr><td>Activate Preset (Position)</td><td>Start a preset by position. Uses the preset as saved.</td></tr>
+  <tr><td>Set Temperature (Temperature)</td><td>Set the target in &deg;F. If the shower is off, this starts it first.</td></tr>
+  <tr><td>Set Outlet (Outlet, State)</td><td>Turn one outlet on or off. Turning one on while the shower is off starts it.</td></tr>
+  <tr><td>Resume Paused Shower</td><td>Resume after a pause at temperature.</td></tr>
+  <tr><td>Refresh Status</td><td>Check the shower now.</td></tr>
+</table>
+<h3>Variables</h3>
+<table>
+  <tr><th>Variable</th><th>Values</th></tr>
+  <tr><td>SHOWER_RUNNING</td><td>True while water is on or warming.</td></tr>
+  <tr><td>SHOWER_MODE</td><td><code>off</code>, <code>adjusting</code> (warming), <code>ready</code>, <code>paused-by-preset</code>.</td></tr>
+  <tr><td>CURRENT_TEMP / TARGET_TEMP</td><td>Water and set temperature in &deg;F.</td></tr>
+  <tr><td>ACTIVE_PRESET</td><td>Position of the last active preset (0 if none).</td></tr>
+  <tr><td>UI_STATE</td><td>Used by the Shower page. Not for programming.</td></tr>
+</table>
+<h3>Events</h3>
+<table>
+  <tr><th>Event</th><th>Fires when</th></tr>
+  <tr><td>Shower Started</td><td>The water turns on.</td></tr>
+  <tr><td>Shower Ready</td><td>The water reaches the set temperature. Good for an announcement in the bedroom.</td></tr>
+  <tr><td>Shower Stopped</td><td>The water turns off.</td></tr>
+</table>
+<p>Events fire on changes only, never on the first status after the driver loads. Because the shower is checked every 4 s
+while running, an event can arrive up to about 4 s after the change.</p>
+
+<h2>Check on the first install</h2>
+<p>These parts are built on what's known about Moen's service but haven't been run on a real shower yet:</p>
+<ul>
+  <li><b>Pause when ready from a keypad.</b> Start a preset from a key, confirm the water stops at temperature and the key turns green,
+      then confirm Resume starts it. Also open the preset in the Moen app afterwards and check whether "pause when ready" is now saved
+      on the preset itself. If it is, set <b>Keypad Pause When Ready</b> to No and turn the setting on in the app instead.</li>
+  <li><b>Paused at temperature</b> state (the Resume button, green LED while paused). Moen calls this mode <code>paused-by-preset</code>; it hasn't been seen live.</li>
+  <li><b>Key bindings.</b> The key handling is the same as other AnacommSystems keypad drivers, but hasn't been bound to this driver yet.</li>
+</ul>
+
+<h2>Troubleshooting</h2>
+<table>
+  <tr><th>Problem</th><th>What to do</th></tr>
+  <tr><td>No Shower tile in Navigator</td><td>Check the room's Navigator settings in Composer, then refresh Navigators. The package must be named exactly <code>moenshower.c4z</code>; Navigator hides the tile if the page can't be found.</td></tr>
+  <tr><td>Page shows "Can't reach the shower"</td><td>Check Cloud Status and Pusher Status. A wrong password shows as an authenticate error and retries every 15 s.</td></tr>
+  <tr><td>Page looks out of date after an update</td><td>Web Page Status says <i>PAGE IS STALE</i>. Close the Control4 app completely and reopen it.</td></tr>
+  <tr><td>Page says "Connecting" forever</td><td>Set Log Mode to Print, reopen the page, and check the Lua tab for <code>UI_HELLO</code>. If it never appears, the page isn't reaching the driver.</td></tr>
+  <tr><td>A key does nothing</td><td>Set Log Mode to Print and tap it. The Lua tab says why (for example, another preset is running, or the preset position doesn't exist).</td></tr>
+  <tr><td>Key LED stays dark</td><td>Run Repaint Key LEDs. If that doesn't help, unbind and rebind the button.</td></tr>
+  <tr><td>Water turns on, then straight off</td><td>Old Composer programming on the same button is also firing. Remove it.</td></tr>
+  <tr><td>Commands are slow or missed</td><td>Pusher Status must read Connected / subscribed. Commands sent before that wait up to 10 s, then are dropped and logged.</td></tr>
+</table>
+
+<h2>Version history</h2>
+<table>
+  <tr><th>Version</th><th>Changes</th></tr>
+  <tr><td>301</td><td>Keypad Preset Keys 1&ndash;4 and Shower Key with LED status; Keypad Pause When Ready; this documentation.</td></tr>
+  <tr><td>300</td><td>Shower tile and page in Navigator (replaces the thermostat device); variables and events; faster checks while running. New package name moenshower.c4z.</td></tr>
+  <tr><td>200&ndash;204</td><td>Thermostat device with Extras buttons.</td></tr>
+  <tr><td>102 and earlier</td><td>Pool device; light devices; bridge version.</td></tr>
+</table>
+
+</body>
+</html>
