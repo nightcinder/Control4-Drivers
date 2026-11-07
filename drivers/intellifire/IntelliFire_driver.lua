@@ -242,9 +242,9 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "201"
-PAGE_FILE  = 'fireplace1.html'   -- renamed every page release (Navigator caches controller:// pages)
-PAGE_BUILD = '1'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
+DRIVER_VERSION = "202"
+PAGE_FILE  = 'fireplace2.html'   -- renamed every page release (Navigator caches controller:// pages)
+PAGE_BUILD = '2'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 
 -- ===================== Globals / Config ============================
 g_ip         = "0.0.0.0"
@@ -934,7 +934,7 @@ function FireplaceProxyCommand(cmd, p)
 	end
 end
 
--- ===================== Web view (uibutton proxy + www/fireplace1.html) ============================
+-- ===================== Web view (uibutton proxy + www/fireplace2.html) ============================
 -- Navigator opens PAGE_FILE. The page reads UI_STATE (JSON snapshot) and sends
 -- parameter-free UI_* commands, which reach ExecuteCommand and are dispatched
 -- through EC. Opening the page or tapping the tile never performs an action.

@@ -65,7 +65,7 @@
 <script>
 (function () {
   "use strict";
-  var PAGE_BUILD = "1";              // must match PAGE_BUILD in the driver Lua
+  var PAGE_BUILD = "2";              // must match PAGE_BUILD in the driver Lua
   var S = null, lastSeq = null, gotState = false, pending = {};
   var hasC4 = typeof window.C4 !== "undefined" && window.C4 && typeof window.C4.sendCommand === "function";
   var $ = function (id) { return document.getElementById(id); };
@@ -183,7 +183,7 @@
   var P = null;
   function preview(cmd) {
     if (!P) {
-      P = { t: "ifire", seq: 0, build: PAGE_BUILD, version: "200", online: true, power: 0, pilot: 0, level: 3 };
+      P = { t: "ifire", seq: 0, build: PAGE_BUILD, version: "202", online: true, power: 0, pilot: 0, level: 3 };
     }
     if (cmd === "UI_POWER_ON") { P.power = 1; }
     else if (cmd === "UI_POWER_OFF") { P.power = 0; }
