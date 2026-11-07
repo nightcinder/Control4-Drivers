@@ -46,7 +46,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "min_f": 80,
     "max_f": 120,
     "poll_interval": 5,
-    "write_heater_active_on_start": False,
+    "write_heater_active_on_start": True,
     "presets": [
         {"n": 1, "title": "Hot", "temp_f": 117, "outlets": [1, 2]},
         {"n": 2, "title": "Comfortable", "temp_f": 108, "outlets": [1, 2]},
@@ -433,9 +433,10 @@ class Bridge:
     async def _start_water(self) -> None:
         """SAFETY: the ONLY code that writes faucet-active = 1 (water on).
 
-        Called only from the 'on' and 'preset' commands. UNVERIFIED on real
-        hardware: whether iid 9 alone is enough. The heater write (iid 12) is
-        optional and controlled by write_heater_active_on_start.
+        Called only from the 'on' and 'preset' commands. The heater Active
+        write (iid 12) is REQUIRED for the shower to start: writing iid 9
+        alone does not start water. Verified on real hardware 2026-11-07.
+        Controlled by write_heater_active_on_start (default true).
         """
         if self.cfg["write_heater_active_on_start"]:
             await self.backend.write(IID_HEATER_ACTIVE, 1, "heater active on start")

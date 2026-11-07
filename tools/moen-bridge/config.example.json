@@ -7,7 +7,7 @@
   "min_f": 80,
   "max_f": 120,
   "poll_interval": 5,
-  "write_heater_active_on_start": false,
+  "write_heater_active_on_start": true,
   "presets": [
     {"n": 1, "title": "Hot", "temp_f": 117, "outlets": [1, 2]},
     {"n": 2, "title": "Comfortable", "temp_f": 108, "outlets": [1, 2]}

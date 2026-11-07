@@ -45,3 +45,10 @@ python test_mock_client.py --port 8799
 Each command gets a fresh `state` line, or an `error` line.
 `get_state`, `on`, `off`, `set_temp`, `outlet`, `preset`, `set_preset`.
 Water only starts from `on` or `preset`.
+
+## Config: write_heater_active_on_start
+
+Default: `true`. Starting the shower requires both the Faucet Active
+characteristic (iid 9) and the heater Active characteristic (iid 12) set to 1.
+Writing iid 9 alone does not start the water. Verified on real hardware
+2026-11-07. Leave this `true`; set it to `false` only for testing.
