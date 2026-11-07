@@ -71,16 +71,20 @@
 <script>
 (function () {
   "use strict";
-  var PAGE_BUILD = "2";              // must match PAGE_BUILD in the driver Lua
+  var PAGE_BUILD = "3";              // must match PAGE_BUILD in the driver Lua
   var S = null, lastSeq = null, gotState = false, pending = {};
   var hasC4 = typeof window.C4 !== "undefined" && window.C4 && typeof window.C4.sendCommand === "function";
   var $ = function (id) { return document.getElementById(id); };
 
-  // Pending marks debounce double taps. Each one expires on its own (see interval below).
-  var MODE_CMDS = ["UI_POWER_ON", "UI_POWER_OFF", "UI_SET_PILOT"];
+  // Light double-tap guard only: the same command is ignored for 700 ms after it is sent.
+  // Nothing else is blocked, and no control is greyed out because a command is in flight.
+  var lastSentAt = 0;   // time of the latest send; cleared when a newer snapshot arrives or after 4 s
 
   function send(cmd) {
-    pending[cmd] = Date.now() + 8000;
+    var t = Date.now();
+    if (pending[cmd] && pending[cmd] > t) return;
+    pending[cmd] = t + 700;
+    lastSentAt = t;
     if (hasC4) { try { window.C4.sendCommand(cmd, "{}", false, true); } catch (e) {} }
     else { preview(cmd); }
     render();
@@ -115,6 +119,7 @@
       lastSeq = st.seq;
       gotState = true;
       S = st;
+      lastSentAt = 0;
       render();
       return;
     }
@@ -148,7 +153,7 @@
     var online = !!S.online, mode = currentMode();
     var level = Math.max(1, Math.min(5, S.level || 1));
     var now = Date.now();
-    var modeBusy = MODE_CMDS.some(function (c) { return pending[c] > now; });
+    var sending = lastSentAt > 0 && now - lastSentAt < 4000;
 
     $("banner").className = "banner" + (online ? "" : " show");
     $("banner").textContent = online ? "" : "Fireplace offline. Controls return when it reconnects.";
@@ -166,16 +171,16 @@
       var active = (m === mode);
       segs[i].className = active ? "act-" + m : "";
       segs[i].setAttribute("aria-pressed", active ? "true" : "false");
-      segs[i].disabled = !online || modeBusy;
+      segs[i].disabled = !online;
     }
 
-    $("hint").textContent = mode === "on" ? "Tap a level to change the flame height." :
-                                             "Set the mode to On to choose a flame level.";
+    $("hint").textContent = sending ? "Sending..." : (mode === "on" ? "Tap a level to change the flame height." :
+                                             "Set the mode to On to choose a flame level.");
     var btns = $("levels").querySelectorAll("button");
     for (var j = 0; j < btns.length; j++) {
       var n = +btns[j].getAttribute("data-n");
       btns[j].className = (mode === "on" && n === level) ? "cur" : "";
-      btns[j].disabled = !online || mode !== "on" || modeBusy;
+      btns[j].disabled = !online || mode !== "on";
     }
   }
 
@@ -198,6 +203,7 @@
   setInterval(function () {
     var now = Date.now(), changed = false;
     for (var c in pending) if (pending[c] < now) { delete pending[c]; changed = true; }
+    if (lastSentAt && now - lastSentAt >= 4000) { lastSentAt = 0; changed = true; }
     if (changed) render();
   }, 1000);
 
@@ -207,13 +213,14 @@
   var P = null;
   function preview(cmd) {
     if (!P) {
-      P = { t: "ifire", seq: 0, build: PAGE_BUILD, version: "202", online: true, power: 0, pilot: 0, level: 3 };
+      P = { t: "ifire", seq: 0, build: PAGE_BUILD, version: "203", online: true, power: 0, pilot: 0, level: 3 };
     }
     if (cmd === "UI_POWER_ON") { P.power = 1; P.pilot = 1; }
     else if (cmd === "UI_POWER_OFF") { P.power = 0; P.pilot = 0; }
     else if (cmd === "UI_SET_PILOT") { P.power = 0; P.pilot = 1; }
     else if (cmd.indexOf("UI_FLAME_") === 0 && P.power === 1) { P.level = +cmd.slice(9); }
     P.seq++;
+    lastSentAt = 0;
     S = { t: "ifire", seq: P.seq, build: P.build, version: P.version, online: P.online,
           power: P.power, pilot: P.pilot, level: P.level };
     render();
