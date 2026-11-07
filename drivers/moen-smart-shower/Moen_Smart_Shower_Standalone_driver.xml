@@ -6,17 +6,26 @@
 	<model>TS3302 / TS3304 / S3102 / S3104 Digital Shower Valve + Controller</model>
 	<created>08/16/2026 12:00 PM</created>
 	<modified>11/07/2026 03:45 PM</modified>
-	<version>207</version>
+	<version>208</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
-	<templatedescription>Moen Smart Shower (U by Moen) - Local TCP bridge or direct cloud control, Thermostat + Extras proxy (v207)</templatedescription>
+	<templatedescription>Moen Smart Shower (U by Moen) - Local TCP bridge or direct cloud control, Thermostat + Extras proxy (v208)</templatedescription>
 	<search_types>
 		<type>Moen:shower:UbyMoen</type>
 	</search_types>
 
+	<!--
+		v208 - Bridge link moved to the Control4 TCPClient API. v206-v207 used
+		C4:SendToNetwork on dynamic binding 7001: the socket connected and state
+		lines arrived, but nothing the driver sent reached the bridge. Binding
+		7001 stays in this file (removing it forces a project rework) but is no
+		longer used for the bridge. Every bridge write logs its result, and a
+		command with no live client logs "Bridge not connected; command dropped".
+		UNTESTED ON CONTROL4 HARDWARE AT THE TIME OF THIS EDIT.
+	-->
 	<!--
 		VERSIONING NOTE (per this project's convention): bump <version> above
 		on every future edit to this file's Lua/XML behavior; the file name

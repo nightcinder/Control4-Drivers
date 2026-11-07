@@ -6,13 +6,13 @@
 	<model>Moen Smart Shower</model>
 	<created>08/16/2026 12:00 PM</created>
 	<modified>11/07/2026 03:45 PM</modified>
-	<version>304</version>
+	<version>305</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
-	<templatedescription>Moen Smart Shower (U by Moen) - Local TCP bridge or direct cloud control, custom Navigator web view and keypad preset keys (v304)</templatedescription>
+	<templatedescription>Moen Smart Shower (U by Moen) - Local TCP bridge or direct cloud control, custom Navigator web view and keypad preset keys (v305)</templatedescription>
 	<search_types>
 		<type>Moen:shower:UbyMoen</type>
 	</search_types>
@@ -53,6 +53,15 @@
 		Port closes the old socket first. Every UI command is logged ("UI cmd
 		X") and refused with a reason when the bridge is not up. Page unchanged
 		(shower2.html, build 2).
+	-->
+	<!--
+		v305 - Bridge link moved to the Control4 TCPClient API. v302-v304 used
+		C4:SendToNetwork on dynamic binding 7001: the socket connected and state
+		lines arrived, but nothing the driver sent reached the bridge. Binding
+		7001 stays in this file (removing it forces a project rework) but is no
+		longer used for the bridge. Every bridge write logs its result, and a
+		command with no live client logs "Bridge not connected; command dropped".
+		UNTESTED ON CONTROL4 HARDWARE AT THE TIME OF THIS EDIT.
 	-->
 	<proxies qty="1">
 		<proxy proxybindingid="5001" name="Shower" primary="True" image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png">uibutton</proxy>
