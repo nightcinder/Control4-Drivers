@@ -5,14 +5,14 @@
 	<name>moenshower</name>
 	<model>Moen Smart Shower</model>
 	<created>08/16/2026 12:00 PM</created>
-	<modified>11/07/2026 03:29 PM</modified>
-	<version>303</version>
+	<modified>11/07/2026 03:45 PM</modified>
+	<version>304</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
-	<templatedescription>Moen Smart Shower (U by Moen) - Local TCP bridge or direct cloud control, custom Navigator web view and keypad preset keys (v303)</templatedescription>
+	<templatedescription>Moen Smart Shower (U by Moen) - Local TCP bridge or direct cloud control, custom Navigator web view and keypad preset keys (v304)</templatedescription>
 	<search_types>
 		<type>Moen:shower:UbyMoen</type>
 	</search_types>
@@ -45,6 +45,14 @@
 		v302 - Local Bridge transport (default) or Moen Cloud, as in the
 		standalone driver v206. Bridge = JSON lines over TCP, port 8765, on
 		dynamic binding 7001. Page renamed to shower2.html.
+	-->
+	<!--
+		v304 - Local Bridge mode no longer depends on Moen cloud state: the
+		keypad cloud guard is gone, online/linked come from the bridge link
+		and shower_connected only. Changing Transport, Bridge Host or Bridge
+		Port closes the old socket first. Every UI command is logged ("UI cmd
+		X") and refused with a reason when the bridge is not up. Page unchanged
+		(shower2.html, build 2).
 	-->
 	<proxies qty="1">
 		<proxy proxybindingid="5001" name="Shower" primary="True" image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png">uibutton</proxy>

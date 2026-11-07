@@ -185,7 +185,7 @@ WebSocket = require ('drivers-common-public.module.websocket')
 
 -- ===================== Constants ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "303"
+DRIVER_VERSION = "304"
 API_BASE_URL       = 'https://www.moen-iot.com'
 API_AUTHENTICATE   = '/v2/authenticate'
 API_CREDENTIALS    = '/v3/credentials'
@@ -279,6 +279,7 @@ function OnDriverLateInit ()
 end
 
 function OnDriverDestroyed ()
+	Bridge_Stop ()
 	CancelTimer ('MoenPollTimer')
 	CancelTimer ('MoenAuthRetryTimer')
 	CancelTimer ('MoenWSReconnectTimer')
@@ -881,9 +882,9 @@ function BuildUIState ()
 		t = 'moen',
 		seq = g_uiSeq,
 		build = PAGE_BUILD,
-		online = (g_online and (IsBridge () or g_cloudAuthenticated)) and true or false,
+		online = (IsBridge () and OnlineNow ()) or (not IsBridge () and g_online and g_cloudAuthenticated) or false,
 		configured = (IsBridge () and g_bridgeHost ~= '') or (g_email ~= '' and g_password ~= ''),
-		linked = (IsBridge () and g_bridgeLinked or g_wsSubscribed) and true or false,
+		linked = ((IsBridge () and g_bridgeLinked) or (not IsBridge () and g_wsSubscribed)) and true or false,
 		err = g_lastError or '',
 		name = g_device.name or '',
 		mode = g_device.mode or 'unknown',
@@ -968,6 +969,9 @@ g_bridgeWanted  = false
 g_bridgeLinked  = false
 g_bridgeBuffer  = ''
 g_bridgeBackoff = BRIDGE_RECONNECT_FIRST
+g_bridgeOpen    = false    -- v304: a NetConnect is outstanding or live on BRIDGE_BINDING
+g_bridgeConnHost = ''      -- v304: host/port the open socket was made with (not the current props)
+g_bridgeConnPort = nil
 
 function IsBridge ()
 	return (g_transport == 'Local Bridge')
@@ -986,6 +990,13 @@ function OnlineNow ()
 	return g_cloudAuthenticated
 end
 
+-- v304: Local Bridge needs only the TCP link to the bridge; Moen cloud auth,
+-- email/password and the websocket are never consulted in that mode.
+function ControlsAvailable ()
+	if (IsBridge ()) then return OnlineNow () end
+	return g_cloudAuthenticated
+end
+
 function Bridge_Start ()
 	g_bridgeWanted = true
 	if (g_bridgeHost == nil or g_bridgeHost == '') then
@@ -995,12 +1006,31 @@ function Bridge_Start ()
 	Bridge_Connect ()
 end
 
+-- v304: closes whatever socket this driver opened, on the host/port it was
+-- opened with. Runs on every teardown (property change, reconnect, stop), not
+-- only when linked, so a half-open connect is closed too.
+function Bridge_CloseSocket ()
+	if (g_bridgeOpen and g_bridgeConnPort ~= nil) then
+		LOG ('Bridge: closing socket to ' .. tostring (g_bridgeConnHost) .. ':' .. tostring (g_bridgeConnPort))
+		pcall (function () C4:NetDisconnect (BRIDGE_BINDING, g_bridgeConnPort) end)
+	end
+	g_bridgeOpen = false
+	g_bridgeConnPort = nil
+	g_bridgeLinked = false
+	g_bridgeBuffer = ''
+end
+
 function Bridge_Connect ()
 	if (not g_bridgeWanted or g_bridgeHost == '') then return end
 	CancelTimer ('MoenBridgeReconnect')
+	-- v304: never leave a second socket open next to the new one.
+	Bridge_CloseSocket ()
 	g_bridgeBuffer = ''
 	OCS [BRIDGE_BINDING] = Bridge_OnConnectionStatus
 	RFN [BRIDGE_BINDING] = Bridge_OnData
+	g_bridgeConnHost = g_bridgeHost
+	g_bridgeConnPort = g_bridgePort
+	g_bridgeOpen = true
 	C4:CreateNetworkConnection (BRIDGE_BINDING, g_bridgeHost, 'TCP')
 	C4:NetConnect (BRIDGE_BINDING, g_bridgePort)
 	Bridge_SetStatus ('Connecting to ' .. g_bridgeHost .. ':' .. tostring (g_bridgePort))
@@ -1009,13 +1039,9 @@ end
 function Bridge_Stop ()
 	g_bridgeWanted = false
 	CancelTimer ('MoenBridgeReconnect')
-	if (g_bridgeLinked and g_bridgeHost ~= '') then
-		pcall (function () C4:NetDisconnect (BRIDGE_BINDING, g_bridgePort) end)
-	end
+	Bridge_CloseSocket ()
 	OCS [BRIDGE_BINDING] = nil
 	RFN [BRIDGE_BINDING] = nil
-	g_bridgeLinked = false
-	g_bridgeBuffer = ''
 	g_bridgeBackoff = BRIDGE_RECONNECT_FIRST
 end
 
@@ -1027,6 +1053,10 @@ function Bridge_ScheduleReconnect ()
 end
 
 function Bridge_OnConnectionStatus (idBinding, nPort, strStatus)
+	if (nPort ~= nil and g_bridgeConnPort ~= nil and nPort ~= g_bridgeConnPort) then
+		LOG ('Bridge: ignored ' .. tostring (strStatus) .. ' from stale port ' .. tostring (nPort))
+		return
+	end
 	if (strStatus == 'ONLINE') then
 		g_bridgeLinked = true
 		g_bridgeBackoff = BRIDGE_RECONNECT_FIRST
@@ -1035,6 +1065,7 @@ function Bridge_OnConnectionStatus (idBinding, nPort, strStatus)
 		Bridge_Send ({ cmd = 'get_state' })
 	else
 		g_bridgeLinked = false
+		g_bridgeOpen = false
 		g_bridgeBuffer = ''
 		NotifyOnline (false)
 		if (g_bridgeWanted) then Bridge_ScheduleReconnect () end
@@ -1043,6 +1074,7 @@ end
 
 -- Line buffering: TCP delivers arbitrary chunks; split on \n only.
 function Bridge_OnData (idBinding, nPort, strData)
+	if (nPort ~= nil and g_bridgeConnPort ~= nil and nPort ~= g_bridgeConnPort) then return end
 	g_bridgeBuffer = g_bridgeBuffer .. (strData or '')
 	if (#g_bridgeBuffer > 65536) then g_bridgeBuffer = '' end
 	while (true) do
@@ -1111,7 +1143,8 @@ function Bridge_Send (tCmd)
 	end
 	local ok, s = pcall (function () return C4:JsonEncode (tCmd) end)
 	if (not ok or s == nil) then return false end
-	C4:SendToNetwork (BRIDGE_BINDING, g_bridgePort, s .. '\n')
+	LOG ('Bridge cmd sent: ' .. tostring (tCmd.cmd) .. ' ' .. s)
+	C4:SendToNetwork (BRIDGE_BINDING, g_bridgeConnPort or g_bridgePort, s .. '\n')
 	return true
 end
 
@@ -1353,8 +1386,8 @@ function KeyStop (why)
 end
 
 function KeyStartPreset (position)
-	if (not g_cloudAuthenticated) then
-		LOG ('Key ignored: not connected to Moen')
+	if (not ControlsAvailable ()) then
+		LOG ('Key ignored: ' .. (IsBridge () and 'bridge not connected or shower not reachable' or 'not connected to Moen'))
 		return
 	end
 	local found = false
@@ -1508,6 +1541,31 @@ for b = 1, 99 do
 			print ('[MoenShowerSA] PAGE IS STALE: page build ' .. b .. ', driver expects ' .. PAGE_BUILD)
 		end
 		PublishUI ()
+	end
+end
+
+-- v304: every UI_* command is logged on arrival. In Local Bridge mode a
+-- command is refused (and logged with the reason) while the bridge link or
+-- the shower is not up, instead of being dropped silently. UI_HELLO,
+-- UI_REFRESH and the state publish are never gated.
+for name, fn in pairs (EC) do
+	if (string.sub (name, 1, 3) == 'UI_' and type (fn) == 'function'
+		and name ~= 'UI_REFRESH' and string.sub (name, 1, 8) ~= 'UI_HELLO') then
+		EC [name] = function (tParams)
+			LOG ('UI cmd ' .. name)
+			if (IsBridge () and not ControlsAvailable ()) then
+				LOG ('UI cmd ' .. name .. ' ignored: bridge linked=' .. tostring (g_bridgeLinked) ..
+					' shower_connected=' .. tostring (g_device.shower_connected))
+				PublishUI ()
+				return
+			end
+			return fn (tParams)
+		end
+	elseif (string.sub (name, 1, 3) == 'UI_' and type (fn) == 'function') then
+		EC [name] = function (tParams)
+			LOG ('UI cmd ' .. name)
+			return fn (tParams)
+		end
 	end
 end
 

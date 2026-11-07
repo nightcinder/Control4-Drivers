@@ -5,14 +5,14 @@
 	<name>Moen Smart Shower (U by Moen) - Standalone</name>
 	<model>TS3302 / TS3304 / S3102 / S3104 Digital Shower Valve + Controller</model>
 	<created>08/16/2026 12:00 PM</created>
-	<modified>11/07/2026 01:00 PM</modified>
-	<version>206</version>
+	<modified>11/07/2026 03:45 PM</modified>
+	<version>207</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
-	<templatedescription>Moen Smart Shower (U by Moen) - Local TCP bridge or direct cloud control, Thermostat + Extras proxy (v206)</templatedescription>
+	<templatedescription>Moen Smart Shower (U by Moen) - Local TCP bridge or direct cloud control, Thermostat + Extras proxy (v207)</templatedescription>
 	<search_types>
 		<type>Moen:shower:UbyMoen</type>
 	</search_types>
