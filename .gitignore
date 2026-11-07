@@ -1,2 +1,2 @@
-# Build output from tools/build_c4z.py
-dist/
+﻿# Build output now lives in c4z/ and is committed on purpose
+
