@@ -242,9 +242,9 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "202"
-PAGE_FILE  = 'fireplace2.html'   -- renamed every page release (Navigator caches controller:// pages)
-PAGE_BUILD = '2'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
+DRIVER_VERSION = "203"
+PAGE_FILE  = 'fireplace3.html'   -- renamed every page release (Navigator caches controller:// pages)
+PAGE_BUILD = '3'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 
 -- ===================== Globals / Config ============================
 g_ip         = "0.0.0.0"
@@ -277,6 +277,9 @@ g_desiredPower      = nil
 g_desiredHeight     = nil
 g_restoreHeight    = nil   -- v202: flame height to re-apply once a poll confirms power on
 g_lastHeight       = nil   -- v202: last flame height 0-4 seen while ON (persisted as lastHeight)
+g_igniting        = false -- v203: true from a Heat command until a poll confirms power on
+g_pendingFlame    = nil   -- v203: flame height waiting for the debounce timer
+g_flameDebounceId = nil   -- v203: one-shot timer id for the flame debounce
 g_reconcileAttempts = 0
 MAX_RECONCILE_ATTEMPTS  = 14   -- ~1.5s + 13*2s =~ 27.5s of retrying before giving up
 RECONCILE_RETRY_MS      = 2000
@@ -673,6 +676,30 @@ function OnReconcilePollTimer(idTimer)
 	QueuePoll()
 end
 
+-- v203: cancel any queued flame height (debounce timer and pending height).
+-- Called by every path that turns the fireplace off so nothing fires afterward.
+function CancelPendingFlame()
+	if (g_flameDebounceId ~= nil) then
+		pcall(function() C4:KillTimer(g_flameDebounceId) end)
+	end
+	g_flameDebounceId = nil
+	g_pendingFlame = nil
+	g_restoreHeight = nil
+end
+
+-- v203: fires once, 700 ms after the last flame tap, and sends only that height.
+function OnFlameDebounceTimer(idTimer)
+	g_flameDebounceId = nil
+	local h = g_pendingFlame
+	g_pendingFlame = nil
+	if (h == nil or g_state.power ~= 1) then return end
+	LOG("Sending debounced flame_height " .. tostring(h))
+	g_desiredPower = 1
+	g_desiredHeight = h
+	SendFireplaceCommand("flame_height", h)
+	ScheduleReconcilePoll()
+end
+
 -- /poll returns a flat JSON object. Rather than pull in a general JSON
 -- parser, this pulls known numeric/string fields out with simple patterns -
 -- same philosophy as the field-based parsing in this project's Haiku driver.
@@ -696,6 +723,8 @@ function OnPollResponse(statusCode, body)
 	local power  = JsonNumberField(body, "power")
 	local pilot  = JsonNumberField(body, "pilot")
 	local height = JsonNumberField(body, "height")
+	-- v203: ignition is over once a poll confirms power on. Cleared before the restore block below runs.
+	if (power == 1) then g_igniting = false end
 
 	-- Still waiting to confirm a recently-issued command? Don't let a poll
 	-- that hasn't caught up yet (hardware still igniting/purging) stomp the
@@ -717,6 +746,7 @@ function OnPollResponse(statusCode, body)
 				return
 			else
 				LOG("Gave up waiting for hardware to confirm the last command - showing real state")
+				g_igniting = false
 				g_desiredPower = nil
 				g_desiredHeight = nil
 			end
@@ -924,13 +954,15 @@ function FireplaceProxyCommand(cmd, p)
 			g_restoreHeight = g_lastHeight
 			if (g_lastHeight ~= nil) then g_state.height = g_lastHeight end
 			NotifyRelayState(false)
+			g_igniting = true
 			TurnFlameOn()
 		else -- "Off" (or anything unrecognized - fail safe to off)
 			g_state.power = 0
 			g_state.pilot = 0
 			g_desiredPower = 0
 			g_desiredHeight = nil
-			g_restoreHeight = nil
+			g_igniting = false
+			CancelPendingFlame()
 			NotifyRelayState(false)
 			SendFireplaceCommand("power", 0)
 			SendFireplaceCommand("pilot", 0)
@@ -976,7 +1008,7 @@ function FireplaceProxyCommand(cmd, p)
 	end
 end
 
--- ===================== Web view (uibutton proxy + www/fireplace2.html) ============================
+-- ===================== Web view (uibutton proxy + www/fireplace3.html) ============================
 -- Navigator opens PAGE_FILE. The page reads UI_STATE (JSON snapshot) and sends
 -- parameter-free UI_* commands, which reach ExecuteCommand and are dispatched
 -- through EC. Opening the page or tapping the tile never performs an action.
@@ -1056,7 +1088,8 @@ EC["UI_PILOT_OFF"] = function ()
 	g_state.power = 0
 	g_state.pilot = 0
 	g_desiredPower = 0
-	g_restoreHeight = nil
+	g_igniting = false
+	CancelPendingFlame()
 	NotifyRelayState(false)
 	SendFireplaceCommand("power", 0)
 	SendFireplaceCommand("pilot", 0)
@@ -1069,7 +1102,8 @@ EC["UI_SET_PILOT"] = function ()
 		g_state.power = 0
 		g_state.pilot = 1
 		g_desiredPower = 0
-		g_restoreHeight = nil
+		g_igniting = false
+		CancelPendingFlame()
 		NotifyRelayState(false)
 		SendFireplaceCommand("power", 0)
 	else
@@ -1091,12 +1125,20 @@ for n = 1, 5 do
 		end
 		local h = n - 1
 		g_state.height = h
-		g_desiredPower = 1
-		g_desiredHeight = h
-		g_restoreHeight = nil
 		SetLastHeight(h)
 		NotifyRelayState(false)
-		SendFireplaceCommand("flame_height", h)
+		if (g_igniting) then
+			-- v203: ignition in progress. The restore block in OnPollResponse applies this height once a poll confirms power on.
+			g_restoreHeight = h
+			LOG("UI_FLAME_" .. n .. " queued until ignition completes")
+			return
+		end
+		-- v203: debounce. Taps within 700 ms collapse into one flame_height send, the last one.
+		g_pendingFlame = h
+		if (g_flameDebounceId ~= nil) then
+			pcall(function() C4:KillTimer(g_flameDebounceId) end)
+		end
+		g_flameDebounceId = C4:AddTimer(700, "MILLISECONDS", false, "OnFlameDebounceTimer")
 	end
 end
 
