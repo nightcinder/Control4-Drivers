@@ -312,9 +312,185 @@ def run_unit_checks(tmpdir: str) -> None:
           "config: default current_temp_source is poll")
 
 
+async def run_device_command_checks(tmpdir: str) -> None:
+    """In-process checks of the state-aware device commands. Every write is recorded, none is sent."""
+    print("device commands (in-process, every HomeKit write recorded)")
+    import logging
+    sys.path.insert(0, HERE)
+    import moen_bridge as mb
+
+    class Recording(mb.MockShower):
+        def __init__(self, cfg: dict[str, Any]) -> None:
+            super().__init__(cfg)
+            self.writes: list[tuple[int, Any]] = []
+            self.fail: dict[int, str] = {}        # iid -> HomeKit status raised on its next write
+            self.on_fail: Callable[[int], None] | None = None
+
+        async def _write(self, iid: int, value: Any) -> None:
+            self.writes.append((iid, value))
+            if iid in self.fail:
+                status = self.fail.pop(iid)
+                if self.on_fail is not None:
+                    self.on_fail(iid)
+                raise mb.BackendError(status)
+            await super()._write(iid, value)
+
+    class Capture(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__(level=logging.INFO)
+            self.lines: list[tuple[int, str]] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.lines.append((record.levelno, record.getMessage()))
+
+    def setup(values: dict[int, Any]) -> tuple[Any, Any]:
+        cfg = copy.deepcopy(mb.DEFAULT_CONFIG)
+        cfg.update({
+            "min_f": 80, "max_f": 120, "write_heater_active_on_start": True,
+            "presets": [
+                {"n": 1, "title": "Hot", "temp_f": 117, "outlets": [1, 2]},
+                {"n": 2, "title": "Comfortable", "temp_f": 108, "outlets": [1, 2]},
+                {"n": 3, "title": "Side", "temp_f": 100, "outlets": [2]},
+            ],
+        })
+        b = Recording(cfg)
+        b.connected = True
+        b.values = dict(values)
+        return b, mb.Bridge(cfg, os.path.join(tmpdir, "device-cmds.json"), b)
+
+    def shower(on: bool, target_f: int, outlets: tuple[bool, bool]) -> dict[int, Any]:
+        return {mb.IID_FAUCET_ACTIVE: on, mb.IID_HEATER_ACTIVE: on,
+                mb.IID_TARGET_TEMP_C: mb.f_to_c(target_f),
+                mb.IID_OUTLET_IID[1]: outlets[0], mb.IID_OUTLET_IID[2]: outlets[1],
+                mb.IID_CURRENT_TEMP_C: mb.f_to_c(95)}
+
+    async def run(br: Any, msg: dict[str, Any]) -> None:
+        await br._execute(msg, "test")
+
+    async def refused(br: Any, msg: dict[str, Any], substr: str, label: str) -> None:
+        try:
+            await br._execute(msg, "test")
+        except mb.CmdError as exc:
+            check(substr in str(exc), f"{label} ({exc})")
+            return
+        check(False, f"{label} (no error raised)")
+
+    T = mb.IID_TARGET_TEMP_C
+    F = mb.IID_FAUCET_ACTIVE
+    H = mb.IID_HEATER_ACTIVE
+    O1 = mb.IID_OUTLET_IID[1]
+    O2 = mb.IID_OUTLET_IID[2]
+
+    print("preset while running")
+    b, br = setup(shower(True, 100, (True, True)))
+    await run(br, {"cmd": "preset", "n": 1})
+    check(b.writes == [(T, mb.f_to_c(117))],
+          f"preset while running, same outlets: only the target temp is written ({b.writes})")
+    check(bool(b.values[F]), "preset while running, same outlets: water still on")
+    b, br = setup(shower(True, 117, (True, True)))
+    await run(br, {"cmd": "preset", "n": 1})
+    check(b.writes == [], f"preset while running, nothing changed: no writes ({b.writes})")
+    b, br = setup(shower(True, 117, (True, False)))
+    await run(br, {"cmd": "preset", "n": 3})
+    check(b.writes == [(T, mb.f_to_c(100)), (O2, 1), (O1, 0)],
+          f"preset while running, outlet switch: new valve opens before old one closes ({b.writes})")
+    check(bool(b.values[F]), "preset while running, outlet switch: water still on")
+
+    print("preset while off")
+    b, br = setup(shower(False, 100, (False, False)))
+    await run(br, {"cmd": "preset", "n": 1})
+    check(b.writes == [(T, mb.f_to_c(117)), (O1, 1), (O2, 1), (H, 1), (F, 1)],
+          f"preset while off: temp, outlets, then heater and water on ({b.writes})")
+    b, br = setup(shower(True, 117, (True, True)))
+    br.cfg["presets"].append({"n": 4, "title": "Empty", "temp_f": 100, "outlets": []})
+    await refused(br, {"cmd": "preset", "n": 4}, "has no outlets",
+                  "preset with no outlets refused while running")
+    check(b.writes == [], "refused preset wrote nothing")
+
+    print("on")
+    b, br = setup(shower(True, 108, (True, True)))
+    await run(br, {"cmd": "on"})
+    check(b.writes == [], f"on while running: no start write, nothing written ({b.writes})")
+    b, br = setup(shower(False, 108, (True, False)))
+    await run(br, {"cmd": "on"})
+    check(b.writes == [(H, 1), (F, 1)], f"on while off: heater then water on ({b.writes})")
+
+    print("set_temp and outlet")
+    b, br = setup(shower(True, 110, (True, True)))
+    await run(br, {"cmd": "set_temp", "f": 110})
+    check(b.writes == [], "set_temp to the current target: no write")
+    await run(br, {"cmd": "set_temp", "f": 105})
+    check(b.writes == [(T, mb.f_to_c(105))], f"set_temp changes only the target ({b.writes})")
+    b.writes.clear()
+    await run(br, {"cmd": "outlet", "n": 1, "on": True})
+    check(b.writes == [], "outlet already on: no write")
+    await run(br, {"cmd": "outlet", "n": 2, "on": False})
+    check(b.writes == [(O2, 0)], f"outlet 2 off while outlet 1 is open: written ({b.writes})")
+    await refused(br, {"cmd": "outlet", "n": 1, "on": False}, "last open outlet",
+                  "closing the last open outlet while running is refused")
+    check(b.writes == [(O2, 0)], "refused outlet wrote nothing")
+
+    print("faucet off is written only by off")
+    b, br = setup(shower(False, 100, (True, True)))
+    await run(br, {"cmd": "preset", "n": 3})          # starts the water, outlet 2 only
+    await run(br, {"cmd": "outlet", "n": 1, "on": True})
+    await run(br, {"cmd": "set_temp", "f": 90})
+    await run(br, {"cmd": "outlet", "n": 2, "on": False})
+    await run(br, {"cmd": "preset", "n": 2})
+    await run(br, {"cmd": "on"})
+    before_off = list(b.writes)
+    check(not any(i == F and not v for i, v in before_off),
+          "no faucet=0 write in any command sent while running")
+    check(bool(b.values[F]), "water still on before off")
+    await run(br, {"cmd": "off"})
+    check(b.writes[len(before_off):] == [(F, 0)],
+          f"off writes faucet 0 and nothing else ({b.writes[len(before_off):]})")
+
+    print("HomeKit errors")
+    cap = Capture()
+    old_level = mb.log.level
+    mb.log.setLevel(logging.INFO)
+    mb.log.addHandler(cap)
+    try:
+        b, br = setup(shower(True, 100, (True, False)))
+        b.fail[T] = "HomeKit status -70410"
+        failed = False
+        try:
+            await run(br, {"cmd": "preset", "n": 1})
+        except mb.BackendError:
+            failed = True
+        check(failed, "a failed write is reported to the client")
+        check(bool(b.values[F]) and (F, 0) not in b.writes, "failed target write while running: water still on")
+        warns = [m for lvl, m in cap.lines if lvl == logging.WARNING]
+        check(any("target temp" in m and "-70410" in m for m in warns),
+              "warning names the characteristic and the status")
+        check(any("wanted preset 1" in m and "state before" in m and "target=" in m for m in warns),
+              "warning carries the wanted state and the state before")
+        check(not any("is OFF now" in m for m in warns), "no water-off warning when the water stayed on")
+
+        cap.lines.clear()
+        b, br = setup(shower(True, 117, (True, False)))
+        b.fail[O1] = "HomeKit status -70410"
+        b.on_fail = lambda iid: b.values.__setitem__(F, False)   # the shower stops during the command
+        failed = False
+        try:
+            await run(br, {"cmd": "preset", "n": 3})   # target 117->100, open outlet 2, close outlet 1 (fails)
+        except mb.BackendError:
+            failed = True
+        check(failed, "a failed outlet write is reported to the client")
+        warns = [m for lvl, m in cap.lines if lvl == logging.WARNING]
+        check(any("is OFF now" in m and "not restarted" in m for m in warns),
+              "water that stopped during the command: warning, no automatic restart")
+        check((F, 1) not in b.writes, "no automatic restart of the water")
+    finally:
+        mb.log.removeHandler(cap)
+        mb.log.setLevel(old_level)
+
+
 async def main_async(port: int) -> None:
     tmpdir = tempfile.mkdtemp(prefix="moen-bridge-test-")
     run_unit_checks(tmpdir)
+    await run_device_command_checks(tmpdir)
     cfg_path = os.path.join(tmpdir, "test-config.json")
     write_config(cfg_path)
     log_path = os.path.join(tmpdir, "bridge.log")

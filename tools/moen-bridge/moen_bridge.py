@@ -29,6 +29,9 @@ IID_HEATER_ACTIVE = 12           # heater active (read/write)
 IID_CURRENT_TEMP_C = 13          # current water temperature, Celsius (read)
 IID_TARGET_TEMP_C = 16           # heating threshold = target temperature, Celsius (read/write)
 IID_OUTLET_IID = {1: 18, 2: 23}  # valve active per outlet (read/write)
+IID_NAMES = {IID_FAUCET_ACTIVE: "faucet active", IID_HEATER_ACTIVE: "heater active",
+             IID_CURRENT_TEMP_C: "current temp", IID_TARGET_TEMP_C: "target temp",
+             IID_OUTLET_IID[1]: "outlet 1 valve", IID_OUTLET_IID[2]: "outlet 2 valve"}
 POLL_IIDS = [9, 12, 13, 16, 18, 23]
 
 HARD_MAX_F = 120                 # absolute ceiling, whatever the config says
@@ -204,17 +207,22 @@ class ShowerBackend:
         try:
             await self._write(iid, value)
         except Exception as exc:
-            log.warning("HomeKit write failed iid=%d: %s", iid, exc)
+            log.warning("HomeKit write failed iid=%d (%s) value=%r [%s]: %s",
+                        iid, IID_NAMES.get(iid, "?"), value, why, exc)
             self._set_connected(False)
             if self._wake is not None:
                 self._wake.set()
-            raise BackendError(str(exc)) from exc
+            raise BackendError(f"{IID_NAMES.get(iid, 'iid')} (iid {iid}): {exc}") from exc
         self._apply({iid: value}, "write")
 
     def request_fast_poll(self) -> None:
         self._fast_until = time.monotonic() + FAST_POLL_WINDOW
         if self._wake is not None:
             self._wake.set()
+
+    async def refresh_state(self) -> None:
+        """Re-read the device state before a command. The mock already holds the truth."""
+        return None
 
     async def _write(self, iid: int, value: Any) -> None:
         raise NotImplementedError
@@ -338,6 +346,17 @@ class HomeKitShower(ShowerBackend):
             for _key, data in res.items():
                 if isinstance(data, dict) and data.get("status", 0) != 0:
                     raise BackendError(f"HomeKit status {data['status']}")
+
+    async def refresh_state(self) -> None:
+        """Fresh read of the polled characteristics, once per command. Failures keep the cache."""
+        if not self.connected:
+            return
+        try:
+            changes = await self._read_all()
+        except Exception as exc:
+            log.warning("state re-read failed, using last known values: %s", exc)
+            return
+        self._apply(changes, "command-poll")
 
     async def _connect(self) -> None:
         await self._ensure_controller()
@@ -482,36 +501,123 @@ class Bridge:
                 return p
         raise CmdError("no such preset")
 
-    async def _apply_settings(self, target_f: int, outlets_on: list[int]) -> None:
-        """Write the target temperature and outlet valves. Never starts the water."""
-        await self.backend.write(IID_TARGET_TEMP_C, f_to_c(self._clamp(target_f)), "target temp")
-        for n, iid in IID_OUTLET_IID.items():
-            await self.backend.write(iid, 1 if n in outlets_on else 0, f"outlet {n}")
+    # ----- device commands (state-aware) -----
+    #
+    # Each device command re-reads the shower (refresh_state, through _guarded) and
+    # writes only the values that differ from it. While the water is running:
+    #   - faucet Active is never written 0 (only the `off` command does that),
+    #   - the water is never restarted,
+    #   - a wanted outlet valve opens before an unwanted one closes, so at least
+    #     one valve is open at all times.
 
-    async def _start_water(self) -> None:
+    def _running(self) -> bool:
+        return bool(self.backend.values.get(IID_FAUCET_ACTIVE))
+
+    def _current_outlets(self) -> list[int]:
+        return [n for n, v in enumerate(self.backend.outlets_on(), 1) if v]
+
+    def _current_target_f(self) -> int | None:
+        target_c = self.backend.values.get(IID_TARGET_TEMP_C)
+        return c_to_f(target_c) if target_c is not None else None
+
+    def _snapshot(self) -> str:
+        return (f"water={'on' if self._running() else 'off'} target={self._current_target_f()}F "
+                f"outlets={self._current_outlets()}")
+
+    async def _guarded(self, label: str, wanted: str, action: Any) -> None:
+        """Re-read the shower, run the command, and report a HomeKit error with full context.
+
+        On an error the state is re-read once. If this command turned the water off, a
+        WARNING says so. The water is never restarted automatically.
+        """
+        await self.backend.refresh_state()
+        was_running = self._running()
+        before = self._snapshot()
+        try:
+            await action()
+        except BackendError as exc:
+            log.warning("%s failed: %s; wanted %s; state before: %s", label, exc, wanted, before)
+            await self.backend.refresh_state()
+            if was_running and not self._running():
+                log.warning("%s: the water was running before this command and is OFF now "
+                            "(not restarted); state now: %s", label, self._snapshot())
+            raise
+
+    async def _set_target(self, target_f: int, label: str) -> None:
+        desired_f = self._clamp(target_f)
+        current_f = self._current_target_f()
+        if current_f == desired_f:
+            log.info("%s: skipping unchanged target temp %dF", label, desired_f)
+            return
+        log.info("%s: writing target temp %s->%dF", label, current_f, desired_f)
+        await self.backend.write(IID_TARGET_TEMP_C, f_to_c(desired_f), f"{label}: target temp")
+
+    async def _set_outlet(self, n: int, on: bool, label: str) -> None:
+        was_on = n in self._current_outlets()
+        if was_on == on:
+            log.info("%s: skipping unchanged outlet %d (already %s)", label, n, "on" if on else "off")
+            return
+        log.info("%s: writing outlet %d %s->%s", label, n,
+                 "on" if was_on else "off", "on" if on else "off")
+        await self.backend.write(IID_OUTLET_IID[n], 1 if on else 0, f"{label}: outlet {n}")
+
+    async def _set_outlets(self, desired: list[int], label: str) -> None:
+        """Open the wanted valves first, then close the unwanted ones."""
+        for n in desired:
+            await self._set_outlet(n, True, label)
+        for n in IID_OUTLET_IID:
+            if n not in desired:
+                await self._set_outlet(n, False, label)
+
+    async def _start_water(self, label: str) -> None:
         """SAFETY: the ONLY code that writes faucet-active = 1 (water on).
 
-        Called only from the 'on' and 'preset' commands. The heater Active
-        write (iid 12) is REQUIRED for the shower to start: writing iid 9
-        alone does not start water. Verified on real hardware 2026-11-07.
-        Controlled by write_heater_active_on_start (default true).
+        Called only from the 'on' and 'preset' commands. It does nothing when the water
+        is already running. The heater Active write (iid 12) is REQUIRED for the shower
+        to start: writing iid 9 alone does not start water. Verified on real hardware
+        2026-11-07. Controlled by write_heater_active_on_start (default true).
         """
+        if self._running():
+            log.info("%s: skipping unchanged water on (already running)", label)
+            return
         if self.cfg["write_heater_active_on_start"]:
-            await self.backend.write(IID_HEATER_ACTIVE, 1, "heater active on start")
-        await self.backend.write(IID_FAUCET_ACTIVE, 1, "WATER ON, explicit on/preset command")
+            await self.backend.write(IID_HEATER_ACTIVE, 1, f"{label}: heater active on start")
+        log.info("%s: writing water on (faucet active) off->on", label)
+        await self.backend.write(IID_FAUCET_ACTIVE, 1, f"{label}: WATER ON")
+
+    async def _apply_program(self, target_f: int, outlets: list[int], label: str) -> None:
+        """Target temperature, then outlet valves, then start the water if it is off."""
+        await self._set_target(target_f, label)
+        await self._set_outlets(sorted({int(n) for n in outlets}), label)
+        await self._start_water(label)
 
     async def _cmd_on(self) -> None:
-        target_c = self.backend.values.get(IID_TARGET_TEMP_C)
-        if target_c is None:
+        target_f = self._current_target_f()
+        if target_f is None:
             raise CmdError("target temperature unknown")
-        outlets_on = [n for n, v in enumerate(self.backend.outlets_on(), 1) if v]
-        await self._apply_settings(c_to_f(target_c), outlets_on)
-        await self._start_water()
+        await self._apply_program(target_f, self._current_outlets(), "on")
 
     async def _cmd_preset(self, msg: dict[str, Any]) -> None:
         p = self._find_preset(msg.get("n"))
-        await self._apply_settings(p["temp_f"], p["outlets"])
-        await self._start_water()
+        if self._running() and not p["outlets"]:
+            raise CmdError(f"preset {p['n']} has no outlets; refusing to close every outlet while running")
+        await self._apply_program(p["temp_f"], p["outlets"], f"preset {p['n']}")
+
+    async def _cmd_set_temp(self, msg: dict[str, Any]) -> None:
+        if not self._running():
+            raise CmdError("shower not running")
+        await self._set_target(self._parse_f(msg.get("f")), "set_temp")
+
+    async def _cmd_outlet(self, msg: dict[str, Any]) -> None:
+        n = msg.get("n")
+        if isinstance(n, bool) or n not in (1, 2):
+            raise CmdError("n must be 1 or 2")
+        on = msg.get("on")
+        if not isinstance(on, bool):
+            raise CmdError("on must be true or false")
+        if not on and self._running() and self._current_outlets() == [n]:
+            raise CmdError("refusing to close the last open outlet while running; use off")
+        await self._set_outlet(n, on, "outlet")
 
     def _cmd_set_preset(self, msg: dict[str, Any]) -> None:
         n = msg.get("n")
@@ -547,24 +653,19 @@ class Bridge:
         if cmd == "get_state":
             return
         if cmd == "on":
-            await self._cmd_on()
+            await self._guarded("on", "current target and outlets, water on", self._cmd_on)
         elif cmd == "off":
+            # SAFETY: the only command that writes faucet Active = 0.
             await self.backend.write(IID_FAUCET_ACTIVE, 0, "water off")
         elif cmd == "set_temp":
-            if not self.backend.values.get(IID_FAUCET_ACTIVE):
-                raise CmdError("shower not running")
-            f = self._parse_f(msg.get("f"))
-            await self.backend.write(IID_TARGET_TEMP_C, f_to_c(f), "set_temp")
+            await self._guarded("set_temp", f"target {msg.get('f')}F",
+                                lambda: self._cmd_set_temp(msg))
         elif cmd == "outlet":
-            n = msg.get("n")
-            if isinstance(n, bool) or n not in (1, 2):
-                raise CmdError("n must be 1 or 2")
-            on = msg.get("on")
-            if not isinstance(on, bool):
-                raise CmdError("on must be true or false")
-            await self.backend.write(IID_OUTLET_IID[n], 1 if on else 0, f"outlet {n}")
+            await self._guarded("outlet", f"outlet {msg.get('n')} on={msg.get('on')}",
+                                lambda: self._cmd_outlet(msg))
         elif cmd == "preset":
-            await self._cmd_preset(msg)
+            await self._guarded("preset", f"preset {msg.get('n')}",
+                                lambda: self._cmd_preset(msg))
         elif cmd == "set_preset":
             self._cmd_set_preset(msg)
         else:

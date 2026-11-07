@@ -45,6 +45,11 @@ python test_mock_client.py --port 8799
 Each command gets a fresh `state` line, or an `error` line.
 `get_state`, `on`, `off`, `set_temp`, `outlet`, `preset`, `set_preset`.
 Water only starts from `on` or `preset`.
+While the water is running, `on`, `preset`, `set_temp` and `outlet` write only the
+values that differ from the shower's current state. A preset never stops the water:
+a new outlet opens before an old one closes, and `outlet` refuses to close the last
+open valve while running. Only `off` writes faucet Active = 0. Every write and every
+skipped value is logged at INFO.
 
 ## Config: write_heater_active_on_start
 
