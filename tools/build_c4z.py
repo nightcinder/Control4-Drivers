@@ -38,6 +38,8 @@ PACKAGE_NAMES = {
     "yale-assure-lock-2": "Yale_AssureLock2",
     "daylight-lighting-scheduler": "daylight_lighting_scheduler",
     "media-remote-bridge-untested": "MediaRemoteBridge",
+    "unifi-controller": "UniFi_Controller",
+    "unifi-outlet": "UniFi_Outlet",
 }
 REQUIRE_COMMON = re.compile(r"^\s*(?:\w+\s*=\s*)?require\s*\(?\s*['\"]drivers-common-public", re.M)
 

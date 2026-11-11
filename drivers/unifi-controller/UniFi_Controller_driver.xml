@@ -1,0 +1,159 @@
+<devicedata>
+	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Ubiquiti or Control4</copyright>
+	<creator>Custom Driver Project</creator>
+	<manufacturer>Ubiquiti</manufacturer>
+	<name>UniFi_Controller</name>
+	<model>UniFi Controller</model>
+	<created>11/11/2026 12:00 PM</created>
+	<modified>11/11/2026 12:00 PM</modified>
+	<version>1</version>
+	<small image_source="c4z">icons/device_sm.png</small>
+	<large image_source="c4z">icons/device_lg.png</large>
+	<control>lua_gen</control>
+	<controlmethod>ip</controlmethod>
+	<driver>DriverWorks</driver>
+	<combo>true</combo>
+	<proxies qty="1">
+		<proxy proxybindingid="5001" name="UniFi Outlets" primary="True" image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png">uibutton</proxy>
+	</proxies>
+	<capabilities />
+	<templatedescription>UniFi Controller - logs in to a UniFi console, polls USP PDU Pro and USP Plug outlets, serves UniFi Outlet child drivers, and shows a web view page of all outlets</templatedescription>
+
+	<connections>
+		<connection>
+			<id>1</id>
+			<facing>6</facing>
+			<connectionname>UniFi Outlets</connectionname>
+			<type>1</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>UNIFI_CONTROLLER</classname>
+				</class>
+			</classes>
+		</connection>
+		<connection>
+			<id>5001</id>
+			<facing>6</facing>
+			<connectionname>UIBUTTON</connectionname>
+			<type>2</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>UIBUTTON</classname>
+				</class>
+			</classes>
+		</connection>
+	</connections>
+
+	<web_view_url proxybindingid="5001">controller://driver/UniFi_Controller/outlets1.html</web_view_url>
+	<mobile_web_view_enabled>true</mobile_web_view_enabled>
+
+	<config>
+		<power_management_method>AlwaysOn</power_management_method>
+		<power_command_delay>0</power_command_delay>
+		<power_delay>0</power_delay>
+		<power_command_needed>False</power_command_needed>
+		<script file="driver.lua" />
+
+		<actions>
+			<action>
+				<name>Refresh Outlets</name>
+				<command>UI_REFRESH</command>
+			</action>
+		</actions>
+
+		<properties>
+			<property>
+				<name>Host</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Port</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>443</default>
+			</property>
+			<property>
+				<name>Controller Type</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<items>
+					<item>Auto</item>
+					<item>UniFi OS</item>
+					<item>Legacy</item>
+				</items>
+				<default>Auto</default>
+			</property>
+			<property>
+				<name>Username</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Password</name>
+				<type>PASSWORD</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Site</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>default</default>
+			</property>
+			<property>
+				<name>Poll Interval Seconds</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>10</minimum>
+				<maximum>3600</maximum>
+				<readonly>false</readonly>
+				<default>30</default>
+			</property>
+			<property>
+				<name>Log Mode</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<items>
+					<item>Off</item>
+					<item>On</item>
+					<item>Debug</item>
+				</items>
+				<default>Off</default>
+			</property>
+			<property>
+				<name>Connection Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Not configured</default>
+			</property>
+			<property>
+				<name>Discovered Outlets</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Web Page Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Driver Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>1.0.0</default>
+			</property>
+		</properties>
+	</config>
+</devicedata>
