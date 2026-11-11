@@ -30,8 +30,8 @@ COMMON_FILES = [
 # Some drivers were first installed in Composer under a different .c4z name than their folder. Composer matches an
 # update to the installed driver by package name (and the XML icon paths use it), so build those under the original name.
 PACKAGE_NAMES = {
-    "haiku-senseme": "Haiku_SenseME_i6",
-    "haiku-senseme-nolight": "Haiku_SenseME_i6_NoLight",
+    "haiku-senseme-fan": "Haiku_SenseME_Fan",
+    "haiku-senseme-light": "Haiku_SenseME_Light",
     "intellifire": "IntelliFire_driver",
     "lifx-lan": "lifx_lan",
     "moen-smart-shower": "Moen_Smart_Shower_Standalone_driver_v200",

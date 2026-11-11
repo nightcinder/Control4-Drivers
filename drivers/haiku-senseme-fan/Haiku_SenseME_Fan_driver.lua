@@ -43,23 +43,20 @@
 ================================================================================]]
 
 -- ===================== Globals / Config ============================
--- HAS_LIGHT_PROXY is a BUILD-TIME flag, not a runtime setting. It must match
--- whether this .c4z's driver.xml actually declares the LIGHT_V2 proxy/
--- connection (proxybindingid 5002). Control4's proxy set is fixed by the XML
--- at device-add time - it cannot be added/removed at runtime - so a fan with
--- no physical light kit needs a SEPARATE driver file with no light proxy at
--- all (see Haiku_SenseME_i6_NoLight.c4z), not a flag flip on this one.
--- This constant guards every C4:SendToProxy(LIGHT_BINDING, ...) call so this
--- same driver.lua source can be shared by both packages without the no-light
--- build throwing errors trying to notify a proxy that doesn't exist.
-HAS_LIGHT_PROXY = true
+-- v400: FAN-ONLY driver. A driver cannot add or remove a proxy at runtime, so the light
+-- lives in a separate optional child driver ("Haiku SenseME Light", light_v2 proxy), one per
+-- fan that has a light kit. The child binds to this driver's "Light Kit Link" connection (5002)
+-- and talks to it with C4:SendToDevice (same pattern as SwitchBot Cloud / Curtain).
+--   child -> fan : HK_REGISTER {CHILD_ID}, HK_LIGHT_CMD {CMD=ON|OFF|TOGGLE|SET_LEVEL, LEVEL}, HK_POLL
+--   fan -> child : HK_LIGHT {POWER, LEVEL, HASLIGHT, ONLINE, FANNAME}, HK_HELLO
+-- The fan keeps the TCP connection, parsing, and light-kit auto-detection (Has Light Kit property).
 
 g_ip          = "0.0.0.0"
 g_name        = ""          -- reported by the fan itself once connected
 g_mac         = ""
 -- g_hasLight is the LIVE, per-device detected capability (from the fan's own
 -- protobuf Capabilities.has_light field) - purely informational in the combo
--- (HAS_LIGHT_PROXY=true) package; auto-synced to the read-only "Has Light
+-- (driver-level) property; auto-synced to the read-only "Has Light
 -- Kit" property below so Composer shows the true hardware state.
 g_hasLight    = true
 g_maxSpeed    = 7
@@ -67,7 +64,7 @@ g_pollInt     = 60
 g_logMode     = "Off"
 
 FAN_BINDING   = 5001
-LIGHT_BINDING = 5002
+LINK_BINDING  = 5002   -- provider connection the child light driver binds to
 NET_BINDING   = 6001
 TCP_PORT      = 31415
 
@@ -90,7 +87,7 @@ PF_IP_ADDRESS                = 120 -- string
 
 -- Root2 / Commit / Query / QueryResult field numbers
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION    = "325"
+DRIVER_VERSION    = "400"
 
 RF_ROOT2          = 2
 R2F_COMMIT        = 2
@@ -102,6 +99,7 @@ QRF_PROPERTIES    = 2
 
 g_fanState    = { power = "OFF", speed = 0, whoosh = "OFF", reverse = false }
 g_lightState  = { power = "OFF", level = 0 }
+g_children    = {}    -- child light drivers that sent HK_REGISTER
 
 g_rxBuffer     = ""    -- raw (unescaped) bytes accumulated from the TCP stream
 g_pollTimerId  = nil
@@ -350,14 +348,7 @@ function LoadProperties()
 	g_ip       = Properties["Fan IP Address"] or g_ip
 	g_name     = Properties["Fan Name (SenseME App Name)"] or g_name
 	g_mac      = Properties["Fan MAC Address"] or g_mac
-	-- "Has Light Kit" only exists as a property in the combo (HAS_LIGHT_PROXY)
-	-- package; the no-light package doesn't declare it at all, so this must
-	-- default to false (not true) when the property is absent.
-	if (HAS_LIGHT_PROXY) then
-		g_hasLight = (Properties["Has Light Kit"] ~= "No")
-	else
-		g_hasLight = false
-	end
+	g_hasLight = (Properties["Has Light Kit"] == "Yes")
 	g_maxSpeed = tonumber(Properties["Max Fan Speed (0-7)"]) or 7
 	g_pollInt  = tonumber(Properties["Poll Interval (seconds)"]) or 60
 	g_logMode  = Properties["Log Mode"] or "Off"
@@ -544,16 +535,14 @@ function ApplyProperties(p)
 		g_mac = p.mac_address
 		C4:UpdateProperty("Fan MAC Address", g_mac)
 	end
+	local lightDirty = false
 	if (p.has_light ~= nil) then
 		-- Auto-detected from the fan's own reported Capabilities.has_light bit.
-		-- Only meaningful (and only has a property to reflect it) in the combo
-		-- package - the no-light package has no such property to update.
-		if (HAS_LIGHT_PROXY and p.has_light ~= g_hasLight) then
+		if (p.has_light ~= g_hasLight) then
+			g_hasLight = p.has_light
 			C4:UpdateProperty("Has Light Kit", p.has_light and "Yes" or "No")
 			LOG("Fan-reported light kit capability: " .. (p.has_light and "Yes" or "No"))
-		end
-		if (HAS_LIGHT_PROXY) then
-			g_hasLight = p.has_light
+			lightDirty = true
 		end
 	end
 
@@ -579,12 +568,12 @@ function ApplyProperties(p)
 
 	if (p.light_mode ~= nil) then
 		local newLPower = (p.light_mode == 1) and "ON" or "OFF"
-		if (newLPower ~= g_lightState.power) then changed = true end
+		if (newLPower ~= g_lightState.power) then lightDirty = true end
 		g_lightState.power = newLPower
 	end
 	if (p.light_brightness_percent ~= nil and p.light_brightness_percent ~= g_lightState.level) then
 		g_lightState.level = p.light_brightness_percent
-		changed = true
+		lightDirty = true
 	end
 
 	if (fanPowerChanged) then
@@ -593,8 +582,8 @@ function ApplyProperties(p)
 	if (fanPowerChanged or fanSpeedChanged) then
 		NotifyFanSpeed()
 	end
-	if (changed) then
-		NotifyLightLevel()
+	if (lightDirty) then
+		NotifyLight()
 	end
 end
 
@@ -602,12 +591,7 @@ end
 function NotifyOnline(bOnline)
 	local sState = bOnline and "true" or "false"
 	C4:SendToProxy(FAN_BINDING, "ONLINE_CHANGED", { STATE = sState }, "NOTIFY")
-	-- HAS_LIGHT_PROXY (structural: does this .c4z even declare the light proxy)
-	-- gates this, not just g_hasLight (detected) - calling SendToProxy for a
-	-- proxy binding id that isn't declared in this driver's XML is unsafe.
-	if (HAS_LIGHT_PROXY and g_hasLight) then
-		C4:SendToProxy(LIGHT_BINDING, "ONLINE_CHANGED", { STATE = sState }, "NOTIFY")
-	end
+	NotifyLight()
 end
 
 -- Per the official Control4 Fan Protocol Notifications (ON / OFF / CURRENT_SPEED
@@ -627,11 +611,42 @@ function NotifyFanPower()
 	C4:SendToProxy(FAN_BINDING, g_fanState.power, {}, "NOTIFY") -- "ON" or "OFF" is itself the notification name
 end
 
-function NotifyLightLevel()
-	if (not HAS_LIGHT_PROXY) then return end -- no-light package: no such proxy to notify
+-- Push the light state to every child light driver bound to the Light Kit Link.
+function NotifyLight(onlyChild)
 	local lvl = g_lightState.level
 	if (g_lightState.power ~= "ON") then lvl = 0 end
-	C4:SendToProxy(LIGHT_BINDING, "LIGHT_LEVEL", lvl, "NOTIFY")
+	local params = {
+		POWER = g_lightState.power, LEVEL = tostring(lvl),
+		HASLIGHT = g_hasLight and "1" or "0", ONLINE = g_netOnline and "1" or "0",
+		FANNAME = tostring(g_name),
+	}
+	if (onlyChild) then SendToChild(onlyChild, "HK_LIGHT", params) return end
+	for _, id in ipairs(ChildIds()) do SendToChild(id, "HK_LIGHT", params) end
+end
+
+function SendToChild(childId, cmd, params)
+	pcall(function() C4:SendToDevice(childId, cmd, params or {}) end)
+end
+
+function ChildIds()
+	local seen, list = {}, {}
+	for id in pairs(g_children) do seen[id] = true; list[#list + 1] = id end
+	local ok, bound = pcall(function() return C4:GetBoundConsumerDevices(C4:GetDeviceID(), LINK_BINDING) end)
+	if (ok and type(bound) == "table") then
+		for rawId in pairs(bound) do
+			local id = tonumber(rawId)
+			if (id and not seen[id]) then seen[id] = true; list[#list + 1] = id end
+		end
+	end
+	return list
+end
+
+function OnBindingChanged(idBinding, strClass, bIsBound, otherDeviceId, otherBindingId)
+	if (idBinding == LINK_BINDING and bIsBound and otherDeviceId) then
+		g_children[tonumber(otherDeviceId)] = true
+		SendToChild(tonumber(otherDeviceId), "HK_HELLO", {})
+		NotifyLight(tonumber(otherDeviceId))
+	end
 end
 
 -- percent (0-100) -> fan step (0-g_maxSpeed)
@@ -655,8 +670,6 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
 
 	if (idBinding == FAN_BINDING) then
 		FanProxyCommand(strCommand, tParams)
-	elseif (idBinding == LIGHT_BINDING) then
-		LightProxyCommand(strCommand, tParams)
 	end
 end
 
@@ -697,7 +710,7 @@ function FanProxyCommand(cmd, p)
 	end
 end
 
-function LightProxyCommand(cmd, p)
+function LightLinkCommand(cmd, p)
 	if (cmd == "ON") then
 		CommitProperties({ { field = PF_LIGHT_MODE, val = 1 } })
 	elseif (cmd == "OFF") then
@@ -711,10 +724,8 @@ function LightProxyCommand(cmd, p)
 			{ field = PF_LIGHT_MODE, val = (lvl > 0) and 1 or 0 },
 			{ field = PF_LIGHT_BRIGHTNESS_PERCENT, val = lvl },
 		})
-	elseif (cmd == "GET_LIGHT_LEVEL") then
-		NotifyLightLevel()
 	else
-		LOG("Unhandled light proxy command: " .. tostring(cmd))
+		LOG("Unhandled light command: " .. tostring(cmd))
 	end
 end
 
@@ -723,7 +734,24 @@ function ExecuteCommand(strCommand, tParams)
 	tParams = tParams or {}
 	LOG("ExecuteCommand: " .. tostring(strCommand))
 
-	if (strCommand == "Rediscover Fan" or strCommand == "ACTION_REDISCOVER") then
+	if (strCommand == "HK_REGISTER") then
+		local cid = tonumber(tParams.CHILD_ID)
+		if (cid) then
+			g_children[cid] = true
+			SendToChild(cid, "HK_HELLO", {})
+			NotifyLight(cid)
+			RequestFullStatus()
+		end
+
+	elseif (strCommand == "HK_LIGHT_CMD") then
+		LightLinkCommand(tostring(tParams.CMD or ""), tParams)
+
+	elseif (strCommand == "HK_POLL") then
+		RequestFullStatus()
+		local cid = tonumber(tParams.CHILD_ID)
+		if (cid) then NotifyLight(cid) end
+
+	elseif (strCommand == "Rediscover Fan" or strCommand == "ACTION_REDISCOVER") then
 		ForceReconnect()
 
 	elseif (strCommand == "Set Whoosh Mode") then
