@@ -19,6 +19,8 @@ Not affiliated with Control4 or the respective device manufacturers.
 | `drivers/yale-assure-lock-2` | Yale Assure Lock 2 (Wi-Fi Smart Module) | 117 |
 | `drivers/switchbot-cloud` | SwitchBot Cloud (parent: token, API, polling) | 4 (v2.1.0 in Lua) |
 | `drivers/switchbot-curtain` | SwitchBot Curtain (child of SwitchBot Cloud) | 15 (v2.1.1 in Lua) |
+| `drivers/unifi-controller` | UniFi Controller (parent, web view of outlets) | 1.0.0 (untested) |
+| `drivers/unifi-outlet` | UniFi Outlet (child relay, one per outlet) | 1.0.0 (untested) |
 | `drivers/lifx-bulb-legacy` | LIFX Bulb (earlier driver, kept for reference) | 107 |
 
 ### Daylight Lighting Scheduler (`Daylight_Lighting_Scheduler_driver`)
@@ -59,6 +61,10 @@ Standalone driver for U by Moen smart showers. **Needs Control4's `drivers-commo
 ### Yale Assure Lock 2 (`Yale_AssureLock2_driver`)
 
 Driver for the Yale Assure Lock 2 with the Wi-Fi smart module.
+
+### UniFi Controller (parent) and UniFi Outlet (child) - untested
+
+Setup: on the UniFi console, create a local admin account for Control4 (a Viewer role cannot switch outlets). Add a **UniFi Controller** driver, set Host, Username and Password (leave Controller Type on Auto). Add one **UniFi Outlet** per outlet, bind its **UniFi Controller** connection to the parent, then enter the Device ID and Outlet Index copied from the parent's Discovered Outlets property. The web view page needs a Director reboot after a page-address change. Proxy changes need delete and re-add. The API paths and outlet fields are unverified against real hardware; see docs/unifi-outlet.md.
 
 ### SwitchBot Cloud (parent) and SwitchBot Curtain (child)
 

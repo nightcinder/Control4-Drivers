@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UniFi Outlets</title>
+<style>
+  :root { --bg:#f4f5f7; --card:#ffffff; --ink:#1d2330; --muted:#66707f; --on:#1f8f4e; --off:#8a93a3; --line:#dde1e8; --warn:#b3261e; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg:#15181e; --card:#1f242d; --ink:#e8ecf2; --muted:#9aa4b2; --on:#3fcf7a; --off:#6b7585; --line:#2d3440; --warn:#ff8a80; }
+  }
+  :root[data-theme="dark"] { --bg:#15181e; --card:#1f242d; --ink:#e8ecf2; --muted:#9aa4b2; --on:#3fcf7a; --off:#6b7585; --line:#2d3440; --warn:#ff8a80; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--ink); font:15px/1.4 system-ui, sans-serif; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:14px; }
+  .dev { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:16px 0 6px; }
+  .row { display:flex; align-items:center; justify-content:space-between; background:var(--card); border:1px solid var(--line);
+         border-radius:10px; padding:12px 14px; margin-bottom:8px; min-height:44px; }
+  .name { font-weight:600; }
+  button.tog { min-width:84px; min-height:44px; border:0; border-radius:22px; font-weight:700; color:#fff; cursor:pointer; }
+  button.tog.on { background:var(--on); }
+  button.tog.off { background:var(--off); }
+  button:disabled { opacity:.5; }
+  .empty, .banner { color:var(--muted); padding:12px 0; }
+  .banner.warn { color:var(--warn); }
+  #modal { position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; padding:16px; }
+  #modal.show { display:flex; }
+  .box { background:var(--card); color:var(--ink); border-radius:12px; padding:18px; max-width:360px; width:100%; }
+  .box p { margin:0 0 14px; }
+  .btns { display:flex; gap:10px; justify-content:flex-end; }
+  .btns button { min-height:44px; min-width:96px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); font-weight:600; }
+  .btns .danger { background:var(--warn); color:#fff; border-color:var(--warn); }
+</style>
+</head>
+<body>
+<h1>UniFi Outlets</h1>
+<div class="sub" id="meta">Waiting for the driver...</div>
+<div id="list"></div>
+
+<div id="modal" role="dialog" aria-modal="true">
+  <div class="box">
+    <p id="modalText"></p>
+    <div class="btns">
+      <button id="modalCancel">Cancel</button>
+      <button id="modalOk" class="danger">Turn off</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var PAGE_BUILD = "1";   // must match PAGE_BUILD in the driver Lua
+  var S = null, lastSeq = null, gotState = false, pending = {};
+  var hasC4 = typeof window.C4 !== "undefined" && window.C4 && typeof window.C4.sendCommand === "function";
+  var $ = function (id) { return document.getElementById(id); };
+
+  // Light double-tap guard only: the same command is ignored for 700 ms after it is sent.
+  function send(cmd) {
+    var t = Date.now();
+    if (pending[cmd] && pending[cmd] > t) return;
+    pending[cmd] = t + 700;
+    if (hasC4) { try { window.C4.sendCommand(cmd, "{}", false, true); } catch (e) {} }
+    else { preview(cmd); }
+  }
+
+  // Finds the JSON snapshot anywhere in a Navigator callback payload.
+  function findState(x, depth) {
+    if (depth > 4 || x == null) return null;
+    if (typeof x === "string") {
+      var t = x.trim();
+      if (t.charAt(0) !== "{" && t.charAt(0) !== "[") return null;
+      try { return findState(JSON.parse(t), depth + 1); } catch (e) { return null; }
+    }
+    if (typeof x === "object") {
+      if (x.t === "unifi" && x.seq != null) return x;
+      for (var k in x) {
+        if (Object.prototype.hasOwnProperty.call(x, k)) {
+          var r = findState(x[k], depth + 1);
+          if (r) return r;
+        }
+      }
+    }
+    return null;
+  }
+
+  // Navigator calls several handlers for one payload; dedupe on seq.
+  function onAnything() {
+    for (var i = 0; i < arguments.length; i++) {
+      var st = findState(arguments[i], 0);
+      if (!st) continue;
+      if (st.seq === lastSeq) return;
+      lastSeq = st.seq;
+      gotState = true;
+      S = st;
+      render();
+      return;
+    }
+  }
+  ["onVariable", "onVariableChanged", "onVariableUpdate", "onDataToUi", "onDataToUI"].forEach(function (n) {
+    window[n] = onAnything;
+  });
+
+  function connect() {
+    if (!hasC4) { preview("UI_HELLO_" + PAGE_BUILD); return; }
+    try { window.C4.subscribeToVariable("UI_STATE", true); } catch (e) {}
+    try { window.C4.subscribeToDataToUi(true); } catch (e) {}
+    send("UI_HELLO_" + PAGE_BUILD);
+    setTimeout(function () {
+      if (gotState) return;
+      try { window.C4.subscribeToVariable("UI_STATE", false); } catch (e) {}
+      send("UI_REFRESH");
+    }, 5000);
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function render() {
+    if (!S) return;
+    $("meta").textContent = (S.online ? "Connected" : "Not connected") + (S.status ? " - " + S.status : "");
+    var list = $("list"), html = "", lastDev = null;
+    if (!S.outlets || !S.outlets.length) {
+      list.innerHTML = '<div class="empty">No power outlets found. Check the driver Connection Status.</div>';
+      return;
+    }
+    S.outlets.forEach(function (o) {
+      if (o.device !== lastDev) { html += '<div class="dev">' + esc(o.device) + '</div>'; lastDev = o.device; }
+      var cls = o.on ? "on" : "off";
+      html += '<div class="row"><span class="name">' + esc(o.name) + '</span>' +
+              '<button class="tog ' + cls + '" data-n="' + o.n + '" data-on="' + (o.on ? 1 : 0) + '">' +
+              (o.on ? "On" : "Off") + '</button></div>';
+    });
+    list.innerHTML = html;
+  }
+
+  // Tap toggles. Turning an outlet OFF asks first. Nothing else sends a command.
+  var askFor = null;
+  function askOff(n, name) {
+    askFor = n;
+    $("modalText").textContent = "Turn OFF “" + name + "”? This may power down connected equipment.";
+    $("modal").className = "show";
+  }
+  function closeModal() { askFor = null; $("modal").className = ""; }
+
+  $("list").addEventListener("click", function (ev) {
+    var b = ev.target.closest ? ev.target.closest("button.tog") : null;
+    if (!b) return;
+    var n = b.getAttribute("data-n"), isOn = b.getAttribute("data-on") === "1";
+    var o = S && S.outlets ? S.outlets.filter(function (x) { return String(x.n) === n; })[0] : null;
+    if (isOn) { askOff(n, o ? o.name : "outlet"); return; }
+    send("UI_OUTLET_" + n + "_ON");
+  });
+  $("modalCancel").addEventListener("click", closeModal);
+  $("modalOk").addEventListener("click", function () {
+    if (askFor != null) send("UI_OUTLET_" + askFor + "_OFF");
+    closeModal();
+  });
+
+  function preview(cmd) {
+    // Browser preview only (no Control4): shows the layout with sample data.
+    if (S) return;
+    S = { t: "unifi", seq: 1, build: PAGE_BUILD, online: true, status: "Preview (no Control4)", outlets: [
+      { n: 1, device: "PDU Pro (sample)", name: "Outlet 1", on: true },
+      { n: 2, device: "PDU Pro (sample)", name: "Outlet 2", on: false },
+      { n: 3, device: "USP Plug (sample)", name: "Plug", on: true } ] };
+    render();
+  }
+
+  connect();
+  if (!hasC4) render();
+})();
+</script>
+</body>
+</html>
