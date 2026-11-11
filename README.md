@@ -12,8 +12,8 @@ Not affiliated with Control4 or the respective device manufacturers.
 |---|---|---|
 | `drivers/daylight-lighting-scheduler` | Daylight Lighting Scheduler | 2 (v1.7.0 in Lua) |
 | `drivers/lifx-lan` | LIFX LAN Light | 12 |
-| `drivers/haiku-senseme` | Haiku SenseME Fan | 321 |
-| `drivers/haiku-senseme-nolight` | Haiku SenseME Fan (No Light Kit) | 101 |
+| `drivers/haiku-senseme-fan` | Haiku SenseME Fan (fan only, parent) | 400 |
+| `drivers/haiku-senseme-light` | Haiku SenseME Light (optional child, one per fan with a light kit) | 400 |
 | `drivers/intellifire` | IntelliFire Fireplace (Wi-Fi Module) | 115 |
 | `drivers/moen-smart-shower` | Moen Smart Shower (U by Moen), standalone | 203 |
 | `drivers/yale-assure-lock-2` | Yale Assure Lock 2 (Wi-Fi Smart Module) | 117 |

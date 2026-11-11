@@ -1,0 +1,129 @@
+<devicedata>
+	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Big Ass Fans or Control4</copyright>
+	<creator>Custom Driver Project</creator>
+	<manufacturer>Big Ass Fans</manufacturer>
+	<name>Haiku SenseME Light</name>
+	<model>Haiku / i6 light kit (child)</model>
+	<created>11/11/2026 04:00 PM</created>
+	<modified>11/11/2026 04:00 PM</modified>
+	<version>400</version>
+	<small image_source="c4z">icons/device_sm.png</small>
+	<large image_source="c4z">icons/device_lg.png</large>
+	<control>lua_gen</control>
+	<controlmethod>ip</controlmethod>
+	<driver>DriverWorks</driver>
+	<templatedescription>Light kit of a Big Ass Fans Haiku / i6 fan. Child of the "Haiku SenseME Fan" driver: bind its Fan connection to that fan's "Light Kit Link". One per fan with a light kit.</templatedescription>
+
+	<proxies qty="1">
+		<proxy image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png" proxybindingid="5001" name="Haiku Light" primary="True">light_v2</proxy>
+	</proxies>
+
+	<capabilities>
+		<dimmer>True</dimmer>
+		<set_level>True</set_level>
+		<ramp_level>True</ramp_level>
+		<on_off>True</on_off>
+		<min_max>False</min_max>
+		<click_rates>False</click_rates>
+		<hold_rates>False</hold_rates>
+		<cold_start>False</cold_start>
+		<has_leds>False</has_leds>
+		<supports_broadcast_scenes>False</supports_broadcast_scenes>
+		<supports_multichannel_scenes>False</supports_multichannel_scenes>
+		<hide_proxy_properties>False</hide_proxy_properties>
+		<hide_proxy_events>False</hide_proxy_events>
+		<reduced_als_support>False</reduced_als_support>
+		<advanced_scene_support>False</advanced_scene_support>
+		<load_group_support>False</load_group_support>
+		<buttons_are_virtual>True</buttons_are_virtual>
+	</capabilities>
+
+	<connections>
+		<connection>
+			<id>5001</id>
+			<facing>6</facing>
+			<connectionname>LIGHT</connectionname>
+			<type>2</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>LIGHT_V2</classname>
+				</class>
+			</classes>
+		</connection>
+		<connection>
+			<id>1</id>
+			<facing>6</facing>
+			<connectionname>Haiku Fan</connectionname>
+			<type>1</type>
+			<consumer>True</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>HAIKU_SENSEME_LIGHT</classname>
+				</class>
+			</classes>
+		</connection>
+	</connections>
+
+	<config>
+		<power_management_method>AlwaysOn</power_management_method>
+		<power_command_delay>0</power_command_delay>
+		<power_delay>0</power_delay>
+		<power_command_needed>False</power_command_needed>
+		<script file="driver.lua" />
+
+		<commands>
+			<command>
+				<name>Refresh Status</name>
+				<description>Ask the fan driver for the current light state</description>
+			</command>
+		</commands>
+
+		<actions>
+			<action>
+				<name> - Refresh Status</name>
+				<command>ACTION_REFRESH</command>
+			</action>
+		</actions>
+
+		<properties>
+			<property>
+				<name>Driver Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Fan</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Not connected: bind Haiku Fan in Connections</default>
+			</property>
+			<property>
+				<name>Light Kit Detected</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Unknown</default>
+			</property>
+			<property>
+				<name>Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Starting</default>
+			</property>
+		</properties>
+	</config>
+
+	<composer_categories>
+		<category>Lighting</category>
+	</composer_categories>
+	<navigator_categories>
+		<category>Lighting</category>
+	</navigator_categories>
+</devicedata>
