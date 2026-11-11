@@ -1,10 +1,10 @@
--- UniFi Outlet (child) driver for Control4 OS 3.4.x. Version 1.0.1 (UNTESTED on hardware).
+-- UniFi Outlet (child) driver for Control4 OS 3.4.x. Version 1.0.2 (UNTESTED on hardware).
 -- One instance per outlet. Bound to the UniFi Controller parent over connection 1. The relay proxy (5001)
 -- sends CLOSE (= outlet ON), OPEN (= outlet OFF) and TOGGLE to the parent; the parent polls state and pushes
 -- it back as UO_STATUS. Relay notifications: CLOSED = ON, OPENED = OFF.
 -- Proxy choice: "relay" (class RELAY), the same native on/off proxy family the repo uses for relay-style devices.
 
-local DRIVER_VERSION = "1.0.1"
+local DRIVER_VERSION = "1.0.2"
 local CONTROLLER_BINDING = 1
 local PROXY_BINDING = 5001
 
