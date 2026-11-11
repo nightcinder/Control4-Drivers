@@ -26,8 +26,8 @@ Turning an outlet OFF from the web page asks for confirmation. Opening, refreshi
 - Read: `GET /proxy/network/api/s/<site>/stat/device` (legacy without the prefix). Power devices are detected by `outlet_table` / `outlet_overrides` entries or model USPPDUP / USPPLUG.
 - Outlet state from `relay_state`. Names from `outlet_overrides` then `outlet_table`. USP Plug fallback: index 1 from top-level `relay_state` when no outlet arrays exist.
 - Write: `PUT /proxy/network/api/s/<site>/rest/device/<_id>` with the full `outlet_overrides` array, only the target `relay_state` changed. Refused if the target index is missing from `outlet_overrides`.
-- `C4:urlPut` is assumed to exist with the same signature as `C4:urlPost`. The driver fails cleanly if it does not.
-- TLS: the controller uses a self-signed certificate. The driver does not disable certificate checks. Confirm how Control4 OS 3.4 accepts this.
+- `C4:urlPut` exists with the same signature as `C4:urlPost` plus the 6th options argument (confirmed from the Snap One drivers-common-public `url.lua`).
+- TLS: the UniFi console uses a self-signed certificate that Control4 cannot verify against a CA. Certificate verification is therefore turned off for the controller's calls (login, poll, outlet PUT) by passing `TLS_OPTIONS = { ssl_verifypeer = 0, ssl_verifyhost = 0 }` as the 6th argument. Only this controller's HTTPS calls use it. The key names are curl-style and unverified on OS 3.4. If calls still fail with a certificate error, check those key names first.
 - Relay proxy: CLOSE = ON, OPEN = OFF, notifications CLOSED = ON and OPENED = OFF.
 
 ## Re-login
