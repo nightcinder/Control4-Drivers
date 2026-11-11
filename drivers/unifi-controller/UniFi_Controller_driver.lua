@@ -1,10 +1,10 @@
--- UniFi Controller (parent) driver for Control4 OS 3.4.x. Version 1.0.3 (UNTESTED on hardware).
+-- UniFi Controller (parent) driver for Control4 OS 3.4.x. Version 1.0.4 (UNTESTED on hardware).
 -- Logs in to a UniFi controller, polls power outlets (USP PDU Pro, USP Plug), serves UniFi Outlet child
 -- drivers over a connection, and shows a uibutton web view page listing every outlet with tap-to-toggle.
 -- UNVERIFIED: API paths, outlet JSON fields, PUT body, cookie/CSRF handling, self-signed certificate
 -- handling (TLS_OPTIONS key names). Raw responses are logged at Debug level (secrets masked).
 
-local DRIVER_VERSION = "1.0.3"
+local DRIVER_VERSION = "1.0.4"
 -- The UniFi console uses a self-signed certificate that Control4 cannot verify, so certificate checks are
 -- turned off for this controller only. Passed as the 6th argument (options) of C4:urlGet / urlPost / urlPut
 -- (signature confirmed from the Snap One drivers-common-public url.lua). The key names are curl-style and
@@ -29,6 +29,7 @@ local g_raw = {}            -- devId -> { id, name, overrides = array used as th
 local g_children = {}       -- child device id -> outlet key
 local g_writeQueue = {}
 local g_writeBusy = false
+local g_loginWatch = nil
 local g_timer = nil          -- keeps a reference so Lua does not garbage-collect the timer
 local g_gen = 0             -- poll timer generation
 local g_uiSeq = 0
@@ -233,6 +234,14 @@ local function login(cb)
   table.insert(g_loginWaiters, cb)
   if g_loginInFlight then return end
   g_loginInFlight = true
+  pcall(function()
+    g_loginWatch = C4:SetTimer(20000, function()
+      if g_loginInFlight then
+        logv("login watchdog fired: no response in 20 s from " .. baseUrl(), false)
+        finishLogin(false, "Login timed out: no response from " .. baseUrl())
+      end
+    end)
+  end)
   if prop("Host") == "" or prop("Username") == "" or prop("Password") == "" then
     finishLogin(false, "Set Host, Username and Password")
     return
@@ -251,7 +260,7 @@ local function login(cb)
     local body = jsonEncode({ username = prop("Username"), password = prop("Password"), remember = false })
     local headers = { Accept = "application/json", ["Content-Type"] = "application/json" }
     setStatus("Logging in (" .. c.mode .. ")...")
-    logv("login attempt " .. c.mode .. " " .. c.login, false)
+    logv("login attempt " .. c.mode .. " " .. baseUrl() .. c.login, false)
     local ok, err = pcall(function()
       C4:urlPost(baseUrl() .. c.login, body, headers, false, function(_, data, code, hdrs, e)
         logv("login " .. c.mode .. " HTTP " .. tostring(code) .. " " .. mask(e or ""), false)
