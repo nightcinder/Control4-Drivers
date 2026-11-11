@@ -33,3 +33,7 @@ Turning an outlet OFF from the web page asks for confirmation. Opening, refreshi
 ## Re-login
 
 On HTTP 401 or 403 the driver logs in once and retries the request.
+
+## Password field is not masked
+
+The controller driver's Password property is a plain STRING. Composer in this environment crashes on `<type>PASSWORD</type>` (the Moen drivers carry the same finding), so the value shows in clear text in Composer. Use a dedicated local UniFi admin account with a password used nowhere else.
