@@ -87,7 +87,7 @@ PF_IP_ADDRESS                = 120 -- string
 
 -- Root2 / Commit / Query / QueryResult field numbers
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION    = "400"
+DRIVER_VERSION    = "401"
 
 RF_ROOT2          = 2
 R2F_COMMIT        = 2
@@ -99,6 +99,7 @@ QRF_PROPERTIES    = 2
 
 g_fanState    = { power = "OFF", speed = 0, whoosh = "OFF", reverse = false }
 g_lightState  = { power = "OFF", level = 0 }
+g_fanMode     = nil   -- raw OffOnAuto value last reported by the fan
 g_children    = {}    -- child light drivers that sent HK_REGISTER
 
 g_rxBuffer     = ""    -- raw (unescaped) bytes accumulated from the TCP stream
@@ -549,7 +550,8 @@ function ApplyProperties(p)
 	local fanPowerChanged = false
 	local fanSpeedChanged = false
 	if (p.fan_mode ~= nil) then
-		local newPower = (p.fan_mode == 1) and "ON" or "OFF" -- 1 = ON per OffOnAuto enum
+		g_fanMode = p.fan_mode
+		local newPower = (p.fan_mode == 1 or p.fan_mode == 2) and "ON" or "OFF" -- OffOnAuto: 1 = ON, 2 = AUTO (running); both count as on
 		fanPowerChanged = true -- always renotify so Navigator's fan tile stays in sync
 		if (newPower ~= g_fanState.power) then changed = true end
 		g_fanState.power = newPower
@@ -772,7 +774,7 @@ function ExecuteCommand(strCommand, tParams)
 		print("=== Haiku (i6) Driver Debug ===")
 		print("IP: " .. g_ip .. "  Name: " .. g_name .. "  MAC: " .. g_mac)
 		print("Bound: " .. tostring(g_netBound) .. "  Online: " .. tostring(g_netOnline))
-		print("Fan power=" .. g_fanState.power .. " speed=" .. g_fanState.speed ..
+		print("Fan mode(raw)=" .. tostring(g_fanMode) .. " power=" .. g_fanState.power .. " speed=" .. g_fanState.speed ..
 			" whoosh=" .. g_fanState.whoosh .. " reverse=" .. tostring(g_fanState.reverse))
 		print("Light power=" .. g_lightState.power .. " level=" .. g_lightState.level)
 	end
