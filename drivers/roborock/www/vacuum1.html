@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Vacuum</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin:0; height:100%; background:#0d1117; color:#e6edf3;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { padding:16px; box-sizing:border-box; display:flex; flex-direction:column; gap:14px; }
+  header { display:flex; align-items:center; justify-content:space-between; }
+  h1 { font-size:1.3rem; margin:0; font-weight:600; }
+  .pill { font-size:.95rem; padding:6px 12px; border-radius:999px; background:#21262d; color:#8b949e; }
+  .pill.ok { background:#12331f; color:#3ddc97; }
+  .pill.bad { background:#3d1d1d; color:#ff7b7b; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:16px; padding:16px; }
+  .state { font-size:1.9rem; font-weight:700; margin:0 0 12px; }
+  .batt-row { display:flex; align-items:center; gap:12px; }
+  .batt-row .lbl { color:#8b949e; font-size:1rem; width:70px; }
+  .batt-row .val { font-size:1.4rem; font-weight:600; width:70px; text-align:right; }
+  .bar { flex:1; height:18px; background:#21262d; border-radius:9px; overflow:hidden; }
+  .fill { height:100%; width:0%; background:#3ddc97; border-radius:9px; }
+  .fill.low { background:#ffb84d; }
+  .err { margin-top:12px; font-size:1rem; color:#8b949e; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  button { min-height:110px; border:0; border-radius:16px; font-size:1.5rem; font-weight:700;
+    color:#0d1117; cursor:pointer; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+  button:active:not(:disabled) { filter:brightness(1.15); transform:scale(.98); }
+  button:disabled { opacity:.35; cursor:default; }
+  #start { background:#3ddc97; }
+  #pause { background:#ffb84d; }
+  #dock  { background:#7fc4ff; }
+  #stop  { background:#ff7b7b; }
+  footer { margin-top:auto; font-size:.85rem; color:#6e7681; text-align:center; }
+  @media (min-width:900px) { button { min-height:140px; font-size:1.8rem; } h1 { font-size:1.6rem; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Robot Vacuum</h1>
+  <span id="conn" class="pill">No data yet</span>
+</header>
+
+<div class="card">
+  <p id="state" class="state">Waiting for data</p>
+  <div class="batt-row">
+    <span class="lbl">Battery</span>
+    <div class="bar"><div id="bar" class="fill"></div></div>
+    <span id="batt" class="val">--%</span>
+  </div>
+  <p id="err" class="err">No errors</p>
+</div>
+
+<div class="grid">
+  <button id="start" data-cmd="UI_START" disabled>Start</button>
+  <button id="pause" data-cmd="UI_PAUSE" disabled>Pause</button>
+  <button id="dock"  data-cmd="UI_DOCK" disabled>Dock</button>
+  <button id="stop"  data-cmd="UI_STOP" disabled>Stop</button>
+</div>
+
+<footer>Page build 1 - driver 0.2.0 - UNTESTED</footer>
+
+<script>
+(function () {
+  "use strict";
+  var PAGE_BUILD = "1";              // must match UI_BUILD in driver.lua
+  var S = null, lastSeq = null, gotState = false, startLockUntil = 0;
+  var hasC4 = !!(window.C4 && typeof window.C4.sendCommand === "function");
+  var LABELS = { cleaning: "Cleaning", zoned_cleaning: "Cleaning (zoned)", segment_cleaning: "Cleaning (room)",
+    spot_cleaning: "Spot cleaning", docked: "Docked", charging: "Charging", paused: "Paused", idle: "Idle",
+    returning: "Returning to dock", error: "Error" };
+  function $(id) { return document.getElementById(id); }
+  function label(s) { if (!s) return "Unknown"; return LABELS[s] || String(s).replace(/_/g, " "); }
+
+  function send(cmd) {
+    if (hasC4) { try { window.C4.sendCommand(cmd, "{}", false, true); } catch (e) {} }
+  }
+
+  // Start is locked for 3 s after a tap so it cannot fire twice. Other buttons are not locked.
+  function tap(cmd) {
+    if (cmd === "UI_START") {
+      if (Date.now() < startLockUntil) return;
+      startLockUntil = Date.now() + 3000;
+      render();
+      setTimeout(render, 3100);
+    }
+    send(cmd);
+  }
+
+  // Finds the JSON snapshot anywhere in a Navigator callback payload.
+  function findState(x, depth) {
+    if (depth > 4 || x == null) return null;
+    if (typeof x === "string") {
+      var t = x.trim();
+      if (t.charAt(0) !== "{" && t.charAt(0) !== "[") return null;
+      try { return findState(JSON.parse(t), depth + 1); } catch (e) { return null; }
+    }
+    if (typeof x === "object") {
+      if (x.t === "rbrock" && x.seq != null) return x;
+      for (var k in x) {
+        if (Object.prototype.hasOwnProperty.call(x, k)) {
+          var r = findState(x[k], depth + 1);
+          if (r) return r;
+        }
+      }
+    }
+    return null;
+  }
+
+  // Navigator calls several handlers for one payload; dedupe on seq.
+  function onAnything() {
+    for (var i = 0; i < arguments.length; i++) {
+      var st = findState(arguments[i], 0);
+      if (!st) continue;
+      if (st.seq === lastSeq) return;
+      lastSeq = st.seq;
+      gotState = true;
+      S = st;
+      render();
+      return;
+    }
+  }
+  ["onVariable", "onVariableChanged", "onVariableUpdate", "onDataToUi", "onDataToUI"].forEach(function (n) {
+    window[n] = onAnything;
+  });
+
+  function render() {
+    var online = !!(S && S.online);
+    var locked = Date.now() < startLockUntil;
+    $("state").textContent = S ? label(S.state) : "Waiting for data";
+    $("conn").textContent = !S ? "No data yet" : (online ? "Connected" : "Bridge unreachable");
+    $("conn").className = "pill" + (!S ? "" : (online ? " ok" : " bad"));
+    var b = (S && typeof S.battery === "number") ? S.battery : null;
+    $("batt").textContent = b == null ? "--%" : b + "%";
+    $("bar").style.width = b == null ? "0%" : Math.max(0, Math.min(100, b)) + "%";
+    $("bar").className = "fill" + (b != null && b <= 20 ? " low" : "");
+    var e = S ? (S.lastError || (S.error && S.error !== "none" ? S.error : "")) : "";
+    $("err").textContent = e && e !== "none" ? "Last error: " + e : "No errors";
+    ["pause", "dock", "stop"].forEach(function (id) { $(id).disabled = !online; });
+    $("start").disabled = !online || locked;
+  }
+
+  function connect() {
+    if (!hasC4) { render(); return; }
+    try { window.C4.subscribeToVariable("UI_STATE", true); } catch (e) {}
+    try { window.C4.subscribeToDataToUi(true); } catch (e) {}
+    send("UI_HELLO_" + PAGE_BUILD);
+    setTimeout(function () { if (!gotState) send("UI_REFRESH"); }, 5000);
+  }
+
+  var btns = document.querySelectorAll("button[data-cmd]");
+  for (var i = 0; i < btns.length; i++) {
+    btns[i].addEventListener("click", function (ev) { tap(ev.currentTarget.getAttribute("data-cmd")); });
+  }
+  setInterval(render, 1000);
+  render();
+  connect();
+})();
+</script>
+</body>
+</html>
