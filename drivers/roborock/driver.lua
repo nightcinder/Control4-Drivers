@@ -1,6 +1,8 @@
 --[[
   Roborock Vacuum via LAN HTTP bridge (Control4 DriverWorks, OS 3.4.x)
-  Version: 0.1.0  (UNTESTED on real Composer/Director; see docs/roborock.md)
+  Version: 0.2.0  (UNTESTED on real Composer/Director; see docs/roborock.md)
+  v0.2.0 adds a uibutton proxy (binding 5001) and the Navigator web view www/vacuum1.html.
+  The page reads the UI_STATE snapshot and sends UI_* commands through ExecuteCommand.
 
   Bridge endpoints (plain HTTP on the LAN):
     GET  /state    -> {"state":"charging","battery":100,"error":"none","rooms":[],"last_error":null,...}
@@ -9,7 +11,9 @@
   The state fields are read with simple key patterns (the bridge sends flat scalar fields).
 ]]
 
-local DRIVER_VERSION = "0.1.0"
+local DRIVER_VERSION = "0.2.0"
+local PROXY_BINDING = 5001          -- uibutton proxy (tile, icon and web view)
+local UI_BUILD = "1"                -- must match PAGE_BUILD in www/vacuum1.html
 local DEFAULT_HOST = "172.21.1.157"
 local DEFAULT_PORT = "8788"
 local DEFAULT_POLL = 60
@@ -27,6 +31,7 @@ local EVENT_BRIDGE_UNREACHABLE = 5
 local VAR_STATE = "VACUUM_STATE"
 local VAR_BATTERY = "VACUUM_BATTERY"
 local VAR_ERROR = "VACUUM_ERROR"
+local VAR_UI = "UI_STATE"           -- JSON snapshot read by the web view page
 
 local state = {
   pollTimer = nil,
@@ -35,6 +40,14 @@ local state = {
   lastError = "none",   -- last error code seen (edge detection for Error Raised)
   lowFired = false,     -- Battery Low already fired; re-arms when battery rises above threshold
   unreachable = false,  -- Bridge Unreachable already fired for this outage
+  -- web view and tile icon snapshot (v0.2.0)
+  uiSeq = 0,
+  online = false,
+  st = "",
+  battery = nil,
+  err = "none",
+  lastErr = "",
+  icon = nil,
 }
 
 -- ============================================================================
@@ -145,7 +158,43 @@ end
 -- ============================================================================
 -- Status and events
 -- ============================================================================
+-- Web view (v0.2.0): UI_STATE snapshot and tile icon
+local UI_COMMAND_ACTIONS = { UI_START = "start", UI_STOP = "stop", UI_PAUSE = "pause", UI_DOCK = "dock" }
+
+local function publishUi()
+  state.uiSeq = state.uiSeq + 1
+  local batt = "null"
+  if state.battery then batt = tostring(state.battery) end
+  local json = string.format(
+    '{"t":"rbrock","seq":%d,"build":"%s","version":"%s","online":%s,"state":"%s","battery":%s,"error":"%s","lastError":"%s"}',
+    state.uiSeq, UI_BUILD, DRIVER_VERSION, state.online and "true" or "false",
+    jsonEscape(state.st or ""), batt, jsonEscape(state.err or "none"), jsonEscape(state.lastErr or ""))
+  setVar(VAR_UI, json)
+  pcall(C4.SendDataToUI, C4, json)
+end
+
+-- Icon ids must match the <state id="..."> entries in driver.xml.
+local function updateIcon()
+  local id = "Default"
+  if state.online and state.err ~= "" and state.err ~= "none" then
+    id = "Error"
+  elseif isCleaning(state.st) then
+    id = "Cleaning"
+  elseif isDocked(state.st) then
+    id = "Docked"
+  end
+  if id ~= state.icon then
+    state.icon = id
+    pcall(function()
+      C4:SendToProxy(PROXY_BINDING, "ICON_CHANGED", { icon = id, icon_description = id }, "NOTIFY")
+    end)
+  end
+end
+
 local function setUnreachable(reason)
+  state.online = false
+  publishUi()
+  updateIcon()
   setProp("Status", "Bridge unreachable")
   setProp("Last Error", reason or "unreachable")
   if not state.unreachable then
@@ -203,6 +252,13 @@ local function applyState(body)
       state.lowFired = false
     end
   end
+
+  -- v0.2.0: web view snapshot and tile icon
+  state.st, state.err, state.lastErr = st, err, (lastErr or "")
+  if battery then state.battery = battery end
+  state.online = true
+  publishUi()
+  updateIcon()
 end
 
 -- ============================================================================
@@ -284,8 +340,31 @@ local function sendCommand(action, rooms)
   end)
 end
 
+local function handleUi(cmd)
+  local action = UI_COMMAND_ACTIONS[cmd]
+  if action then
+    logmsg("web view: " .. action)
+    sendCommand(action)
+  elseif cmd == "UI_REFRESH" then
+    publishUi()
+    schedule(1)
+  elseif cmd:sub(1, 9) == "UI_HELLO_" then
+    local b = cmd:sub(10)
+    if b == UI_BUILD then
+      setProp("Web Page Status", "Page build " .. b .. " OK")
+    else
+      setProp("Web Page Status", "PAGE IS STALE: page " .. b .. ", driver expects " .. UI_BUILD)
+    end
+    publishUi()
+  end
+end
+
 function ExecuteCommand(strCommand, tParams)
   tParams = tParams or {}
+  if tostring(strCommand):sub(1, 3) == "UI_" then
+    handleUi(tostring(strCommand))
+    return
+  end
   if strCommand == "START" then
     sendCommand("start")
   elseif strCommand == "STOP" then
@@ -314,6 +393,7 @@ local function ensureVariables()
     { VAR_STATE, "STRING" },
     { VAR_BATTERY, "NUMBER" },
     { VAR_ERROR, "STRING" },
+    { VAR_UI, "STRING" },
   }
   for _, d in ipairs(defs) do
     pcall(function() C4:AddVariable(d[1], "", d[2], true, false) end)

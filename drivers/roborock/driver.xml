@@ -2,19 +2,92 @@
 	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Roborock or Control4</copyright>
 	<creator>Custom Driver Project</creator>
 	<manufacturer>Custom</manufacturer>
-	<name>Roborock Vacuum (LAN Bridge)</name>
+	<name>roborock</name>
 	<model>Roborock Vacuum (LAN Bridge)</model>
 	<created>11/12/2026 12:00 PM</created>
-	<modified>11/12/2026 12:00 PM</modified>
-	<version>1</version>
+	<modified>11/12/2026 06:00 PM</modified>
+	<version>2</version>
+	<small image_source="c4z">icons/device_sm.png</small>
+	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
 	<combo>false</combo>
-	<proxies />
-	<capabilities />
-	<templatedescription>Roborock vacuum status and control through a LAN HTTP bridge. Polls /state, sends start, stop, pause, dock and clean-rooms commands. UNTESTED.</templatedescription>
+	<proxies qty="1">
+		<proxy proxybindingid="5001" name="Roborock Vacuum" primary="True" image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png">uibutton</proxy>
+	</proxies>
 
+	<connections>
+		<connection>
+			<id>5001</id>
+			<facing>6</facing>
+			<connectionname>UIBUTTON</connectionname>
+			<type>2</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>UIBUTTON</classname>
+				</class>
+			</classes>
+		</connection>
+	</connections>
+	<capabilities>
+		<web_view_url proxybindingid="5001">controller://driver/roborock/vacuum1.html</web_view_url>
+		<mobile_web_view_enabled>true</mobile_web_view_enabled>
+		<navigator_display_option proxybindingid="5001">
+			<display_icons>
+				<Icon width="70" height="70">controller://driver/roborock/icons/device/default/experience_70.png</Icon>
+				<Icon width="90" height="90">controller://driver/roborock/icons/device/default/experience_90.png</Icon>
+				<Icon width="300" height="300">controller://driver/roborock/icons/device/default/experience_300.png</Icon>
+				<Icon width="512" height="512">controller://driver/roborock/icons/device/default/experience_512.png</Icon>
+				<Icon width="1024" height="1024">controller://driver/roborock/icons/device/default/experience_1024.png</Icon>
+				<state id="Default">
+					<Icon width="70" height="70">controller://driver/roborock/icons/device/default/experience_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/roborock/icons/device/default/experience_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/roborock/icons/device/default/experience_300.png</Icon>
+					<Icon width="512" height="512">controller://driver/roborock/icons/device/default/experience_512.png</Icon>
+					<Icon width="1024" height="1024">controller://driver/roborock/icons/device/default/experience_1024.png</Icon>
+				</state>
+				<state id="Cleaning">
+					<Icon width="70" height="70">controller://driver/roborock/icons/device/cleaning/experience_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/roborock/icons/device/cleaning/experience_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/roborock/icons/device/cleaning/experience_300.png</Icon>
+					<Icon width="512" height="512">controller://driver/roborock/icons/device/cleaning/experience_512.png</Icon>
+					<Icon width="1024" height="1024">controller://driver/roborock/icons/device/cleaning/experience_1024.png</Icon>
+				</state>
+				<state id="Docked">
+					<Icon width="70" height="70">controller://driver/roborock/icons/device/docked/experience_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/roborock/icons/device/docked/experience_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/roborock/icons/device/docked/experience_300.png</Icon>
+					<Icon width="512" height="512">controller://driver/roborock/icons/device/docked/experience_512.png</Icon>
+					<Icon width="1024" height="1024">controller://driver/roborock/icons/device/docked/experience_1024.png</Icon>
+				</state>
+				<state id="Error">
+					<Icon width="70" height="70">controller://driver/roborock/icons/device/error/experience_70.png</Icon>
+					<Icon width="90" height="90">controller://driver/roborock/icons/device/error/experience_90.png</Icon>
+					<Icon width="300" height="300">controller://driver/roborock/icons/device/error/experience_300.png</Icon>
+					<Icon width="512" height="512">controller://driver/roborock/icons/device/error/experience_512.png</Icon>
+					<Icon width="1024" height="1024">controller://driver/roborock/icons/device/error/experience_1024.png</Icon>
+				</state>
+			</display_icons>
+		</navigator_display_option>
+	</capabilities>
+	<templatedescription>Roborock vacuum status and control through a LAN HTTP bridge, with a Navigator web view (state, battery, Start / Pause / Dock / Stop) and state-based tile icons. UNTESTED.</templatedescription>
+
+	<!--
+		v2 (0.2.0) - uibutton proxy and Navigator web view (UNTESTED on hardware and in Composer)
+		The uibutton proxy on binding 5001 opens www/vacuum1.html. The page reads the UI_STATE snapshot
+		and sends UI_START / UI_PAUSE / UI_DOCK / UI_STOP through ExecuteCommand. The tile icon changes
+		with state: Default, Cleaning, Docked (docked or charging), Error.
+		Changing the proxy means the device must be deleted and re-added in Composer.
+		PACKAGE NAME: roborock.c4z. <name> is the same slug so controller://driver/roborock/... resolves.
+		PAGE FILE IS RENAMED EVERY PAGE RELEASE (vacuum1, vacuum2, ...). web_view_url, PAGE_BUILD / UI_BUILD
+		in the Lua and the file in www/ must agree.
+		Commands, actions, events, variables and properties from v1 are unchanged.
+	-->
 	<config>
 		<power_management_method>AlwaysOn</power_management_method>
 		<power_command_delay>0</power_command_delay>
@@ -162,7 +235,13 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>0.1.0</default>
+				<default>0.2.0</default>
+			</property>
+					<property>
+				<name>Web Page Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Not opened yet</default>
 			</property>
 		</properties>
 	</config>
