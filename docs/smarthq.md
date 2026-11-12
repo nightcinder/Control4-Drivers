@@ -77,3 +77,30 @@ Bridge side (liesa, `smarthq-bridge` 0.2.0): `POST /appliances/{id}/command` wit
 Confirmed on the real hood (read on 2026-11-12 with the SDK, before this change): `HOOD_LIGHT_LEVEL` = OFF. Availability raw `07` means off, dim and high are available; there is no med level. `HOOD_FAN_SPEED` = OFF. The `HOOD_ACTUAL_LIGHT_LEVEL` and `HOOD_REQUESTED_LIGHT_LEVEL` ERDs are not populated by this hood.
 
 Untested: the write has not been sent to the real hood. Confirm that the light turns on, dims and turns off, and that the hood state follows, before relying on it.
+
+## Version 0.3.0: parent and child drivers (UNTESTED in Composer)
+
+The single driver (`drivers/smarthq`, 0.2.x) stays in place. 0.3.0 splits it into three drivers. Nothing here has been run in Composer or Director.
+
+| Driver | Package | Role |
+|---|---|---|
+| SmartHQ Bridge | `c4z/smarthq-bridge.c4z` | Parent. Polls `GET /inventory` on the liesa bridge (172.21.1.157:8789) every Poll Interval seconds and pushes each appliance's state to its children. Action: Refresh Now. Event: Bridge Unreachable. |
+| SmartHQ Appliance | `c4z/smarthq-appliance.c4z` | Child, one per appliance. Set Appliance Type (Oven, Beverage Center, Dishwasher, Refrigerator, Washer, Dryer) and Appliance ID. Read-only state properties. Events: Oven Preheated, Oven Timer Done, Dishwasher Done, Washer Done, Dryer Done, Door Left Open. |
+| SmartHQ Hood Light | `c4z/smarthq-hood-light.c4z` | Child, one for the hood. A light_v2 proxy with off, dim and high. Writes go through the parent (`POST /appliances/{id}/command`, the same call as 0.2.x). |
+
+Door Left Open fires once per opening after Door Open Alert Minutes (default 2, 0 turns it off). The timing follows the parent poll, so it is only as exact as Poll Interval (default 60 s).
+
+### Binding the children in Composer (by hand)
+
+1. Add the SmartHQ Bridge driver to the project. Set Host, Port and Poll Interval if they differ from the defaults.
+2. Add one SmartHQ Appliance driver per appliance. Set Appliance Type and paste the Appliance ID from `GET /inventory` (oven D828C9B3D140, beverage center D828C947C21D, dishwasher D828C9B56AC7, fridge D828C9814D8C, washer D828C98E297F, dryer D828C972D59D).
+3. Add the SmartHQ Hood Light driver. Its Appliance ID defaults to the hood, D828C9A77374. Place it in the Downstairs room.
+4. In Connections for each child (Appliance and Hood Light), bind "SmartHQ Bridge" to the SmartHQ Bridge driver. The children find the parent only through this binding.
+5. Wait one poll interval. Each child's Status should change to "Updated" (appliances) or "Hood light ..." (hood).
+
+### Unverified
+
+- Oven state names (preheat detection) and oven cook-time units are guesses. Check the real values on a live oven before trusting Oven Preheated or Oven Timer Done.
+- Dishwasher, washer and dryer "Done" events fire when the operating state goes from active to idle. "Active" means any state not in the idle list in the bridge parent (STATUS_DASH, STATUS_OFF, NA, and similar). Those names are unverified.
+- The hood light level feedback uses `LIGHT_CHANGED` with LEVEL, which is not confirmed for light_v2. ON and OFF match the 0.2.x driver. Check that the light's slider follows the hood.
+- Nothing here has been sent to a real appliance during testing. The only write is the hood light, and it has not been exercised in 0.3.0.
