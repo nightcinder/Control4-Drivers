@@ -1,17 +1,19 @@
 --[[
   SmartHQ Bridge (Control4 DriverWorks, OS 3.4.x)
-  Version: 0.1.0  (UNTESTED on real Composer/Director; see docs/smarthq.md)
+  Version: 0.2.0  (adds hood light control; UNTESTED on real Composer/Director; see docs/smarthq.md)
 
-  Read-only client for the LAN HTTP bridge on liesa:
+  Client for the LAN HTTP bridge on liesa:
     GET {base}/health
     GET {base}/appliances
     GET {base}/appliances/{id}/state
-  The bridge has no control endpoints, so this driver has no commands.
+  The only control is POST {base}/appliances/{hood}/command for the hood light
+  (v0.2.0). Oven and dishwasher stay read-only.
   Oven field names come from a real reply. Dishwasher names are NOT confirmed
   (no dishwasher was online when this was written), so they are matched from a list of guesses.
 ]]
 
-local DRIVER_VERSION = "0.1.0"
+local DRIVER_VERSION = "0.2.0"
+local HOOD_LIGHT_PROXY = 5001
 local DEFAULT_HOST = "172.21.1.157"
 local DEFAULT_PORT = "8789"
 local DEFAULT_POLL_SECONDS = 60
@@ -25,7 +27,7 @@ local EVENT_BRIDGE_UNREACHABLE = 4
 
 local ALL_VARIABLES = {
   "Oven State", "Oven Temperature", "Oven Timer Remaining",
-  "Dishwasher State", "Dishwasher Time Remaining",
+  "Dishwasher State", "Dishwasher Time Remaining", "Hood Light",
 }
 
 -- Dishwasher key guesses (UNCONFIRMED). The first key present in the reply wins.
@@ -388,6 +390,68 @@ local function readDishwasher(id, done)
 end
 
 -- ============================================================================
+-- ============================================================================
+-- Hood light (v0.2.0, UNTESTED). Only the light is writable; see docs/smarthq.md.
+-- ============================================================================
+local hoodOn = nil
+
+local function applyHood(s)
+  local level = tostring(s.light_level or "")
+  setVar("Hood Light", level)
+  local on = (level ~= "" and level ~= "OFF")
+  if on ~= hoodOn then
+    hoodOn = on
+    pcall(function() C4:SendToProxy(HOOD_LIGHT_PROXY, on and "ON" or "OFF", {}, "NOTIFY") end)
+  end
+end
+
+local function readHood(id, done)
+  if id == "" then done(); return end
+  httpGet("/appliances/" .. id .. "/state", function(data, code)
+    if code == 200 then
+      local s = jsonDecode(data or "")
+      if type(s) == "table" then applyHood(s) end
+    end
+    done()
+  end)
+end
+
+-- level is "off", "dim" or "on" (on sends HIGH on the bridge).
+local function hoodCommand(level)
+  local id = prop("Hood Appliance ID")
+  if id == "" then setStatus("Set Hood Appliance ID first"); return end
+  local body = '{"action":"light","level":"' .. level .. '"}'
+  local ok, perr = pcall(function()
+    C4:urlPost(baseUrl() .. "/appliances/" .. id .. "/command", body,
+      { ["Content-Type"] = "application/json" }, false,
+      function(_, data, code, _, err)
+        local n = tonumber(code) or 0
+        if n ~= 200 then
+          setStatus("Hood light failed: HTTP " .. tostring(n) .. " " .. tostring(err or ""))
+          return
+        end
+        local s = jsonDecode(data or "")
+        if type(s) == "table" then applyHood(s) end
+      end, {})
+  end)
+  if not ok then setStatus("Hood light failed: " .. tostring(perr)) end
+end
+
+-- Light proxy commands from Navigator / programming.
+function ReceivedFromProxy(idBinding, strCommand, tParams)
+  if idBinding ~= HOOD_LIGHT_PROXY then return end
+  if strCommand == "ON" then
+    hoodCommand("on")
+  elseif strCommand == "OFF" then
+    hoodCommand("off")
+  elseif strCommand == "SET_LEVEL" then
+    local lvl = tonumber((tParams or {}).LEVEL) or 0
+    if lvl <= 0 then hoodCommand("off")
+    elseif lvl <= 50 then hoodCommand("dim")
+    else hoodCommand("on") end
+  end
+end
+
 -- Polling
 -- ============================================================================
 local function poll()
@@ -405,7 +469,9 @@ local function poll()
       setReachable(true, text)
       readOven(prop("Oven Appliance ID"), function()
         readDishwasher(prop("Dishwasher Appliance ID"), function()
-          state.inflight = false
+          readHood(prop("Hood Appliance ID"), function()
+            state.inflight = false
+          end)
         end)
       end)
     else
@@ -470,6 +536,10 @@ function ExecuteCommand(strCommand, tParams)
     discover()
   elseif strCommand == "REFRESH_NOW" then
     poll()
+  elseif strCommand == "HOOD_LIGHT_ON" then
+    hoodCommand("on")
+  elseif strCommand == "HOOD_LIGHT_OFF" then
+    hoodCommand("off")
   end
 end
 
@@ -490,7 +560,7 @@ function OnDriverDestroyed()
 end
 
 function OnPropertyChanged(name)
-  if name == "Host" or name == "Port" or name == "Oven Appliance ID" or name == "Dishwasher Appliance ID" then
+  if name == "Host" or name == "Port" or name == "Oven Appliance ID" or name == "Dishwasher Appliance ID" or name == "Hood Appliance ID" then
     state.inflight = false
     schedulePoll(1)
   elseif name == "Poll Interval" then

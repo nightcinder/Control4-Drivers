@@ -6,16 +6,18 @@
 	<model>SmartHQ Bridge (read-only LAN bridge)</model>
 	<created>11/12/2026 12:00 PM</created>
 	<modified>11/12/2026 12:00 PM</modified>
-	<version>1</version>
+	<version>2</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
 	<combo>false</combo>
-	<proxies />
+	<proxies>
+		<proxy proxybindingid="5001" name="Hood Light" type="light_v2" image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png" />
+	</proxies>
 	<capabilities />
-	<templatedescription>SmartHQ read-only bridge client for oven and dishwasher state. Polls the liesa LAN bridge. No control commands. UNTESTED.</templatedescription>
+	<templatedescription>SmartHQ read-only bridge client for oven and dishwasher state. Polls the liesa LAN bridge. Hood light on/off only (v0.2.0); no oven or dishwasher control. UNTESTED.</templatedescription>
 
 	<config>
 		<power_management_method>AlwaysOn</power_management_method>
@@ -32,6 +34,14 @@
 			<action>
 				<name>Refresh Now</name>
 				<command>REFRESH_NOW</command>
+			</action>
+			<action>
+				<name>Hood Light On</name>
+				<command>HOOD_LIGHT_ON</command>
+			</action>
+			<action>
+				<name>Hood Light Off</name>
+				<command>HOOD_LIGHT_OFF</command>
 			</action>
 		</actions>
 
@@ -150,6 +160,12 @@
 				<name>Dishwasher Time Remaining</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Hood Appliance ID</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
 				<default></default>
 			</property>
 		</properties>
