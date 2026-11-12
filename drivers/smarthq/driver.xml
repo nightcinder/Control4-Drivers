@@ -1,0 +1,157 @@
+<devicedata>
+	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with SmartHQ, GE Appliances or Control4</copyright>
+	<creator>Custom Driver Project</creator>
+	<manufacturer>Custom</manufacturer>
+	<name>SmartHQ Bridge</name>
+	<model>SmartHQ Bridge (read-only LAN bridge)</model>
+	<created>11/12/2026 12:00 PM</created>
+	<modified>11/12/2026 12:00 PM</modified>
+	<version>1</version>
+	<small image_source="c4z">icons/device_sm.png</small>
+	<large image_source="c4z">icons/device_lg.png</large>
+	<control>lua_gen</control>
+	<controlmethod>ip</controlmethod>
+	<driver>DriverWorks</driver>
+	<combo>false</combo>
+	<proxies />
+	<capabilities />
+	<templatedescription>SmartHQ read-only bridge client for oven and dishwasher state. Polls the liesa LAN bridge. No control commands. UNTESTED.</templatedescription>
+
+	<config>
+		<power_management_method>AlwaysOn</power_management_method>
+		<power_command_delay>0</power_command_delay>
+		<power_delay>0</power_delay>
+		<power_command_needed>False</power_command_needed>
+		<script file="driver.lua" />
+
+		<actions>
+			<action>
+				<name>Discover Appliances</name>
+				<command>DISCOVER</command>
+			</action>
+			<action>
+				<name>Refresh Now</name>
+				<command>REFRESH_NOW</command>
+			</action>
+		</actions>
+
+		<events>
+			<event>
+				<id>1</id>
+				<name>Oven Preheated</name>
+				<description>Fires when the oven leaves preheat and enters an active cook state</description>
+			</event>
+			<event>
+				<id>2</id>
+				<name>Oven Timer Done</name>
+				<description>Fires when the oven timer counts down to zero while the oven is active</description>
+			</event>
+			<event>
+				<id>3</id>
+				<name>Dishwasher Done</name>
+				<description>Fires when the dishwasher cycle goes from active to idle (or cycle_done goes true)</description>
+			</event>
+			<event>
+				<id>4</id>
+				<name>Bridge Unreachable</name>
+				<description>Fires once when the bridge stops responding or reports unusable (health not 200)</description>
+			</event>
+		</events>
+
+		<properties>
+			<property>
+				<name>Host</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>172.21.1.157</default>
+			</property>
+			<property>
+				<name>Port</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>1</minimum>
+				<maximum>65535</maximum>
+				<readonly>false</readonly>
+				<default>8789</default>
+			</property>
+			<property>
+				<name>Oven Appliance ID</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Dishwasher Appliance ID</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Discovered Appliances</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Poll Interval</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>30</minimum>
+				<maximum>3600</maximum>
+				<readonly>false</readonly>
+				<default>60</default>
+			</property>
+			<property>
+				<name>Log Mode</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Off</default>
+				<items>
+					<item>Off</item>
+					<item>Print</item>
+					<item>Log</item>
+				</items>
+			</property>
+			<property>
+				<name>Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Not started</default>
+			</property>
+			<property>
+				<name>Driver Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>0.1.0</default>
+			</property>
+			<property>
+				<name>Oven State</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Oven Temperature</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Oven Timer Remaining</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Dishwasher State</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Dishwasher Time Remaining</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+		</properties>
+	</config>
+</devicedata>
