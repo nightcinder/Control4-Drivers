@@ -12,7 +12,7 @@
   (no dishwasher was online when this was written), so they are matched from a list of guesses.
 ]]
 
-local DRIVER_VERSION = "0.2.1"
+local DRIVER_VERSION = "0.2.2"
 local HOOD_LIGHT_PROXY = 5001
 local DEFAULT_HOST = "172.21.1.157"
 local DEFAULT_PORT = "8789"
