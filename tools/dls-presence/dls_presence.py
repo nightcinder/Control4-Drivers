@@ -24,11 +24,15 @@ Env:  PROM_URL (default http://localhost:9090)  EA1_HOST  EA1_PORT (8730)  DLS_T
       LIFE360_POLL_SEC (default 120)  LIFE360_STALE_MIN (default 45: older fixes are ignored)
       NOTIFY_TO (e.g. idrac@mailrise.xyz; empty = no alerts)  NOTIFY_SMTP (default localhost:8025)  NOTIFY_FROM
       LIFE360_ALERT_AFTER_MIN (default 30: alert once Life360 has failed this long; repeats every 6 h, plus a recovery notice)
+      FRESH_PORT (default 8731, 0 = off)  FRESH_BIND (default 127.0.0.1)
+  GET /health  -> JSON per source: seconds since last successful poll, poll interval, stale flag.
+                  HTTP 200 when all sources are fresh, 503 if any is stale (older than 3x its poll interval).
 """
 import json, math, os, smtplib, socket, sys, threading, time, urllib.parse, urllib.request
 from email.message import EmailMessage
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "1.2.1"
+VERSION = "1.3.0"
 PROM = os.environ.get("PROM_URL", "http://localhost:9090").rstrip("/")
 HOST = os.environ.get("EA1_HOST", "")
 PORT = int(os.environ.get("EA1_PORT", "8730"))
@@ -53,6 +57,11 @@ NOTIFY_FROM = os.environ.get("NOTIFY_FROM", "dls-presence@liesa").strip()
 L360_ALERT_AFTER = float(os.environ.get("LIFE360_ALERT_AFTER_MIN", "30")) * 60
 
 _warned = set()
+
+FRESH_PORT = int(os.environ.get("FRESH_PORT", "8731"))
+FRESH_BIND = os.environ.get("FRESH_BIND", "127.0.0.1")
+_started = time.time()
+_last_ok = {"unifi": None, "life360": None}  # time of last successful poll per source
 
 
 def warn_once(key, msg):
@@ -83,6 +92,7 @@ def unifi_present(phone):
         for lab in LABELS:
             q = f'count(unpoller_client_uptime_seconds{{{lab}=~"(?i){phone}"}})'
             res = prom(q)
+            _last_ok["unifi"] = time.time()
             if res and float(res[0]["value"][1]) > 0:
                 return True
         return False
@@ -122,6 +132,7 @@ _l360_fail = {"since": None, "alerted": 0.0, "down": False}
 
 
 def _l360_ok():
+    _last_ok["life360"] = time.time()
     f = _l360_fail
     if f["down"]:
         notify("DLS presence: Life360 recovered", "Life360 is responding again; presence is using both sources.")
@@ -266,6 +277,50 @@ def household():
     return any(states), detail
 
 
+# ---------------------------------------------------------------- freshness
+def freshness():
+    """Per configured source: seconds since its last successful poll; stale if older than 3x its poll interval."""
+    now = time.time()
+    used = {
+        "unifi": (any(p.get("unifi") for p in people()), POLL),
+        "life360": (any(p.get("life360") for p in people()) and bool(L360_TOKEN), L360_POLL),
+    }
+    out = {}
+    for name, (on, poll) in used.items():
+        if not on:
+            continue
+        last = _last_ok[name]
+        age = now - (last if last else _started)  # never polled yet: age counts from startup
+        out[name] = {"last_ok_age_s": round(age), "poll_s": poll, "ever_ok": last is not None, "stale": age > 3 * poll}
+    return out
+
+
+class _FreshHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.split("?")[0] not in ("/health", "/freshness"):
+            self.send_error(404)
+            return
+        srcs = freshness()
+        stale = any(s["stale"] for s in srcs.values())
+        body = json.dumps({"ok": not stale, "sources": srcs}).encode()
+        self.send_response(503 if stale else 200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+def start_freshness():
+    if FRESH_PORT <= 0:
+        return
+    srv = ThreadingHTTPServer((FRESH_BIND, FRESH_PORT), _FreshHandler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    print(f"freshness endpoint: http://{FRESH_BIND}:{FRESH_PORT}/health", flush=True)
+
+
 # ---------------------------------------------------------------- EA-1
 def send(state):
     with socket.create_connection((HOST, PORT), timeout=10) as s:
@@ -316,6 +371,7 @@ def main():
         sys.exit("DLS_TOKEN is not set: export it in /etc/dls-presence.env (must match the driver's Presence Token)")
     if not HOST:
         sys.exit("set EA1_HOST to the EA-1 IP address")
+    start_freshness()
     print(f"dls_presence v{VERSION} starting", flush=True)
     last_sent, away_since = None, None
     while True:
