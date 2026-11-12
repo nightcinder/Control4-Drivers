@@ -1,0 +1,169 @@
+<devicedata>
+	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Roborock or Control4</copyright>
+	<creator>Custom Driver Project</creator>
+	<manufacturer>Custom</manufacturer>
+	<name>Roborock Vacuum (LAN Bridge)</name>
+	<model>Roborock Vacuum (LAN Bridge)</model>
+	<created>11/12/2026 12:00 PM</created>
+	<modified>11/12/2026 12:00 PM</modified>
+	<version>1</version>
+	<control>lua_gen</control>
+	<controlmethod>ip</controlmethod>
+	<driver>DriverWorks</driver>
+	<combo>false</combo>
+	<proxies />
+	<capabilities />
+	<templatedescription>Roborock vacuum status and control through a LAN HTTP bridge. Polls /state, sends start, stop, pause, dock and clean-rooms commands. UNTESTED.</templatedescription>
+
+	<config>
+		<power_management_method>AlwaysOn</power_management_method>
+		<power_command_delay>0</power_command_delay>
+		<power_delay>0</power_delay>
+		<power_command_needed>False</power_command_needed>
+		<script file="driver.lua" />
+
+		<commands>
+			<command>
+				<name>Start</name>
+				<command>START</command>
+				<description>Start cleaning</description>
+			</command>
+			<command>
+				<name>Stop</name>
+				<command>STOP</command>
+				<description>Stop the current cleaning job</description>
+			</command>
+			<command>
+				<name>Pause</name>
+				<command>PAUSE</command>
+				<description>Pause cleaning</description>
+			</command>
+			<command>
+				<name>Dock</name>
+				<command>DOCK</command>
+				<description>Send the vacuum back to its dock</description>
+			</command>
+			<command>
+				<name>Clean Rooms</name>
+				<command>CLEAN_ROOMS</command>
+				<description>Clean the listed room ids</description>
+				<params>
+					<param>
+						<name>Rooms</name>
+						<type>STRING</type>
+					</param>
+				</params>
+			</command>
+		</commands>
+
+		<actions>
+			<action>
+				<name>Refresh Now</name>
+				<command>REFRESH</command>
+			</action>
+		</actions>
+
+		<events>
+			<event>
+				<id>1</id>
+				<name>Cleaning Started</name>
+				<description>Fires when the vacuum enters a cleaning state</description>
+			</event>
+			<event>
+				<id>2</id>
+				<name>Cleaning Finished</name>
+				<description>Fires when cleaning ends and the vacuum returns to docked or charging</description>
+			</event>
+			<event>
+				<id>3</id>
+				<name>Error Raised</name>
+				<description>Fires when the bridge reports a new vacuum error</description>
+			</event>
+			<event>
+				<id>4</id>
+				<name>Battery Low</name>
+				<description>Fires when battery is at or below Low Battery Threshold (once until it recovers)</description>
+			</event>
+			<event>
+				<id>5</id>
+				<name>Bridge Unreachable</name>
+				<description>Fires when the LAN bridge cannot be reached or returns an error</description>
+			</event>
+		</events>
+
+		<properties>
+			<property>
+				<name>Bridge Host</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>172.21.1.157</default>
+			</property>
+			<property>
+				<name>Bridge Port</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>1</minimum>
+				<maximum>65535</maximum>
+				<readonly>false</readonly>
+				<default>8788</default>
+			</property>
+			<property>
+				<name>Poll Interval</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>30</minimum>
+				<maximum>3600</maximum>
+				<readonly>false</readonly>
+				<default>60</default>
+			</property>
+			<property>
+				<name>Low Battery Threshold</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>1</minimum>
+				<maximum>100</maximum>
+				<readonly>false</readonly>
+				<default>20</default>
+			</property>
+			<property>
+				<name>Log Mode</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Off</default>
+				<items>
+					<item>Off</item>
+					<item>Print</item>
+					<item>Log</item>
+					<item>Print and Log</item>
+				</items>
+			</property>
+			<property>
+				<name>Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Not started</default>
+			</property>
+			<property>
+				<name>State</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Battery</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Last Error</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Driver Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>0.1.0</default>
+			</property>
+		</properties>
+	</config>
+</devicedata>
