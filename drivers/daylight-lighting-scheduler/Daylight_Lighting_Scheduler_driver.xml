@@ -152,6 +152,12 @@
         <default>Off</default>
       </property>
       <property>
+        <name>Curtain Automation</name>
+        <type>LIST</type>
+        <items><item>Off</item><item>On</item></items>
+        <default>Off</default>
+      </property>
+      <property>
         <name>Vacancy Delay (min)</name>
         <type>RANGED_INTEGER</type>
         <minimum>1</minimum>
