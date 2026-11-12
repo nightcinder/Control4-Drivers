@@ -5,8 +5,8 @@
 	<name>roborock</name>
 	<model>Roborock Vacuum (LAN Bridge)</model>
 	<created>11/12/2026 12:00 PM</created>
-	<modified>11/12/2026 06:00 PM</modified>
-	<version>2</version>
+	<modified>11/12/2026 08:25 AM</modified>
+	<version>3</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -235,7 +235,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>0.2.0</default>
+				<default>0.2.1</default>
 			</property>
 					<property>
 				<name>Web Page Status</name>
