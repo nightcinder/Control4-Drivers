@@ -11,7 +11,7 @@
   The state fields are read with simple key patterns (the bridge sends flat scalar fields).
 ]]
 
-local DRIVER_VERSION = "0.2.1"
+local DRIVER_VERSION = "0.2.2"
 local PROXY_BINDING = 5001          -- uibutton proxy (tile, icon and web view)
 local UI_BUILD = "1"                -- must match PAGE_BUILD in www/vacuum1.html
 local DEFAULT_HOST = "172.21.1.157"
