@@ -1,10 +1,10 @@
--- UniFi Controller (parent) driver for Control4 OS 3.4.x. Version 1.0.9 (UNTESTED on hardware).
+-- UniFi Controller (parent) driver for Control4 OS 3.4.x. Version 1.0.10 (UNTESTED on hardware).
 -- Logs in to a UniFi controller, polls power outlets (USP PDU Pro, USP Plug), serves UniFi Outlet child
 -- drivers over a connection, and shows a uibutton web view page listing every outlet with tap-to-toggle.
 -- UNVERIFIED: API paths, outlet JSON fields, PUT body, cookie/CSRF handling, self-signed certificate
 -- handling (TLS_OPTIONS key names). Raw responses are logged at Debug level (secrets masked).
 
-local DRIVER_VERSION = "1.0.9"
+local DRIVER_VERSION = "1.0.10"
 -- The UniFi console uses a self-signed certificate that Control4 cannot verify, so certificate checks are
 -- turned off for this controller only. Passed as the 6th argument (options) of C4:urlGet / urlPost / urlPut
 -- (signature confirmed from the Snap One drivers-common-public url.lua). The key names are curl-style and
@@ -352,6 +352,11 @@ local function buildFromDevices(devices)
       for _, e in ipairs(tbl) do indices[#indices + 1] = tonumber(e.index) end
       if ovr then for _, e in ipairs(ovr) do indices[#indices + 1] = tonumber(e.index) end end
       if #indices == 0 and type(d.relay_state) == "boolean" then indices[1] = 1 end
+      -- A device with one outlet (USP Plug) uses the device name, since the plug's outlet cannot be renamed in UniFi.
+      local uniq, nOutlets = {}, 0
+      for _, i in ipairs(indices) do
+        if i and not uniq[i] then uniq[i] = true; nOutlets = nOutlets + 1 end
+      end
       local seen = {}
       for _, idx in ipairs(indices) do
         if idx and not seen[idx] then
@@ -360,6 +365,7 @@ local function buildFromDevices(devices)
           local o = findEntry(ovr, idx)
           local state = (t and t.relay_state) or (o and o.relay_state) or d.relay_state
           local name = (o and o.name) or (t and t.name) or ("Outlet " .. idx)
+          if nOutlets == 1 then name = devName end
           local watts = nil; if t and t.outlet_power ~= nil then watts = tonumber(t.outlet_power) end; local rec = { key = devId .. ":" .. idx, devId = devId, devName = devName, index = idx,
                         name = tostring(name), on = state == true, watts = watts }
           -- Keep the controller's MAC name so the display name can be resolved from client names later.
