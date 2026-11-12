@@ -1,2 +1,6 @@
 ﻿# Build output now lives in c4z/ and is committed on purpose
 
+
+# bridge login data (tokens)
+tools/*-bridge/data/
+
