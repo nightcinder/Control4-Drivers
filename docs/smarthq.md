@@ -62,3 +62,18 @@ Lower cavity fields are present (`lower_current_temp_f`, `lower_target_temp_f`, 
 ## Build
 
 `python tools/build_c4z.py drivers/smarthq` writes `c4z/`. Not run in this version; see the commit notes.
+
+## Version 0.2.0: hood light (UNTESTED)
+
+Adds control of the GE Cafe vent hood light through the bridge. Nothing else is writable.
+
+- Property `Hood Appliance ID`: the hood MAC address, `D828C9A77374` on the current install. Set it in Composer.
+- Proxy `Hood Light` (type `light_v2`, binding 5001): ON sends `level:"on"` (HIGH), OFF sends `level:"off"`. SET_LEVEL 1 to 50 sends `dim`, above 50 sends `on`. The light state follows the polled hood state. The notify calls (`ON`/`OFF` via `C4:SendToProxy`) are UNCONFIRMED against the Control4 light_v2 spec.
+- Programming actions: `Hood Light On`, `Hood Light Off`.
+- Variable `Hood Light` holds the bridge `light_level` string.
+
+Bridge side (liesa, `smarthq-bridge` 0.2.0): `POST /appliances/{id}/command` with `{"action":"light","level":"off|dim|on"}`. Hood only. Anything else returns 400. The bridge sets ERD `HOOD_LIGHT_LEVEL` (0x5b02) through the SDK's `async_set_erd_value`, then returns the hood state.
+
+Confirmed on the real hood (read on 2026-11-12 with the SDK, before this change): `HOOD_LIGHT_LEVEL` = OFF. Availability raw `07` means off, dim and high are available; there is no med level. `HOOD_FAN_SPEED` = OFF. The `HOOD_ACTUAL_LIGHT_LEVEL` and `HOOD_REQUESTED_LIGHT_LEVEL` ERDs are not populated by this hood.
+
+Untested: the write has not been sent to the real hood. Confirm that the light turns on, dims and turns off, and that the hood state follows, before relying on it.
