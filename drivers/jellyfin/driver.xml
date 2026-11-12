@@ -1,0 +1,165 @@
+<devicedata>
+	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Jellyfin or Control4</copyright>
+	<creator>Custom Driver Project</creator>
+	<manufacturer>Jellyfin</manufacturer>
+	<name>Jellyfin Now Playing</name>
+	<model>Jellyfin Server (REST API)</model>
+	<created>11/12/2026 12:00 PM</created>
+	<modified>11/12/2026 12:00 PM</modified>
+	<version>1</version>
+	<control>lua_gen</control>
+	<controlmethod>ip</controlmethod>
+	<driver>DriverWorks</driver>
+	<combo>false</combo>
+	<proxies />
+	<capabilities />
+	<templatedescription>Jellyfin Now Playing - polls a Jellyfin server for the active session and exposes now-playing variables and transport commands. UNTESTED.</templatedescription>
+
+	<config>
+		<power_management_method>AlwaysOn</power_management_method>
+		<power_command_delay>0</power_command_delay>
+		<power_delay>0</power_delay>
+		<power_command_needed>False</power_command_needed>
+		<script file="driver.lua" />
+
+		<commands>
+			<command>
+				<name>Play/Pause</name>
+				<description>Toggle play or pause on the active Jellyfin session</description>
+			</command>
+			<command>
+				<name>Play</name>
+				<description>Resume playback on the active session</description>
+			</command>
+			<command>
+				<name>Pause</name>
+				<description>Pause playback on the active session</description>
+			</command>
+			<command>
+				<name>Stop</name>
+				<description>Stop playback on the active session</description>
+			</command>
+			<command>
+				<name>Next</name>
+				<description>Next track on the active session</description>
+			</command>
+			<command>
+				<name>Previous</name>
+				<description>Previous track on the active session</description>
+			</command>
+			<command>
+				<name>Seek To Percent</name>
+				<description>Seek the active session to a percentage of the item runtime</description>
+				<params>
+					<param>
+						<name>Percent</name>
+						<type>NUMBER</type>
+						<minimum>0</minimum>
+						<maximum>100</maximum>
+					</param>
+				</params>
+			</command>
+		</commands>
+
+		<actions>
+			<action>
+				<name>Test Connection</name>
+				<command>TEST_CONNECTION</command>
+			</action>
+			<action>
+				<name>Refresh Now</name>
+				<command>REFRESH_NOW</command>
+			</action>
+		</actions>
+
+		<events>
+			<event>
+				<id>1</id>
+				<name>Play State Changed</name>
+				<description>Fires when Play State changes</description>
+			</event>
+			<event>
+				<id>2</id>
+				<name>Playback Started</name>
+				<description>Fires when playback starts or resumes</description>
+			</event>
+			<event>
+				<id>3</id>
+				<name>Playback Stopped</name>
+				<description>Fires when playback stops or the session ends</description>
+			</event>
+			<event>
+				<id>4</id>
+				<name>Now Playing Item Changed</name>
+				<description>Fires when the item on the TV changes</description>
+			</event>
+		</events>
+
+		<properties>
+			<property>
+				<name>Server URL</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>API Key</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Poll Interval Seconds</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>2</minimum>
+				<maximum>60</maximum>
+				<readonly>false</readonly>
+				<default>4</default>
+			</property>
+			<property>
+				<name>Target User Or Device Filter</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Allow Self-Signed TLS</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Off</default>
+				<items>
+					<item>Off</item>
+					<item>On</item>
+				</items>
+			</property>
+			<property>
+				<name>Debug Log</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Off</default>
+				<items>
+					<item>Off</item>
+					<item>On</item>
+				</items>
+			</property>
+			<property>
+				<name>Server Name</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Not configured</default>
+			</property>
+			<property>
+				<name>Driver Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>0.1.0</default>
+			</property>
+		</properties>
+	</config>
+</devicedata>
