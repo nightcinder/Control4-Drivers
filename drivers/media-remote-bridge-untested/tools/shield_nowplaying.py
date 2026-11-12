@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# version 0.5 (2026-11-04): room_auto active-room selection
+# version 0.6 (2026-11-11): keep paused now-playing while content is still on the TV
 """Push Shield now-playing state to the Media Remote Bridge driver.
 
 Every poll interval, for each configured Shield, this runs
@@ -617,6 +617,115 @@ def _room_auto_sim(desireds, applied=None, status=None, stable=3):
     return posts, actions
 
 
+# --- Paused "now playing" hold ------------------------------------------------
+# The Shield's media session can be released while content is still on screen
+# (an app drops its session while paused). When no active session is seen, keep
+# reporting the last real session with playing=False, so the card stays up.
+# It is cleared when the Shield is back on its home screen, or after
+# HOLD_CAP_SECONDS of continuous holding. If adb keeps failing, the last report
+# is re-sent for up to ADB_HOLD_SECONDS, then left to go stale.
+HOLD_CAP_SECONDS = 6 * 3600
+ADB_HOLD_SECONDS = 180
+FOREGROUND_CHECK_SECONDS = 20
+HOME_PACKAGES = ("com.google.android.tvlauncher", "com.google.android.apps.tv.launcherx")
+FOREGROUND_RE = re.compile(r"mResumedActivity:.*?\s([A-Za-z][\w.]*)/")
+
+
+def new_hold_slot():
+    return {"info": None, "held_since": None, "adb_fail_since": None, "fg": None, "fg_at": None}
+
+
+def has_session(info):
+    """True when the parsed info describes a real app session (not the empty placeholder)."""
+    return bool(info.get("app") or info.get("title"))
+
+
+def is_home_package(package):
+    """True for the TV home screen / launcher, which means the content is gone.
+    Dream (screensaver) and systemui foregrounds do not count."""
+    if not package:
+        return False
+    return package in HOME_PACKAGES or "launcher" in package.lower()
+
+
+def foreground_package(adb, serial):
+    """Package of the activity in front on the Shield, or None if it cannot be read."""
+    try:
+        text = run_adb(adb, serial, "shell", "dumpsys", "activity", "activities")
+    except AdbError:
+        return None
+    m = FOREGROUND_RE.search(text)
+    return m.group(1) if m else None
+
+
+def held_copy(slot):
+    """The last real session, marked paused (playing=False, so room_auto treats it as not playing)."""
+    held = dict(slot["info"])
+    held["playing"] = False
+    return held
+
+
+def clear_hold(slot):
+    """Forget the held session; return the empty info that tells the driver nothing is playing."""
+    slot["info"] = None
+    slot["held_since"] = None
+    slot["fg"] = None
+    slot["fg_at"] = None
+    return build_info(None, None, None, "")
+
+
+def hold_expired(slot, now):
+    """Start the hold clock on first use and report whether the 6 h cap has passed."""
+    if slot["held_since"] is None:
+        slot["held_since"] = now
+    return now - slot["held_since"] >= HOLD_CAP_SECONDS
+
+
+def hold_or_clear(slot, now, get_foreground):
+    """No active session on the TV. Keep the last real session as paused, unless the
+    Shield is on its home screen or the hold has run past HOLD_CAP_SECONDS."""
+    if slot["info"] is None:
+        return build_info(None, None, None, "")
+    if hold_expired(slot, now):
+        return clear_hold(slot)
+    if slot["fg_at"] is None or now - slot["fg_at"] >= FOREGROUND_CHECK_SECONDS:
+        slot["fg"] = get_foreground()
+        slot["fg_at"] = now
+    if is_home_package(slot["fg"]):
+        return clear_hold(slot)
+    return held_copy(slot)
+
+
+def hold_through_adb_error(slot, now):
+    """An adb call failed. Re-send the last real session (paused) for up to
+    ADB_HOLD_SECONDS of consecutive failures, then return None so it goes stale."""
+    if slot["info"] is None:
+        return None
+    if slot["adb_fail_since"] is None:
+        slot["adb_fail_since"] = now
+    if hold_expired(slot, now):
+        return clear_hold(slot)
+    if now - slot["adb_fail_since"] >= ADB_HOLD_SECONDS:
+        return None
+    return held_copy(slot)
+
+
+def room_report(slot, now, live, get_foreground):
+    """What to post for one room this cycle.
+    live is the parsed (and enriched) session info, or None after an adb error.
+    Returns None when nothing should be posted."""
+    if live is None:
+        return hold_through_adb_error(slot, now)
+    slot["adb_fail_since"] = None
+    if has_session(live):
+        # a real session (playing or paused) replaces whatever was held
+        slot["info"] = live
+        slot["held_since"] = None
+        slot["fg_at"] = None
+        return live
+    return hold_or_clear(slot, now, get_foreground)
+
+
 def poll_once(cfg, token, state):
     adb = cfg["adb"]
     base = cfg["bridge_base_url"]
@@ -628,17 +737,21 @@ def poll_once(cfg, token, state):
         if is_placeholder(host):
             continue
         serial = serial_for(host)
+        slot = state.setdefault(("held", room), new_hold_slot())
         try:
-            info = parse_media_session(run_adb(adb, serial, "shell", "dumpsys", "media_session"))
+            live = parse_media_session(run_adb(adb, serial, "shell", "dumpsys", "media_session"))
         except AdbError as e:
             report_error(room, str(e), state)
             adb_connect(adb, serial)  # retry on the next cycle
-            continue
+            live = None  # adb failed: keep re-sending the held session for a while
         except Exception as e:  # unexpected output: log, never crash
             report_error(room, "could not parse dumpsys: %s" % e, state)
-            continue
-
-        info = enrich_info(cfg, sh, info, state)
+            live = None
+        else:
+            live = enrich_info(cfg, sh, live, state)
+        info = room_report(slot, time.monotonic(), live, lambda: foreground_package(adb, serial))
+        if info is None:
+            continue  # nothing to hold: let the report go stale as before
         infos[room] = info
         payload = (info["title"], info["artist"], info["app"], info["playing"])
         now = time.monotonic()
@@ -727,6 +840,23 @@ def selftest():
                             "ParentIndexNumber": 1, "IndexNumber": 1},
          "PlayState": {"IsPaused": False}},
     ]
+    # paused-hold helpers: drive room_report through scripted polls (time, live info, foreground)
+    def shown(info):
+        return None if info is None else [info["title"], info["playing"]]
+
+    def run_hold(steps):
+        slot = new_hold_slot()
+        return [shown(room_report(slot, now, live, lambda fg=fg: fg)) for now, live, fg in steps]
+
+    hold_empty = build_info(None, None, None, "")
+    hold_play = build_info("ActivityRecord{1 u0 com.plexapp.android/.Main t9}", "com.plexapp.android",
+                           PLAYBACK_PLAYING, "Example Movie,2019")
+    hold_pause = build_info("ActivityRecord{1 u0 com.plexapp.android/.Main t9}", "com.plexapp.android",
+                            2, "Example Movie,2019")
+    hold_other = build_info("ActivityRecord{2 u0 com.google.android.youtube.tv/.X t8}",
+                            "com.google.android.youtube.tv", PLAYBACK_PLAYING, "Other Clip,Channel")
+    hold_saver = "com.android.systemui"
+    hold_home = "com.google.android.tvlauncher"
     cases = [
         ("plex episode",
          parse_plex_sessions(plex_episode, shield),
@@ -759,6 +889,15 @@ def selftest():
         ("room_auto lock on blocks", _room_auto_sim(["Upstairs"] * 4, applied="Downstairs", status={"lock_room": "On", "active_room": "Downstairs"})[0], []),
         ("room_auto controller down blocks", _room_auto_sim(["Upstairs"] * 4, applied="Downstairs", status=OSError("down"))[0], []),
         ("room_auto already on, no POST", _room_auto_sim(["Upstairs"] * 4, applied="Downstairs", status={"lock_room": "Off", "active_room": "Upstairs"})[0], []),
+        ("foreground package from dumpsys", FOREGROUND_RE.search("  mResumedActivity: ActivityRecord{ab12 u0 com.plexapp.android/tv.plex.app.MainActivity t4013}").group(1), "com.plexapp.android"),
+        ("home screen detected, dream not", [is_home_package("com.google.android.tvlauncher"), is_home_package("com.android.systemui")], [True, False]),
+        ("hold: session vanishes, shown paused", run_hold([(0, hold_play, hold_saver), (4, hold_empty, hold_saver)]), [["Example Movie", True], ["Example Movie", False]]),
+        ("hold: launcher clears it", run_hold([(0, hold_play, hold_saver), (4, hold_empty, hold_home), (8, hold_empty, hold_saver)]), [["Example Movie", True], ["", False], ["", False]]),
+        ("hold: adb failure keeps report, then stale", run_hold([(0, hold_play, hold_saver), (20, None, hold_saver), (170, None, hold_saver), (200, None, hold_saver)]), [["Example Movie", True], ["Example Movie", False], ["Example Movie", False], None]),
+        ("hold: 6 h cap then clear", run_hold([(0, hold_play, hold_saver), (10, hold_empty, hold_saver), (10 + HOLD_CAP_SECONDS - 1, hold_empty, hold_saver), (10 + HOLD_CAP_SECONDS, hold_empty, hold_saver)]), [["Example Movie", True], ["Example Movie", False], ["Example Movie", False], ["", False]]),
+        ("hold: new session replaces held", run_hold([(0, hold_play, hold_saver), (5, hold_empty, hold_saver), (10, hold_other, hold_saver), (15, hold_empty, hold_saver)]), [["Example Movie", True], ["Example Movie", False], ["Other Clip", True], ["Other Clip", False]]),
+        ("hold: adb failure with nothing held posts nothing", run_hold([(0, None, hold_saver)]), [None]),
+        ("hold: paused live session stays paused", run_hold([(0, hold_pause, hold_saver)]), [["Example Movie", False]]),
     ]
     failed = 0
     for name, got, want in cases:
