@@ -18,7 +18,7 @@
                 SH_HELLO {}  (sent at startup so children register again after a parent restart)
 ]]
 
-local DRIVER_VERSION = "0.3.1"
+local DRIVER_VERSION = "0.3.2"
 local DEFAULT_HOST = "172.21.1.157"
 local DEFAULT_PORT = "8789"
 local DEFAULT_POLL_SECONDS = 60

@@ -5,14 +5,14 @@
 	<name>SmartHQ Hub</name>
 	<model>SmartHQ Hub (parent, read-only LAN bridge client)</model>
 	<created>11/12/2026 12:00 PM</created>
-	<modified>11/12/2026 09:05 AM</modified>
-	<version>2</version>
+	<modified>11/12/2026 09:20 AM</modified>
+	<version>3</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
-	<combo>false</combo>
+	<combo>true</combo>
 	<proxies />
 	<capabilities />
 	<templatedescription>SmartHQ parent. Polls the liesa LAN bridge (/inventory) and pushes each appliance's state to its bound SmartHQ Appliance and SmartHQ Hood Light children. Only write: hood light on/off/dim/high. UNTESTED.</templatedescription>
@@ -101,7 +101,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>0.3.1</default>
+				<default>0.3.2</default>
 			</property>
 		</properties>
 	</config>
