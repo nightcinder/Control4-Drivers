@@ -1,6 +1,10 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.8.0
+  DRIVER_VERSION: 1.9.0
+
+  1.9.0 (UNTESTED): optional curtain automation (Property "Curtain Automation", off by default; per-room
+  "curtains" list in Rooms JSON; SwitchBot Curtain blind proxies get OPEN / CLOSE / SET_POSITION). See
+  CURTAIN_NOTES.md in this folder.
 
   1.8.0 (UNTESTED): presence-based lighting (Properties "Presence Lighting", "Vacancy Delay (min)",
   "Vacancy Overrides Manual Hold"; per-room occ.vacancyDelaySec / occ.invert). Off by default, in which case
@@ -14,10 +18,13 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.8.0"
+DRIVER_VERSION = "1.9.0"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
+local curtains = {}               -- parsed curtains (1.9.0), independent of rooms
+local curtainState = {}           -- proxy id -> { target = last commanded %, at = os.time() } (kept across reloads)
+local curtainDay, curtainSentToday = nil, 0
 local lightIndex = {}             -- device id -> room
 local cloudPct = nil              -- last cloud cover (0-100) or nil
 local cloudStamp = 0
@@ -357,6 +364,107 @@ local function resetOccupancy()
   end
 end
 
+---------------------------------------------------------------------------
+-- curtains (1.9.0, UNTESTED). Master property "Curtain Automation" defaults Off; while Off nothing is sent.
+-- Rooms JSON entry: "curtains":[{"id":<SwitchBot Curtain proxy id>,"name":"...","facing_deg":180,
+--   "open_level":100,"closed_level":0,"open_at":"sunrise+15","close_at":"sunset+30",
+--   "glare_threshold":0.35,"glare_position":25}]
+-- Target is openness 0..100 (0 = closed, 100 = open). Openness maps to a level between closed_level and
+-- open_level. Rules (evaluated each Update pass, not while Away):
+--   before open_at, at/after close_at, or sun below horizon  -> closed (0)
+--   direct sun on the window >= glare_threshold              -> glare_position
+--   otherwise                                                -> open (100)
+-- Direct-sun index = max(0, cos(sun azimuth - facing)) * sin(sun elevation) * cloud transmittance.
+-- Rate limits: a curtain is commanded only when its target moved by >= CURTAIN_MIN_CHANGE points since its
+-- last command AND at least CURTAIN_MIN_GAP_SEC has passed; all curtains together get at most
+-- CURTAIN_DAILY_CAP commands per local day. The cooldown and daily cap are not configurable on purpose.
+---------------------------------------------------------------------------
+local CURTAIN_MIN_GAP_SEC = 900
+local CURTAIN_MIN_CHANGE = 10
+local CURTAIN_DAILY_CAP = 200
+
+local function curtainsOn() return Properties["Curtain Automation"] == "On" end
+
+local function parseCurtains(list, room)
+  if type(list) ~= "table" then return {} end
+  local out = {}
+  for _, c in ipairs(list) do
+    local id = tonumber(c.id) or 0
+    if id > 0 then
+      out[#out + 1] = {
+        id = id,
+        name = c.name or room.name,
+        facing = tonumber(c.facing_deg) or room.facing_deg,
+        open_level = clamp(tonumber(c.open_level) or 100, 0, 100),
+        closed_level = clamp(tonumber(c.closed_level) or 0, 0, 100),
+        open_at = c.open_at or "sunrise+15",
+        close_at = c.close_at or "sunset+30",
+        glare_threshold = clamp(tonumber(c.glare_threshold) or 0.35, 0, 1),
+        glare_position = clamp(tonumber(c.glare_position) or 25, 0, 100),
+      }
+    end
+  end
+  return out
+end
+
+-- returns target openness (0..100) and a short reason, or nil when the sun times cannot be resolved
+local function curtainTarget(c, now, lat, lon)
+  local el, az = SunPositionCached(now, lat, lon)
+  local d = os.date("*t", now)
+  local minNow = d.hour * 60 + d.min
+  local openMin = resolveTimeSpec(c.open_at, now, lat, lon)
+  local closeMin = resolveTimeSpec(c.close_at, now, lat, lon)
+  if not openMin or not closeMin then return nil, "sun times unavailable" end
+  if minNow < openMin or minNow >= closeMin or el <= 0 then return 0, "night" end
+  local glare = 0
+  if c.facing then
+    glare = math.max(0, math.cos(rad(az - c.facing))) * math.sin(rad(el)) * cloudTransmittance(cloudPct)
+  end
+  if glare >= c.glare_threshold then
+    return c.glare_position, string.format("glare %.2f", glare)
+  end
+  return 100, string.format("open, glare %.2f", glare)
+end
+
+local function sendCurtain(c, pct)
+  enqueue(function()
+    if pct >= 100 and c.open_level == 100 then
+      C4:SendToDevice(c.id, "OPEN", {})
+    elseif pct <= 0 and c.closed_level == 0 then
+      C4:SendToDevice(c.id, "CLOSE", {})
+    else
+      local level = c.closed_level + (c.open_level - c.closed_level) * pct / 100
+      C4:SendToDevice(c.id, "SET_POSITION", { POSITION = math.floor(level + 0.5) })
+    end
+  end)
+  dbg("curtain command", c.name, tostring(c.id), "openness", tostring(pct))
+end
+
+local function runCurtains(now, lat, lon)
+  if not curtainsOn() or #curtains == 0 then return end
+  local today = os.date("%Y-%m-%d", now)
+  if curtainDay ~= today then curtainDay, curtainSentToday = today, 0 end
+  for _, c in ipairs(curtains) do
+    local target, why = curtainTarget(c, now, lat, lon)
+    if target == nil then
+      dbg("curtain skipped", c.name, why)
+    else
+      target = math.floor(target + 0.5)
+      local st = curtainState[c.id] or {}
+      curtainState[c.id] = st
+      local moved = (st.target == nil) or (math.abs(target - st.target) >= CURTAIN_MIN_CHANGE)
+      local cooled = (st.at == nil) or (now - st.at >= CURTAIN_MIN_GAP_SEC)
+      if moved and cooled and curtainSentToday < CURTAIN_DAILY_CAP then
+        sendCurtain(c, target)
+        st.target, st.at = target, now
+        curtainSentToday = curtainSentToday + 1
+      elseif moved then
+        dbg("curtain held (cooldown or cap)", c.name, tostring(target), why)
+      end
+    end
+  end
+end
+
 function Update()
   if Properties["Enabled"] ~= "On" then setStatus("Disabled") return end
   local lat = tonumber(Properties["Latitude"])
@@ -507,6 +615,7 @@ function Update()
       end
     end
   end
+  runCurtains(now, lat, lon)
   setStatus(string.format("OK %s | lights driven: %d | rooms held: %d | cloud: %s",
     os.date("%H:%M", now), n, held, cloudPct and (math.floor(cloudPct) .. "%") or "n/a"))
 end
@@ -615,8 +724,14 @@ local function loadRooms()
       C4:RegisterVariableListener(room.occ.dev, room.occ.var)
     end
   end
+  curtains = {}
+  for _, r in ipairs(data) do
+    for _, c in ipairs(parseCurtains(r.curtains, { name = r.name or "Room", facing_deg = tonumber(r.facing_deg) })) do
+      curtains[#curtains + 1] = c
+    end
+  end
   resetOccupancy()
-  dbg("rooms loaded", tostring(#rooms))
+  dbg("rooms loaded", tostring(#rooms), "curtains", tostring(#curtains))
 end
 
 local function startTimers()
