@@ -1,17 +1,17 @@
--- UniFi Controller (parent) driver for Control4 OS 3.4.x. Version 1.0.7 (UNTESTED on hardware).
+-- UniFi Controller (parent) driver for Control4 OS 3.4.x. Version 1.0.8 (UNTESTED on hardware).
 -- Logs in to a UniFi controller, polls power outlets (USP PDU Pro, USP Plug), serves UniFi Outlet child
 -- drivers over a connection, and shows a uibutton web view page listing every outlet with tap-to-toggle.
 -- UNVERIFIED: API paths, outlet JSON fields, PUT body, cookie/CSRF handling, self-signed certificate
 -- handling (TLS_OPTIONS key names). Raw responses are logged at Debug level (secrets masked).
 
-local DRIVER_VERSION = "1.0.7"
+local DRIVER_VERSION = "1.0.8"
 -- The UniFi console uses a self-signed certificate that Control4 cannot verify, so certificate checks are
 -- turned off for this controller only. Passed as the 6th argument (options) of C4:urlGet / urlPost / urlPut
 -- (signature confirmed from the Snap One drivers-common-public url.lua). The key names are curl-style and
 -- UNVERIFIED on OS 3.4; if verification still fails, check these keys first.
 local TLS_OPTIONS = { ssl_verifypeer = 0, ssl_verifyhost = 0 }
-local PAGE_FILE = "outlets2.html"   -- renamed every page release (Navigator caches controller:// pages)
-local PAGE_BUILD = "2"              -- must match the page's PAGE_BUILD and web_view_url in driver.xml
+local PAGE_FILE = "outlets3.html"   -- renamed every page release (Navigator caches controller:// pages)
+local PAGE_BUILD = "3"              -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 local UI_BINDING = 5001
 local CONTROLLER_BINDING = 1        -- child-facing connection on this driver
 local MAX_UI_OUTLETS = 32
@@ -24,7 +24,7 @@ local g_loggedIn = false
 local g_loginInFlight = false
 local g_loginWaiters = {}
 local g_outlets = {}        -- ordered list of outlet records
-local g_outletByKey = {}
+local g_outletByKey = {}; local g_devWatts = {}
 local g_raw = {}            -- devId -> { id, name, overrides = array used as the PUT base, source }
 local g_children = {}       -- child device id -> outlet key
 local g_writeQueue = {}
@@ -332,11 +332,11 @@ local function findEntry(list, index)
 end
 
 local function buildFromDevices(devices)
-  g_outlets, g_outletByKey, g_raw = {}, {}, {}
+  g_outlets, g_outletByKey, g_raw = {}, {}, {}; g_devWatts = {}
   for _, d in ipairs(devices) do
     if isPowerDevice(d) then
       local devId = tostring(d._id or d.mac or d.name or "unknown")
-      local devName = tostring(d.name or d.model or devId)
+      local devName = tostring(d.name or d.model or devId); if d.outlet_ac_power_consumption ~= nil then g_devWatts[devId] = tonumber(d.outlet_ac_power_consumption) end
       local tbl = type(d.outlet_table) == "table" and d.outlet_table or {}
       local ovr = type(d.outlet_overrides) == "table" and d.outlet_overrides or nil
       local base = ovr or tbl
@@ -353,8 +353,8 @@ local function buildFromDevices(devices)
           local o = findEntry(ovr, idx)
           local state = (t and t.relay_state) or (o and o.relay_state) or d.relay_state
           local name = (o and o.name) or (t and t.name) or ("Outlet " .. idx)
-          local rec = { key = devId .. ":" .. idx, devId = devId, devName = devName, index = idx,
-                        name = tostring(name), on = state == true }
+          local watts = nil; if t and t.outlet_power ~= nil then watts = tonumber(t.outlet_power) end; local rec = { key = devId .. ":" .. idx, devId = devId, devName = devName, index = idx,
+                        name = tostring(name), on = state == true, watts = watts }
           table.insert(g_outlets, rec)
           g_outletByKey[rec.key] = rec
         end
@@ -388,7 +388,7 @@ local function publishUi()
   local list = {}
   for i, o in ipairs(g_outlets) do
     if i <= MAX_UI_OUTLETS then
-      list[#list + 1] = { n = i, key = o.key, device = o.devName, name = o.name, on = o.on }
+      list[#list + 1] = { n = i, key = o.key, device = o.devName, name = o.name, on = o.on, watts = o.watts, total_watts = g_devWatts[o.devId] }
     end
   end
   local json = jsonEncode({ t = "unifi", seq = g_uiSeq, build = PAGE_BUILD, version = DRIVER_VERSION,
