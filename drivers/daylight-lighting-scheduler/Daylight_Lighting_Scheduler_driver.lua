@@ -1,7 +1,8 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.10.0
+  DRIVER_VERSION: 1.10.1
 
+  1.10.1: arrival home and away release per-light manual holds (light.overrideUntil) as well as room holds.
   1.10.0 (UNTESTED): manual-change holds are now per light (light.overrideUntil) instead of per room, so a
   manual change to one light no longer delays the scheduled off of the other lights in its room. Scene /
   Off-scene holds stay room-level. Scheduled off is enforced again (re-sent at most every 5 min per light
@@ -23,7 +24,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.10.0"
+DRIVER_VERSION = "1.10.1"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -851,7 +852,7 @@ end
 
 local function releaseAll()
   for _, r in ipairs(rooms) do r.overrideUntil = nil end
-  for _, r in ipairs(rooms) do for _, l in ipairs(r.lights) do l.lastLevel, l.lastCCT = nil, nil end end
+  for _, r in ipairs(rooms) do for _, l in ipairs(r.lights) do l.overrideUntil, l.lastLevel, l.lastCCT = nil, nil, nil end end
 end
 
 local function setPresence(state)
@@ -863,7 +864,7 @@ local function setPresence(state)
   if away then
     for _, r in ipairs(rooms) do
       r.overrideUntil = nil
-      for _, l in ipairs(r.lights) do l.lastLevel, l.lastCCT = nil, nil end
+      for _, l in ipairs(r.lights) do l.overrideUntil, l.lastLevel, l.lastCCT = nil, nil, nil end
     end
   else
     releaseAll()          -- arriving home: drop scene/Off holds, resume the schedule
