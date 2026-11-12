@@ -18,7 +18,7 @@
                 SH_HELLO {}  (sent at startup so children register again after a parent restart)
 ]]
 
-local DRIVER_VERSION = "0.3.2"
+local DRIVER_VERSION = "0.3.3"
 local DEFAULT_HOST = "172.21.1.157"
 local DEFAULT_PORT = "8789"
 local DEFAULT_POLL_SECONDS = 60
@@ -412,6 +412,36 @@ end
 -- ============================================================================
 -- Hood light write (the only write this driver makes). Reuses the 0.2.x logic.
 -- ============================================================================
+-- Manual action: list every appliance from GET /inventory so IDs can be copied.
+-- Writes "id | type | nickname" entries to the read-only "Appliance List" property
+-- and logs each one (logs only show when Log Mode is Print or Log).
+local function listAppliances()
+  setProp("Appliance List", "Fetching")
+  httpGet("/inventory", function(data, code, err)
+    if code ~= 200 then
+      setProp("Appliance List", "Failed: HTTP " .. tostring(code))
+      logMsg("list appliances failed: HTTP " .. tostring(code) .. " " .. tostring(err or ""))
+      return
+    end
+    local list = jsonDecode(data or "")
+    if type(list) ~= "table" then
+      setProp("Appliance List", "Failed: reply was not JSON")
+      logMsg("list appliances failed: reply was not JSON")
+      return
+    end
+    local entries = {}
+    for _, item in ipairs(list) do
+      if type(item) == "table" and type(item.id) == "string" then
+        local line = item.id .. " | " .. tostring(item.type or "?") .. " | " .. tostring(item.nickname or item.name or "")
+        table.insert(entries, line)
+        logMsg("appliance " .. line)
+      end
+    end
+    setProp("Appliance List", #entries > 0 and table.concat(entries, " ; ") or "No appliances")
+    logMsg("listed " .. tostring(#entries) .. " appliance(s) at " .. stamp())
+  end)
+end
+
 local function hoodCommand(replyCid, applianceId, level)
   if applianceId == "" then setStatus("Hood light: no appliance ID"); return end
   if not HOOD_LEVELS[level] then setStatus("Hood light: bad level " .. tostring(level)); return end
@@ -477,6 +507,8 @@ function ExecuteCommand(strCommand, tParams)
   tParams = tParams or {}
   if strCommand == "REFRESH_NOW" then
     poll()
+  elseif strCommand == "LIST_APPLIANCES" then
+    listAppliances()
   elseif strCommand == "SH_REGISTER" then
     onRegister(tParams)
   elseif strCommand == "SH_HOOD_CMD" then
