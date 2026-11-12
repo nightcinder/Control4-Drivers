@@ -213,6 +213,41 @@ def _state_of(app):
     return out
 
 
+def _erd_map(app):
+    # Every ERD the library has cached for this appliance. Decoded values where
+    # the library decodes them; raw hex kept alongside anything it could not.
+    out = {}
+    for code in sorted(app.known_properties, key=lambda c: str(getattr(c, "name", c))):
+        name = str(getattr(code, "name", code))
+        try:
+            val = app.get_erd_value(code)
+        except Exception:
+            continue
+        plain = _plain(val)
+        if isinstance(plain, str) and not isinstance(val, (str, Enum)):
+            out[name] = {"decoded": plain, "raw": app.get_raw_erd_value(code)}
+        else:
+            out[name] = plain
+    return out
+
+
+def _inventory_item(app):
+    erds = _erd_map(app)
+    nick = erds.get("NICKNAME")
+    if isinstance(nick, dict):
+        nick = nick.get("decoded")
+    atype = app.appliance_type
+    return {
+        "id": app.mac_addr,
+        "appliance_type": atype.name if atype is not None else None,
+        "type": _kind(app),
+        "nickname": nick if isinstance(nick, str) else None,
+        "name": getattr(app, "name", None) or app.mac_addr,
+        "online": bool(app.available),
+        "erds": erds,
+    }
+
+
 def _client():
     with LOCK:
         return STATE.get("client")
@@ -220,7 +255,8 @@ def _client():
 
 # ------------------------------------------------------------ websocket side
 
-def _on_update(*_args, **_kwargs):
+async def _on_update(*_args, **_kwargs):
+    # gehomesdk schedules event handlers as coroutines; a plain def raised TypeError.
     STATE["last_success"] = time.time()
     c = _client()
     if c is not None:
@@ -353,6 +389,12 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path.rstrip("/")
         if path == "/health":
             return self._health()
+        if path == "/inventory":
+            # Read-only: every appliance on the account, with its cached ERDs.
+            c = _client()
+            if c is None:
+                return self._send(503, {"error": "not connected", "last_error": STATE["error"]})
+            return self._send(200, [_inventory_item(a) for a in list(c.appliances.values())])
         if path == "/appliances":
             c = _client()
             if c is None:
