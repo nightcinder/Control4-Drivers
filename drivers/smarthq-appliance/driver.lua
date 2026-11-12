@@ -17,7 +17,7 @@
   (0 turns it off). Updates come from the parent poll, so the timing is only as fine as Poll Interval.
 ]]
 
-local DRIVER_VERSION = "0.3.0"
+local DRIVER_VERSION = "0.3.1"
 local BRIDGE_BINDING = 1
 
 local EVENT_OVEN_PREHEATED = 1
