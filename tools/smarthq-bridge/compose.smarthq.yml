@@ -1,0 +1,20 @@
+services:
+  smarthq-bridge:
+    build: ./smarthq-bridge
+    image: smarthq-bridge:0.2.0
+    container_name: smarthq-bridge
+    profiles: ["smarthq"]
+    restart: unless-stopped
+    network_mode: bridge
+    ports:
+      - "8789:8789"
+    volumes:
+      - ./smarthq-bridge/data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8789/health', timeout=4)"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    labels:
+      autokuma: "none"
