@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UniFi Outlets</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; overflow-x: hidden; }
+  body { background: #12151c; color: #e8ecf2; font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 16px; }
+  .hdr { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .hdr .t { flex: 1; min-width: 0; }
+  h1 { font-size: 18px; margin: 0; }
+  #meta { color: #8b93a3; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ref { flex: 0 0 44px; width: 44px; height: 44px; border-radius: 22px; border: 1px solid #2a303c; background: #1c2029;
+         color: #e8ecf2; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+  .ref:active { background: #252b37; }
+  .ref svg { width: 20px; height: 20px; }
+  .dev { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #8b93a3; margin: 18px 2px 8px; }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  @media (max-width: 379px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+  .tile { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 44px; padding: 0 4px 0 12px;
+          background: #1c2029; border: 1px solid #2a303c; border-radius: 12px; }
+  .tile.armed { background: #3b1f24; border-color: #ff5c5c; }
+  .txt { flex: 1; min-width: 0; }
+  .nm { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .nm.dim { color: #6b7385; font-weight: 500; }
+  .hint { color: #ff8a80; font-size: 12px; font-weight: 600; line-height: 1.25; }
+  .sw { flex: 0 0 44px; width: 44px; height: 44px; padding: 0; border: 0; background: transparent; cursor: pointer;
+        position: relative; border-radius: 12px; }
+  .track { position: absolute; left: 0; top: 9px; width: 44px; height: 26px; border-radius: 13px; background: #3a4150;
+           transition: background .15s; }
+  .track.on { background: #34c759; }
+  .track.arm { background: #ff5c5c; }
+  .knob { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff;
+          transition: transform .15s; }
+  .track.on .knob, .track.arm .knob { transform: translateX(18px); }
+  .sw:focus-visible { outline: 2px solid #8ab4ff; outline-offset: 2px; }
+  .empty { color: #8b93a3; padding: 16px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hdr">
+    <div class="t">
+      <h1>UniFi Outlets</h1>
+      <div id="meta">Waiting for the driver...</div>
+    </div>
+    <button class="ref" id="refresh" aria-label="Refresh outlets" title="Refresh">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/>
+      </svg>
+    </button>
+  </div>
+  <div id="list"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var PAGE_BUILD = "2";   // must match PAGE_BUILD in the driver Lua
+  var S = null, lastSeq = null, gotState = false, pending = {}, armed = {};
+  var CONFIRM_MS = 3000;
+  var hasC4 = typeof window.C4 !== "undefined" && window.C4 && typeof window.C4.sendCommand === "function";
+  var $ = function (id) { return document.getElementById(id); };
+
+  // Light double-tap guard only: the same command is ignored for 700 ms after it is sent.
+  function send(cmd) {
+    var t = Date.now();
+    if (pending[cmd] && pending[cmd] > t) return;
+    pending[cmd] = t + 700;
+    if (hasC4) { try { window.C4.sendCommand(cmd, "{}", false, true); } catch (e) {} }
+    else { preview(cmd); }
+  }
+
+  // Finds the JSON snapshot anywhere in a Navigator callback payload.
+  function findState(x, depth) {
+    if (depth > 4 || x == null) return null;
+    if (typeof x === "string") {
+      var t = x.trim();
+      if (t.charAt(0) !== "{" && t.charAt(0) !== "[") return null;
+      try { return findState(JSON.parse(t), depth + 1); } catch (e) { return null; }
+    }
+    if (typeof x === "object") {
+      if (x.t === "unifi" && x.seq != null) return x;
+      for (var k in x) {
+        if (Object.prototype.hasOwnProperty.call(x, k)) {
+          var r = findState(x[k], depth + 1);
+          if (r) return r;
+        }
+      }
+    }
+    return null;
+  }
+
+  // Navigator calls several handlers for one payload; dedupe on seq.
+  function onAnything() {
+    for (var i = 0; i < arguments.length; i++) {
+      var st = findState(arguments[i], 0);
+      if (!st) continue;
+      if (st.seq === lastSeq) return;
+      lastSeq = st.seq;
+      gotState = true;
+      S = st;
+      render();
+      return;
+    }
+  }
+  ["onVariable", "onVariableChanged", "onVariableUpdate", "onDataToUi", "onDataToUI"].forEach(function (n) {
+    window[n] = onAnything;
+  });
+
+  function connect() {
+    if (!hasC4) { preview("UI_HELLO_" + PAGE_BUILD); return; }
+    try { window.C4.subscribeToVariable("UI_STATE", true); } catch (e) {}
+    try { window.C4.subscribeToDataToUi(true); } catch (e) {}
+    send("UI_HELLO_" + PAGE_BUILD);
+    setTimeout(function () {
+      if (gotState) return;
+      try { window.C4.subscribeToVariable("UI_STATE", false); } catch (e) {}
+      send("UI_REFRESH");
+    }, 5000);
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // Raw MAC addresses and placeholder names ("Outlet 3", "USB Outlet 3") are shown dimmer.
+  function isDim(name) {
+    var s = String(name == null ? "" : name).trim();
+    return /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(s) || /^(USB\s+)?Outlet\s*\d+$/i.test(s);
+  }
+
+  function findOutlet(n) {
+    if (!S || !S.outlets) return null;
+    var hit = S.outlets.filter(function (x) { return String(x.n) === String(n); });
+    return hit[0] || null;
+  }
+
+  function render() {
+    if (!S) return;
+    var st = S.status ? String(S.status) : "";
+    var word = S.online ? "Connected" : "Not connected";
+    var line = (st && st.toLowerCase().indexOf(word.toLowerCase()) === 0) ? st : word + (st ? " - " + st : "");
+    $("meta").textContent = line;
+
+    var list = $("list");
+    if (!S.outlets || !S.outlets.length) {
+      list.innerHTML = '<div class="empty">No power outlets found. Check the driver Connection Status.</div>';
+      return;
+    }
+
+    // Group by device in first-seen order; named outlets first within a group, original order otherwise.
+    var groups = [], byDev = {};
+    S.outlets.forEach(function (o, i) {
+      var k = String(o.device == null ? "" : o.device);
+      var g = byDev[k];
+      if (!g) { g = byDev[k] = { name: k, items: [] }; groups.push(g); }
+      g.items.push({ o: o, i: i });
+    });
+
+    var t = Date.now(), html = "";
+    groups.forEach(function (g) {
+      g.items.sort(function (a, b) {
+        return ((isDim(a.o.name) ? 1 : 0) - (isDim(b.o.name) ? 1 : 0)) || (a.i - b.i);
+      });
+      html += '<div class="dev">' + esc(g.name) + '</div><div class="grid">';
+      g.items.forEach(function (x) {
+        var o = x.o, n = String(o.n);
+        var isArmed = !!(armed[n] && armed[n] > t && o.on);
+        var trackCls = isArmed ? "arm" : (o.on ? "on" : "off");
+        html += '<div class="tile' + (isArmed ? ' armed' : '') + '">' +
+          '<div class="txt"><div class="nm' + (isDim(o.name) ? ' dim' : '') + '" title="' + esc(o.name) + '">' + esc(o.name) + '</div>' +
+          (isArmed ? '<div class="hint">Tap again to turn off</div>' : '') + '</div>' +
+          '<button class="sw" role="switch" aria-checked="' + (o.on ? 'true' : 'false') + '" aria-label="' + esc(o.name) +
+          '" data-n="' + esc(n) + '"><span class="track ' + trackCls + '"><span class="knob"></span></span></button>' +
+          '</div>';
+      });
+      html += '</div>';
+    });
+    list.innerHTML = html;
+  }
+
+  // Tap rules: turning ON takes one tap. Turning OFF takes two taps within 3 seconds.
+  $("list").addEventListener("click", function (ev) {
+    var b = ev.target.closest ? ev.target.closest("button.sw") : null;
+    if (!b) return;
+    var n = b.getAttribute("data-n");
+    var o = findOutlet(n);
+    if (!o) return;
+    if (!o.on) { delete armed[n]; send("UI_OUTLET_" + n + "_ON"); return; }
+    var t = Date.now();
+    if (armed[n] && armed[n] > t) {
+      delete armed[n];
+      render();
+      send("UI_OUTLET_" + n + "_OFF");
+      return;
+    }
+    armed[n] = t + CONFIRM_MS;
+    render();
+    setTimeout(function () {
+      if (armed[n] && armed[n] <= Date.now()) { delete armed[n]; render(); }
+    }, CONFIRM_MS + 100);
+  });
+
+  $("refresh").addEventListener("click", function () { send("UI_REFRESH"); });
+
+  function preview(cmd) {
+    // Browser preview only (no Control4): shows the layout with sample data.
+    if (S) return;
+    S = { t: "unifi", seq: 1, build: PAGE_BUILD, online: true, status: "Preview (no Control4)", outlets: [
+      { n: 1, device: "PDU Pro (sample)", name: "Outlet 1", on: true },
+      { n: 2, device: "PDU Pro (sample)", name: "Outlet 2", on: false },
+      { n: 3, device: "PDU Pro (sample)", name: "Office router", on: true },
+      { n: 4, device: "USP Plug (sample)", name: "Plug", on: true },
+      { n: 5, device: "USP Plug (sample)", name: "aa:bb:cc:dd:ee:ff", on: false } ] };
+    render();
+  }
+
+  connect();
+  if (!hasC4) render();
+})();
+</script>
+</body>
+</html>
