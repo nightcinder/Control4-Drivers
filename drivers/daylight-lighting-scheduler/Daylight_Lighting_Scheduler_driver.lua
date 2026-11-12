@@ -1,6 +1,10 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.7.0
+  DRIVER_VERSION: 1.8.0
+
+  1.8.0 (UNTESTED): presence-based lighting (Properties "Presence Lighting", "Vacancy Delay (min)",
+  "Vacancy Overrides Manual Hold"; per-room occ.vacancyDelaySec / occ.invert). Off by default, in which case
+  behaviour matches 1.7.0. See PRESENCE_NOTES.md in this folder.
 
   Drives Lutron (brightness only) and LIFX (brightness + color temp) lights from
   sun position, optional cloud cover, and a time-of-day envelope. Lux / occupancy
@@ -10,7 +14,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.7.0"
+DRIVER_VERSION = "1.8.0"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -297,11 +301,60 @@ end
 ---------------------------------------------------------------------------
 -- main update
 ---------------------------------------------------------------------------
+-- Presence lighting (1.8.0, UNTESTED). Master property "Presence Lighting" defaults Off; while Off, occupancy
+-- behaves exactly as in 1.7.0 (raw sensor value gates turn-on only, nothing is turned off).
+-- While On: a room becomes VACANT only after its sensor has read empty continuously for occ.vacancyDelaySec
+-- (latch, so brief sensor drop-outs do not cut the lights); it becomes occupied again immediately.
+local function presenceOn() return Properties["Presence Lighting"] == "On" end
+
+local function parseOcc(v, room)
+  v = tostring(v or ""):lower()
+  local on = not (v == "0" or v == "false" or v == "off" or v == "" or v == "unoccupied")
+  if room and room.occ and room.occ.invert then on = not on end
+  return on
+end
+
 local function occupied(room)
   if not room.occ then return true end
-  local v = tostring(C4:GetDeviceVariable(room.occ.dev, room.occ.var) or "")
-  v = v:lower()
-  return not (v == "0" or v == "false" or v == "off" or v == "" or v == "unoccupied")
+  if presenceOn() then return not room.latchVacant end
+  return parseOcc(C4:GetDeviceVariable(room.occ.dev, room.occ.var), room)
+end
+
+local function startVacancyTimer(room)
+  if room.vacancyTimer then return end
+  room.vacancyTimer = C4:SetTimer(room.occ.delaySec * 1000, function()
+    room.vacancyTimer = nil
+    local v = C4:GetDeviceVariable(room.occ.dev, room.occ.var)
+    if v ~= nil and presenceOn() and not parseOcc(v, room) then
+      room.latchVacant = true
+      dbg("vacancy confirmed", room.name)
+      Update()
+    end
+  end, false)
+end
+
+local function onOccupancy(room, occNow)
+  if not presenceOn() then return end
+  if occNow then
+    if room.vacancyTimer then room.vacancyTimer:Cancel() room.vacancyTimer = nil end
+    if room.latchVacant then dbg("occupied", room.name) end
+    room.latchVacant = false
+    Update()
+  elseif not room.latchVacant then
+    startVacancyTimer(room)
+  end
+end
+
+-- re-derive latch state from the sensor's current value (startup, Rooms JSON or presence settings changed)
+local function resetOccupancy()
+  for _, room in ipairs(rooms) do
+    if room.occ then
+      if room.vacancyTimer then room.vacancyTimer:Cancel() room.vacancyTimer = nil end
+      room.latchVacant = false                      -- assume occupied until a vacancy is confirmed
+      local v = C4:GetDeviceVariable(room.occ.dev, room.occ.var)
+      if v ~= nil and presenceOn() and not parseOcc(v, room) then startVacancyTimer(room) end
+    end
+  end
 end
 
 function Update()
@@ -352,10 +405,20 @@ function Update()
     if minNow < noon - 60 then room.dayTriggered = false end   -- reset each morning
     local dayActive = dayOk(room.days, now)
 
+    -- presence: lights go off once the room is confirmed vacant. A manual hold keeps them on unless
+    -- "Vacancy Overrides Manual Hold" is On (scene holds are cleared the same way in that case).
+    if presenceOn() and room.occ and room.latchVacant
+       and (not room.overrideUntil or Properties["Vacancy Overrides Manual Hold"] == "On") then
+      room.overrideUntil = nil
+      for _, l in ipairs(room.lights) do
+        if curLevel(l) > 0 then sendLevel(l, 0, rampMs) end
+      end
+    end
+
     -- optional sunrise-based wake ramp (fixed event, off unless enabled)
     local inWake = false
     local w = room.wake
-    if w and w.enabled and dayOk(w.days or room.days, now) then
+    if w and w.enabled and dayOk(w.days or room.days, now) and (not presenceOn() or occupied(room)) then
       local ws = resolveTimeSpec(w.at, now, lat, lon)
       local we = resolveTimeSpec(w.stop, now, lat, lon)
       if ws and we then
@@ -425,7 +488,8 @@ function Update()
             n = n + 1
           end
         end
-      elseif room.follow and not inWindow and dayActive and not (room.offFadeUntil and now < room.offFadeUntil) then
+      elseif room.follow and not inWindow and dayActive and not (room.offFadeUntil and now < room.offFadeUntil)
+             and (not presenceOn() or occupied(room)) then
         -- outside the on/off schedule: only track daylight for lights that are already on
         local level, cct = ComputeRoomTarget(room, now, lat, lon)
         for _, l in ipairs(room.lights) do
@@ -451,6 +515,12 @@ end
 -- override detection
 ---------------------------------------------------------------------------
 function OnWatchedVariableChanged(idDevice, idVariable, strValue)
+  for _, r in ipairs(rooms) do
+    if r.occ and r.occ.dev == idDevice and r.occ.var == idVariable then
+      if strValue ~= nil then onOccupancy(r, parseOcc(strValue, r)) end
+      return
+    end
+  end
   if idVariable ~= LIGHT_LEVEL_VAR then return end
   local room = lightIndex[idDevice]
   if not room then return end
@@ -507,6 +577,9 @@ local function parseWindows(list)
 end
 
 local function loadRooms()
+  for _, r in ipairs(rooms) do
+    if r.vacancyTimer then r.vacancyTimer:Cancel() r.vacancyTimer = nil end
+  end
   rooms, lightIndex = {}, {}
   local ok, data = pcall(function() return C4:JsonDecode(Properties["Rooms JSON"], false) end)
   if not ok or type(data) ~= "table" then setStatus("Rooms JSON invalid") return end
@@ -519,7 +592,11 @@ local function loadRooms()
       max_level = tonumber(r.max_level) or 100,
       away = r.away, on = r.on, off = r.off, off_ramp_min = tonumber(r.off_ramp_min), scenes = r.scenes, days = r.days, windows = parseWindows(r.windows), follow = (r.follow == true), on_daylight = tonumber(r.on_daylight), wake = r.wake,
       lux = (r.lux and r.lux.dev and r.lux.dev > 0) and { dev = r.lux.dev, var = r.lux.var or 1000, target = tonumber(r.lux.target) or 200 } or nil,
-      occ = (r.occ and r.occ.dev and r.occ.dev > 0) and { dev = r.occ.dev, var = r.occ.var or 1000 } or nil,
+      occ = (r.occ and r.occ.dev and r.occ.dev > 0) and {
+        dev = r.occ.dev, var = r.occ.var or 1000,
+        delaySec = math.max(10, tonumber(r.occ.vacancyDelaySec) or (tonumber(Properties["Vacancy Delay (min)"]) or 10) * 60),
+        invert = (r.occ.invert == true),
+      } or nil,
       lights = {},
     }
     for _, l in ipairs(r.lights or {}) do
@@ -533,7 +610,12 @@ local function loadRooms()
       end
     end
     if #room.lights > 0 then table.insert(rooms, room) end
+    if room.occ and #room.lights > 0 then
+      C4:UnregisterVariableListener(room.occ.dev, room.occ.var)
+      C4:RegisterVariableListener(room.occ.dev, room.occ.var)
+    end
   end
+  resetOccupancy()
   dbg("rooms loaded", tostring(#rooms))
 end
 
@@ -563,7 +645,7 @@ function OnDriverLateInit()
 end
 
 function OnPropertyChanged(name)
-  if name == "Rooms JSON" then loadRooms()
+  if name == "Rooms JSON" or name == "Presence Lighting" or name == "Vacancy Delay (min)" then loadRooms()
   elseif name == "Latitude" or name == "Longitude" then sunEvents.day = nil pollCloud()
   elseif name == "Update Interval (min)" or name == "Cloud Poll Interval (min)" then startTimers()
   elseif name == "Cloud Cover Source" then pollCloud()
