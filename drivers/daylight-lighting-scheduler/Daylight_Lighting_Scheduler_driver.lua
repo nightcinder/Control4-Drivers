@@ -1,6 +1,11 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.9.0
+  DRIVER_VERSION: 1.10.0
+
+  1.10.0 (UNTESTED): manual-change holds are now per light (light.overrideUntil) instead of per room, so a
+  manual change to one light no longer delays the scheduled off of the other lights in its room. Scene /
+  Off-scene holds stay room-level. Scheduled off is enforced again (re-sent at most every 5 min per light
+  while the room is still off-window) for lights whose hold has expired or whose off command was dropped.
 
   1.9.0 (UNTESTED): optional curtain automation (Property "Curtain Automation", off by default; per-room
   "curtains" list in Rooms JSON; SwitchBot Curtain blind proxies get OPEN / CLOSE / SET_POSITION). See
@@ -18,7 +23,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.9.0"
+DRIVER_VERSION = "1.10.0"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -505,12 +510,20 @@ function Update()
     return
   end
 
+  local lightsHeld = 0
   for _, room in ipairs(rooms) do
     if room.overrideUntil and now >= room.overrideUntil then
       room.overrideUntil = nil
       dbg("override expired", room.name)
     end
-    if minNow < noon - 60 then room.dayTriggered = false end   -- reset each morning
+    for _, l in ipairs(room.lights) do
+      if l.overrideUntil and now >= l.overrideUntil then
+        l.overrideUntil = nil
+        dbg("light override expired", room.name, tostring(l.id))
+      end
+      if l.overrideUntil then lightsHeld = lightsHeld + 1 end
+    end
+    if minNow < noon - 60 then room.dayTriggered = false; room.offEnforce = nil end   -- reset each morning
     local dayActive = dayOk(room.days, now)
 
     -- presence: lights go off once the room is confirmed vacant. A manual hold keeps them on unless
@@ -519,7 +532,8 @@ function Update()
        and (not room.overrideUntil or Properties["Vacancy Overrides Manual Hold"] == "On") then
       room.overrideUntil = nil
       for _, l in ipairs(room.lights) do
-        if curLevel(l) > 0 then sendLevel(l, 0, rampMs) end
+        if Properties["Vacancy Overrides Manual Hold"] == "On" then l.overrideUntil = nil end
+        if not l.overrideUntil and curLevel(l) > 0 then sendLevel(l, 0, rampMs) end
       end
     end
 
@@ -535,12 +549,14 @@ function Update()
           local frac = clamp((minNow - ws) / math.max(1, tonumber(w.ramp_min) or 30), 0, 1)
           local lvl = math.max(1, (tonumber(w.level) or 40) * frac)
           for _, l in ipairs(room.lights) do
-            local v = clamp(lvl * l.scale, 1, 100)
-            if not l.lastLevel or math.abs(v - l.lastLevel) >= 2 then sendLevel(l, v, 60000) end
-            n = n + 1
+            if not l.overrideUntil then
+              local v = clamp(lvl * l.scale, 1, 100)
+              if not l.lastLevel or math.abs(v - l.lastLevel) >= 2 then sendLevel(l, v, 60000) end
+              n = n + 1
+            end
           end
         elseif (not inWake) and room.wasInWake and not room.overrideUntil then
-          for _, l in ipairs(room.lights) do sendLevel(l, 0, rampMs) end
+          for _, l in ipairs(room.lights) do if not l.overrideUntil then sendLevel(l, 0, rampMs) end end
           dbg("wake window ended", room.name)
         end
       end
@@ -573,11 +589,27 @@ function Update()
 
       if scheduled and room.wasInWindow and not inWindow then
         local offMs = room.off_ramp_min and (room.off_ramp_min * 60000) or rampMs
-        for _, l in ipairs(room.lights) do sendLevel(l, 0, offMs) end
+        for _, l in ipairs(room.lights) do
+          if not l.overrideUntil then sendLevel(l, 0, offMs) end
+        end
+        room.offEnforce = true
         room.offFadeUntil = now + math.ceil(offMs / 1000) + 30   -- keep 'follow' from fighting the fade-out
         dbg("scheduled off", room.name, "fade min", tostring(offMs / 60000))
       end
       room.wasInWindow = inWindow
+      if inWindow then room.offEnforce = nil end
+
+      -- off enforcement: lights whose hold expired (or whose off was dropped) are re-sent off,
+      -- at most once per 5 min per light, while the room is still off-window
+      if room.offEnforce and not presenceOn() and not (room.offFadeUntil and now < room.offFadeUntil) then
+        for _, l in ipairs(room.lights) do
+          if not l.overrideUntil and curLevel(l) > 0 and (not l.lastEnforce or now - l.lastEnforce >= 300) then
+            l.lastEnforce = now
+            sendLevel(l, 0, rampMs)
+            dbg("enforce off", room.name, tostring(l.id))
+          end
+        end
+      end
 
       if inWindow and occupied(room) then
         local level, cct = ComputeRoomTarget(room, now, lat, lon)
@@ -586,7 +618,7 @@ function Update()
           if l.windows or l.window_gain or l.facing_deg or l.max_level then lv = ComputeRoomTarget(room, now, lat, lon, l) end
           local v = clamp(lv * l.scale, 1, 100)
           local isOn = curLevel(l) > 0
-          if scheduled or isOn then       -- follow mode only touches lights that are already on
+          if (scheduled or isOn) and not l.overrideUntil then       -- follow mode only touches lights that are already on
             if not l.lastLevel or math.abs(v - l.lastLevel) >= 2 or not isOn then
               sendLevel(l, v, rampMs)
             end
@@ -601,7 +633,7 @@ function Update()
         -- outside the on/off schedule: only track daylight for lights that are already on
         local level, cct = ComputeRoomTarget(room, now, lat, lon)
         for _, l in ipairs(room.lights) do
-          if curLevel(l) > 0 then
+          if curLevel(l) > 0 and not l.overrideUntil then
             local lv = level
             if l.windows or l.window_gain or l.facing_deg or l.max_level then lv = ComputeRoomTarget(room, now, lat, lon, l) end
             local v = clamp(lv * l.scale, 1, 100)
@@ -616,8 +648,8 @@ function Update()
     end
   end
   runCurtains(now, lat, lon)
-  setStatus(string.format("OK %s | lights driven: %d | rooms held: %d | cloud: %s",
-    os.date("%H:%M", now), n, held, cloudPct and (math.floor(cloudPct) .. "%") or "n/a"))
+  setStatus(string.format("OK %s | lights driven: %d | rooms held: %d | lights held: %d | cloud: %s",
+    os.date("%H:%M", now), n, held, lightsHeld, cloudPct and (math.floor(cloudPct) .. "%") or "n/a"))
 end
 
 ---------------------------------------------------------------------------
@@ -641,8 +673,8 @@ function OnWatchedVariableChanged(idDevice, idVariable, strValue)
   local v = tonumber(strValue) or 0
   if math.abs(v - light.lastLevel) > 8 then
     local holdSec = (tonumber(Properties["Override Hold (min)"]) or 120) * 60
-    room.overrideUntil = math.max(room.overrideUntil or 0, now + holdSec)   -- never shorten a scene hold
-    dbg("manual change detected, holding", room.name, "for min", tostring(holdSec / 60))
+    light.overrideUntil = math.max(light.overrideUntil or 0, now + holdSec)   -- per light; never shorten a hold
+    dbg("manual change detected, holding light", tostring(light.id), room.name, "for min", tostring(holdSec / 60))
   end
 end
 
