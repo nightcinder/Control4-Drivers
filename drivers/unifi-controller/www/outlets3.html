@@ -25,7 +25,7 @@
   .tile.armed { background: #3b1f24; border-color: #ff5c5c; }
   .txt { flex: 1; min-width: 0; }
   .nm { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .nm.dim { color: #6b7385; font-weight: 500; }
+  .nm.dim { color: #6b7385; font-weight: 500; } .watts { color: #6b7385; font-size: 12px; line-height: 1.25; white-space: nowrap; }
   .hint { color: #ff8a80; font-size: 12px; font-weight: 600; line-height: 1.25; }
   .sw { flex: 0 0 44px; width: 44px; height: 44px; padding: 0; border: 0; background: transparent; cursor: pointer;
         position: relative; border-radius: 12px; }
@@ -59,7 +59,7 @@
 <script>
 (function () {
   "use strict";
-  var PAGE_BUILD = "2";   // must match PAGE_BUILD in the driver Lua
+  var PAGE_BUILD = "3";   // must match PAGE_BUILD in the driver Lua
   var S = null, lastSeq = null, gotState = false, pending = {}, armed = {};
   var CONFIRM_MS = 3000;
   var hasC4 = typeof window.C4 !== "undefined" && window.C4 && typeof window.C4.sendCommand === "function";
@@ -135,7 +135,7 @@
     return /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(s) || /^(USB\s+)?Outlet\s*\d+$/i.test(s);
   }
 
-  function findOutlet(n) {
+  function isNum(v) { return typeof v === "number" && isFinite(v); } function fmtW(w) { return w === 0 ? "0 W" : w.toFixed(1) + " W"; } function findOutlet(n) {
     if (!S || !S.outlets) return null;
     var hit = S.outlets.filter(function (x) { return String(x.n) === String(n); });
     return hit[0] || null;
@@ -168,14 +168,14 @@
       g.items.sort(function (a, b) {
         return ((isDim(a.o.name) ? 1 : 0) - (isDim(b.o.name) ? 1 : 0)) || (a.i - b.i);
       });
-      html += '<div class="dev">' + esc(g.name) + '</div><div class="grid">';
+      var gt = g.items[0] ? g.items[0].o.total_watts : null; html += '<div class="dev">' + esc(g.name) + (isNum(gt) ? ' · ' + Math.round(gt) + ' W' : '') + '</div><div class="grid">';
       g.items.forEach(function (x) {
         var o = x.o, n = String(o.n);
         var isArmed = !!(armed[n] && armed[n] > t && o.on);
         var trackCls = isArmed ? "arm" : (o.on ? "on" : "off");
         html += '<div class="tile' + (isArmed ? ' armed' : '') + '">' +
           '<div class="txt"><div class="nm' + (isDim(o.name) ? ' dim' : '') + '" title="' + esc(o.name) + '">' + esc(o.name) + '</div>' +
-          (isArmed ? '<div class="hint">Tap again to turn off</div>' : '') + '</div>' +
+          (isNum(o.watts) ? '<div class="watts">' + fmtW(o.watts) + '</div>' : '') + (isArmed ? '<div class="hint">Tap again to turn off</div>' : '') + '</div>' +
           '<button class="sw" role="switch" aria-checked="' + (o.on ? 'true' : 'false') + '" aria-label="' + esc(o.name) +
           '" data-n="' + esc(n) + '"><span class="track ' + trackCls + '"><span class="knob"></span></span></button>' +
           '</div>';
