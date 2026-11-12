@@ -1,10 +1,10 @@
--- UniFi Controller (parent) driver for Control4 OS 3.4.x. Version 1.0.8 (UNTESTED on hardware).
+-- UniFi Controller (parent) driver for Control4 OS 3.4.x. Version 1.0.9 (UNTESTED on hardware).
 -- Logs in to a UniFi controller, polls power outlets (USP PDU Pro, USP Plug), serves UniFi Outlet child
 -- drivers over a connection, and shows a uibutton web view page listing every outlet with tap-to-toggle.
 -- UNVERIFIED: API paths, outlet JSON fields, PUT body, cookie/CSRF handling, self-signed certificate
 -- handling (TLS_OPTIONS key names). Raw responses are logged at Debug level (secrets masked).
 
-local DRIVER_VERSION = "1.0.8"
+local DRIVER_VERSION = "1.0.9"
 -- The UniFi console uses a self-signed certificate that Control4 cannot verify, so certificate checks are
 -- turned off for this controller only. Passed as the 6th argument (options) of C4:urlGet / urlPost / urlPut
 -- (signature confirmed from the Snap One drivers-common-public url.lua). The key names are curl-style and
@@ -34,6 +34,8 @@ local g_timer = nil          -- keeps a reference so Lua does not garbage-collec
 local g_gen = 0             -- poll timer generation
 local g_uiSeq = 0
 local g_status = "Not configured"
+local g_clientNames = {}    -- lowercase MAC -> alias or hostname, from rest/user
+local g_clientsAt = nil     -- os.time() of the last client fetch (throttle: 10 minutes)
 
 local function prop(name) return (Properties and Properties[name]) or "" end
 
@@ -331,6 +333,11 @@ local function findEntry(list, index)
   return nil
 end
 
+-- True when a name is a bare MAC address, which the controller sends when a device is tied to an outlet.
+local function isMacName(s)
+  return type(s) == "string" and string.match(s, "^%x%x:%x%x:%x%x:%x%x:%x%x:%x%x$") ~= nil
+end
+
 local function buildFromDevices(devices)
   g_outlets, g_outletByKey, g_raw = {}, {}, {}; g_devWatts = {}
   for _, d in ipairs(devices) do
@@ -355,11 +362,78 @@ local function buildFromDevices(devices)
           local name = (o and o.name) or (t and t.name) or ("Outlet " .. idx)
           local watts = nil; if t and t.outlet_power ~= nil then watts = tonumber(t.outlet_power) end; local rec = { key = devId .. ":" .. idx, devId = devId, devName = devName, index = idx,
                         name = tostring(name), on = state == true, watts = watts }
+          -- Keep the controller's MAC name so the display name can be resolved from client names later.
+          if isMacName(rec.name) then rec.mac = rec.name end
           table.insert(g_outlets, rec)
           g_outletByKey[rec.key] = rec
         end
       end
     end
+  end
+end
+
+-- True when at least one outlet is named only by a MAC address.
+local function anyMacOutlet()
+  for _, o in ipairs(g_outlets) do
+    if o.mac then return true end
+  end
+  return false
+end
+
+-- Client names are refetched at most every 10 minutes.
+local function clientsStale()
+  return g_clientsAt == nil or (os.time() - g_clientsAt) >= 600
+end
+
+-- Loads GET rest/user into g_clientNames (lowercase MAC -> name, else hostname). Calls done() exactly once,
+-- even on failure, so outlet refresh never depends on it. A failed or empty response keeps the previous names.
+local function fetchClients(done)
+  g_clientsAt = os.time()
+  local finished = false
+  local function finish()
+    if not finished then
+      finished = true
+      done()
+    end
+  end
+  local ok, e = pcall(function()
+    apiCall("GET", "/api/s/" .. prop("Site") .. "/rest/user", nil, function(code, data)
+      if code ~= 200 then logv("client names: HTTP " .. tostring(code) .. ", keeping previous names", false) end
+      pcall(function()
+        local obj = (code == 200) and jsonDecode(data or "") or nil
+        if type(obj) ~= "table" or type(obj.data) ~= "table" then return end
+        local names, count = {}, 0
+        for _, c in ipairs(obj.data) do
+          if type(c) == "table" and type(c.mac) == "string" then
+            local label = nil
+            if type(c.name) == "string" and c.name ~= "" then
+              label = c.name
+            elseif type(c.hostname) == "string" and c.hostname ~= "" then
+              label = c.hostname
+            end
+            if label then
+              names[string.lower(c.mac)] = label
+              count = count + 1
+            end
+          end
+        end
+        g_clientNames = names
+        logv("client names: " .. count .. " loaded", false)
+      end)
+      finish()
+    end)
+  end)
+  if not ok then
+    logv("client names: request error " .. mask(tostring(e)), false)
+    finish()
+  end
+end
+
+-- Sets each MAC-named outlet's display name to its client name, or leaves the MAC when none is known.
+-- Runs on every device refresh, so it always uses the newest loaded names.
+local function applyClientNames()
+  for _, o in ipairs(g_outlets) do
+    if o.mac then o.name = g_clientNames[string.lower(o.mac)] or o.mac end
   end
 end
 
@@ -371,7 +445,17 @@ local function refreshDevices(cb)
       return
     end
     buildFromDevices(obj.data)
-    cb(true)
+    -- Client names are loaded before this poll's names are applied when a fetch is due, so the first poll
+    -- already shows them. The fetch is skipped unless an outlet is MAC-named and the list is stale.
+    if anyMacOutlet() and clientsStale() then
+      fetchClients(function()
+        applyClientNames()
+        cb(true)
+      end)
+    else
+      applyClientNames()
+      cb(true)
+    end
   end)
 end
 
@@ -426,7 +510,7 @@ local function doWrite(job, cb)
     local e = findEntry(arr, o.index)
     if not e then
       if raw.source == "outlet_overrides" then cb(false, "outlet index not in outlet_overrides; refusing partial update"); return end
-      e = { index = o.index, name = o.name }
+      e = { index = o.index, name = o.mac or o.name }
       table.insert(arr, e)
     end
     e.relay_state = want
