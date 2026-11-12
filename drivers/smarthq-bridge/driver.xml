@@ -2,11 +2,11 @@
 	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with SmartHQ, GE Appliances or Control4</copyright>
 	<creator>Custom Driver Project</creator>
 	<manufacturer>Custom</manufacturer>
-	<name>SmartHQ Bridge</name>
-	<model>SmartHQ Bridge (parent, read-only LAN bridge client)</model>
+	<name>SmartHQ Hub</name>
+	<model>SmartHQ Hub (parent, read-only LAN bridge client)</model>
 	<created>11/12/2026 12:00 PM</created>
-	<modified>11/12/2026 08:50 AM</modified>
-	<version>1</version>
+	<modified>11/12/2026 09:05 AM</modified>
+	<version>2</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -101,7 +101,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>0.3.0</default>
+				<default>0.3.1</default>
 			</property>
 		</properties>
 	</config>
