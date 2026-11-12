@@ -1,19 +1,20 @@
 --[[
   Roborock Vacuum via LAN HTTP bridge (Control4 DriverWorks, OS 3.4.x)
-  Version: 0.2.0  (UNTESTED on real Composer/Director; see docs/roborock.md)
+  Version: 0.3.0  (UNTESTED on real Composer/Director; see docs/roborock.md)
   v0.2.0 adds a uibutton proxy (binding 5001) and the Navigator web view www/vacuum1.html.
+  v0.3.0 exposes the map's rooms in the UI_STATE snapshot and adds UI_CLEAN_ROOMS_<ids>.
   The page reads the UI_STATE snapshot and sends UI_* commands through ExecuteCommand.
 
   Bridge endpoints (plain HTTP on the LAN):
-    GET  /state    -> {"state":"charging","battery":100,"error":"none","rooms":[],"last_error":null,...}
+    GET  /state    -> {"state":"charging","battery":100,"error":"none","rooms":[{"id":16,"name":"Study"}],"last_error":null,...}
     POST /command  -> {"action":"start|stop|pause|dock|clean_rooms","rooms":[ids]}
   Polls /state every Poll Interval seconds (minimum 30).
   The state fields are read with simple key patterns (the bridge sends flat scalar fields).
 ]]
 
-local DRIVER_VERSION = "0.2.4"
+local DRIVER_VERSION = "0.3.0"
 local PROXY_BINDING = 5001          -- uibutton proxy (tile, icon and web view)
-local UI_BUILD = "1"                -- must match PAGE_BUILD in www/vacuum1.html
+local UI_BUILD = "2"                -- must match PAGE_BUILD in www/vacuum1.html
 local DEFAULT_HOST = "172.21.1.157"
 local DEFAULT_PORT = "8788"
 local DEFAULT_POLL = 60
@@ -48,6 +49,7 @@ local state = {
   err = "none",
   lastErr = "",
   icon = nil,
+  roomsJson = "[]",     -- v0.3.0: [{"id":16,"name":"Study"}, ...] as JSON text
 }
 
 -- ============================================================================
@@ -166,9 +168,10 @@ local function publishUi()
   local batt = "null"
   if state.battery then batt = tostring(state.battery) end
   local json = string.format(
-    '{"t":"rbrock","seq":%d,"build":"%s","version":"%s","online":%s,"state":"%s","battery":%s,"error":"%s","lastError":"%s"}',
+    '{"t":"rbrock","seq":%d,"build":"%s","version":"%s","online":%s,"state":"%s","battery":%s,"error":"%s","lastError":"%s","rooms":%s}',
     state.uiSeq, UI_BUILD, DRIVER_VERSION, state.online and "true" or "false",
-    jsonEscape(state.st or ""), batt, jsonEscape(state.err or "none"), jsonEscape(state.lastErr or ""))
+    jsonEscape(state.st or ""), batt, jsonEscape(state.err or "none"), jsonEscape(state.lastErr or ""),
+    state.roomsJson)
   setVar(VAR_UI, json)
   pcall(C4.SendDataToUI, C4, json)
 end
@@ -208,6 +211,17 @@ local function applyState(body)
   local battery = numField(body, "battery")
   local err = strField(body, "error") or "none"
   local lastErr = strField(body, "last_error")
+
+  -- v0.3.0: rooms arrive as an array of {"id":N,"name":"..."} objects. The names are
+  -- already JSON-escaped by the bridge, so they are copied through as they are.
+  local parts = {}
+  local roomsBlock = body:match('"rooms"%s*:%s*(%b[])')
+  if roomsBlock then
+    for id, name in roomsBlock:gmatch('"id"%s*:%s*(%d+)%s*,%s*"name"%s*:%s*"([^"]*)"') do
+      parts[#parts + 1] = '{"id":' .. id .. ',"name":"' .. name .. '"}'
+    end
+  end
+  state.roomsJson = "[" .. table.concat(parts, ",") .. "]"
 
   setProp("State", st)
   setVar(VAR_STATE, st)
@@ -345,6 +359,18 @@ local function handleUi(cmd)
   if action then
     logmsg("web view: " .. action)
     sendCommand(action)
+  elseif cmd:sub(1, 15) == "UI_CLEAN_ROOMS_" then
+    -- Room ids are encoded as underscore-separated integers, e.g. UI_CLEAN_ROOMS_16_17
+    local rooms = {}
+    for id in cmd:sub(16):gmatch("%d+") do
+      rooms[#rooms + 1] = id
+    end
+    if #rooms == 0 then
+      logmsg("web view: clean rooms with no room ids")
+      return
+    end
+    logmsg("web view: clean rooms " .. table.concat(rooms, ","))
+    sendCommand("clean_rooms", rooms)
   elseif cmd == "UI_REFRESH" then
     publishUi()
     schedule(1)

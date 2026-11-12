@@ -20,6 +20,7 @@ DATA_FILE = os.environ.get("ROBOROCK_DATA", "/data/roborock.json")
 PORT = int(os.environ.get("PORT", "8788"))
 POLL_INTERVAL = max(60, int(os.environ.get("POLL_INTERVAL", "60")))
 MAX_AGE = 300
+ROOMS_REFRESH_SECONDS = 600
 ACTIONS = {"start", "stop", "pause", "dock", "clean_rooms"}
 MAX_BODY = 4096
 
@@ -92,8 +93,16 @@ async def poll_once(manager):
     raise RuntimeError("no v1 vacuum found on this account")
 
 
+async def load_rooms(props):
+    """Return the map's rooms as [{"id": segment_id, "name": room_name}, ...]."""
+    await props.rooms.refresh()
+    return [{"id": seg, "name": room.name}
+            for seg, room in sorted(props.rooms.room_map.items())]
+
+
 async def poller(saved):
     manager = None
+    rooms_at = 0.0  # time of the last room refresh (0 = never)
     while True:
         try:
             if manager is None:
@@ -102,9 +111,16 @@ async def poller(saved):
             RUNTIME["props"] = props
             with state_lock:
                 STATE.update(snap)
-                STATE["rooms"] = []  # room/segment listing not implemented yet
                 STATE["last_success"] = time.time()
                 STATE["last_error"] = None
+            if time.time() - rooms_at >= ROOMS_REFRESH_SECONDS:
+                rooms_at = time.time()  # on failure, also wait the full interval
+                try:
+                    rooms = await load_rooms(props)
+                    with state_lock:
+                        STATE["rooms"] = rooms
+                except Exception as exc:  # room list is optional; status keeps working
+                    log.warning("room refresh failed: %s", type(exc).__name__)
         except Exception as exc:  # keep polling; never log secrets
             log.warning("poll failed: %s", type(exc).__name__)
             with state_lock:

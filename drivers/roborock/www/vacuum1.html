@@ -32,6 +32,12 @@
   #pause { background:#ffb84d; }
   #dock  { background:#7fc4ff; }
   #stop  { background:#ff7b7b; }
+  .rooms-card h2 { font-size:1.1rem; margin:0 0 10px; font-weight:600; }
+  .rooms { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .room { display:flex; align-items:center; gap:10px; background:#21262d; border-radius:12px;
+    padding:12px; font-size:1.1rem; cursor:pointer; min-width:0; }
+  .room input { width:24px; height:24px; margin:0; flex:none; accent-color:#b392f0; }
+  .clean-btn { display:block; width:100%; min-height:64px; margin-top:12px; font-size:1.2rem; background:#b392f0; }
   footer { margin-top:auto; font-size:.85rem; color:#6e7681; text-align:center; }
   @media (min-width:900px) { button { min-height:140px; font-size:1.8rem; } h1 { font-size:1.6rem; } }
 </style>
@@ -53,19 +59,27 @@
 </div>
 
 <div class="grid">
-  <button id="start" data-cmd="UI_START" disabled>Start</button>
+  <button id="start" data-cmd="UI_START" disabled>Clean All</button>
   <button id="pause" data-cmd="UI_PAUSE" disabled>Pause</button>
   <button id="dock"  data-cmd="UI_DOCK" disabled>Dock</button>
   <button id="stop"  data-cmd="UI_STOP" disabled>Stop</button>
 </div>
 
-<footer>Page build 1 - driver 0.2.0 - UNTESTED</footer>
+<div class="card rooms-card">
+  <h2>Clean rooms</h2>
+  <p id="norooms" class="err">Rooms not loaded yet</p>
+  <div id="rooms" class="rooms" style="display:none"></div>
+  <button id="clean" class="clean-btn" disabled>Clean Selected</button>
+</div>
+
+<footer>Page build 2 - driver 0.3.0 - UNTESTED</footer>
 
 <script>
 (function () {
   "use strict";
-  var PAGE_BUILD = "1";              // must match UI_BUILD in driver.lua
+  var PAGE_BUILD = "2";              // must match UI_BUILD in driver.lua
   var S = null, lastSeq = null, gotState = false, startLockUntil = 0;
+  var roomsKey = "", selected = {};  // room checkbox state, keyed by room id
   var hasC4 = !!(window.C4 && typeof window.C4.sendCommand === "function");
   var LABELS = { cleaning: "Cleaning", zoned_cleaning: "Cleaning (zoned)", segment_cleaning: "Cleaning (room)",
     spot_cleaning: "Spot cleaning", docked: "Docked", charging: "Charging", paused: "Paused", idle: "Idle",
@@ -77,15 +91,63 @@
     if (hasC4) { try { window.C4.sendCommand(cmd, "{}", false, true); } catch (e) {} }
   }
 
-  // Start is locked for 3 s after a tap so it cannot fire twice. Other buttons are not locked.
+  // Clean All and Clean Selected are locked for 3 s after a tap so they cannot fire twice.
+  // Pause, Dock and Stop are not locked.
   function tap(cmd) {
-    if (cmd === "UI_START") {
+    var locks = cmd === "UI_START" || cmd.indexOf("UI_CLEAN_ROOMS_") === 0;
+    if (locks) {
       if (Date.now() < startLockUntil) return;
       startLockUntil = Date.now() + 3000;
       render();
       setTimeout(render, 3100);
     }
     send(cmd);
+  }
+
+  // Rooms come from S.rooms ([{id, name}, ...]) in the UI_STATE snapshot.
+  function currentRooms() {
+    return (S && S.rooms && S.rooms.length) ? S.rooms : [];
+  }
+
+  function selectedIds() {
+    return currentRooms().filter(function (r) { return selected[r.id]; }).map(function (r) { return r.id; });
+  }
+
+  function updateClean() {
+    var online = !!(S && S.online);
+    var locked = Date.now() < startLockUntil;
+    $("clean").disabled = !online || locked || selectedIds().length === 0;
+  }
+
+  // Rebuilds the checkbox list only when the room list changes, so ticks survive the 1 s redraw.
+  function renderRooms() {
+    var rooms = currentRooms();
+    var key = JSON.stringify(rooms);
+    if (key !== roomsKey) {
+      roomsKey = key;
+      var list = $("rooms");
+      list.innerHTML = "";
+      var known = {};
+      rooms.forEach(function (r) {
+        known[r.id] = true;
+        var lab = document.createElement("label");
+        lab.className = "room";
+        var cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = !!selected[r.id];
+        cb.addEventListener("change", function () {
+          if (cb.checked) selected[r.id] = true; else delete selected[r.id];
+          updateClean();
+        });
+        lab.appendChild(cb);
+        lab.appendChild(document.createTextNode(" " + (r.name || ("Room " + r.id))));
+        list.appendChild(lab);
+      });
+      Object.keys(selected).forEach(function (k) { if (!known[k]) delete selected[k]; });
+    }
+    $("norooms").style.display = rooms.length ? "none" : "block";
+    $("rooms").style.display = rooms.length ? "grid" : "none";
+    updateClean();
   }
 
   // Finds the JSON snapshot anywhere in a Navigator callback payload.
@@ -139,6 +201,7 @@
     $("err").textContent = e && e !== "none" ? "Last error: " + e : "No errors";
     ["pause", "dock", "stop"].forEach(function (id) { $(id).disabled = !online; });
     $("start").disabled = !online || locked;
+    renderRooms();
   }
 
   function connect() {
@@ -153,6 +216,15 @@
   for (var i = 0; i < btns.length; i++) {
     btns[i].addEventListener("click", function (ev) { tap(ev.currentTarget.getAttribute("data-cmd")); });
   }
+  $("clean").addEventListener("click", function () {
+    var ids = selectedIds();
+    if (!ids.length) return;
+    tap("UI_CLEAN_ROOMS_" + ids.join("_"));
+    // Clear the ticks once the command is sent; the list is rebuilt unticked.
+    selected = {};
+    roomsKey = "";
+    renderRooms();
+  });
   setInterval(render, 1000);
   render();
   connect();
