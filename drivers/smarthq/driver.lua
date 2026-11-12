@@ -1,6 +1,6 @@
 --[[
   SmartHQ Bridge (Control4 DriverWorks, OS 3.4.x)
-  Version: 0.2.0  (adds hood light control; UNTESTED on real Composer/Director; see docs/smarthq.md)
+  Version: 0.2.1  (fixes proxy declaration and icon path; 0.2.0 adds hood light control; UNTESTED on real Composer/Director; see docs/smarthq.md)
 
   Client for the LAN HTTP bridge on liesa:
     GET {base}/health
@@ -12,7 +12,7 @@
   (no dishwasher was online when this was written), so they are matched from a list of guesses.
 ]]
 
-local DRIVER_VERSION = "0.2.0"
+local DRIVER_VERSION = "0.2.1"
 local HOOD_LIGHT_PROXY = 5001
 local DEFAULT_HOST = "172.21.1.157"
 local DEFAULT_PORT = "8789"

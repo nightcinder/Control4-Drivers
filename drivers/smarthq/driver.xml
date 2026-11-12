@@ -5,16 +5,16 @@
 	<name>SmartHQ Bridge</name>
 	<model>SmartHQ Bridge (read-only LAN bridge)</model>
 	<created>11/12/2026 12:00 PM</created>
-	<modified>11/12/2026 12:00 PM</modified>
-	<version>2</version>
+	<modified>11/12/2026 08:20 AM</modified>
+	<version>3</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
 	<combo>false</combo>
-	<proxies>
-		<proxy proxybindingid="5001" name="Hood Light" type="light_v2" image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png" />
+	<proxies qty="1">
+		<proxy proxybindingid="5001" name="Hood Light" primary="True" image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png">light_v2</proxy>
 	</proxies>
 	<capabilities />
 	<templatedescription>SmartHQ read-only bridge client for oven and dishwasher state. Polls the liesa LAN bridge. Hood light on/off only (v0.2.0); no oven or dishwasher control. UNTESTED.</templatedescription>
@@ -130,7 +130,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>0.1.0</default>
+				<default>0.2.1</default>
 			</property>
 			<property>
 				<name>Oven State</name>
