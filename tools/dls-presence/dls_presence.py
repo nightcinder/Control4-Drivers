@@ -13,7 +13,7 @@ Unavailable sources (None) are ignored, so an outage in one source never forces 
   python3 dls_presence.py --l360                    # Life360 members: place name, fix age, home? (no coordinates)
   python3 dls_presence.py --notify-test             # send a test alert through NOTIFY_SMTP/NOTIFY_TO
   python3 dls_presence.py                           # run forever (systemd)
-Env:  PROM_URL (default http://localhost:9090)  EA1_HOST  EA1_PORT (8730)  DLS_TOKEN (the driver's Presence Token)
+Env:  PROM_URL (default http://localhost:9090)  EA1_HOST  EA1_PORT (8730)  DLS_TOKEN (REQUIRED, no default; must equal the driver's Presence Token property)
       PHONE_NAME (default Pixel-11-Pro)  AWAY_AFTER_MIN (default 5)  POLL_SEC (default 30)
       PEOPLE       optional JSON list, e.g. [{"name":"Nick","unifi":"Pixel-11-Pro","life360":"Nick"}]
                    default: one person built from PHONE_NAME (+ LIFE360_MEMBER if set)
@@ -32,7 +32,7 @@ VERSION = "1.2.1"
 PROM = os.environ.get("PROM_URL", "http://localhost:9090").rstrip("/")
 HOST = os.environ.get("EA1_HOST", "")
 PORT = int(os.environ.get("EA1_PORT", "8730"))
-TOKEN = os.environ.get("DLS_TOKEN", "2mdjxh5ynJBUkwIoMmH4RwCcBz8gmTSA")
+TOKEN = os.environ.get("DLS_TOKEN", "").strip()  # required; no default on purpose
 PHONE = os.environ.get("PHONE_NAME", "Pixel-11-Pro")
 AWAY_AFTER = float(os.environ.get("AWAY_AFTER_MIN", "5")) * 60
 POLL = float(os.environ.get("POLL_SEC", "30"))
@@ -312,6 +312,8 @@ def main():
         here, detail = household()
         print("household:", {True: "HOME", False: "AWAY", None: "UNKNOWN"}[here], detail)
         return
+    if not TOKEN:
+        sys.exit("DLS_TOKEN is not set: export it in /etc/dls-presence.env (must match the driver's Presence Token)")
     if not HOST:
         sys.exit("set EA1_HOST to the EA-1 IP address")
     print(f"dls_presence v{VERSION} starting", flush=True)
