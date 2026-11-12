@@ -1,5 +1,5 @@
 <devicedata>
-  <version>2</version>
+  <version>3</version>
   <manufacturer>Nick Adamany</manufacturer>
   <name>Daylight Lighting Scheduler</name>
   <model>DLS</model>
@@ -144,6 +144,25 @@
         <name>Presence Token</name>
         <type>STRING</type>
         <default></default>
+      </property>
+      <property>
+        <name>Presence Lighting</name>
+        <type>LIST</type>
+        <items><item>Off</item><item>On</item></items>
+        <default>Off</default>
+      </property>
+      <property>
+        <name>Vacancy Delay (min)</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>1</minimum>
+        <maximum>240</maximum>
+        <default>10</default>
+      </property>
+      <property>
+        <name>Vacancy Overrides Manual Hold</name>
+        <type>LIST</type>
+        <items><item>Off</item><item>On</item></items>
+        <default>Off</default>
       </property>
       <property>
         <name>Color Command Mode</name>
