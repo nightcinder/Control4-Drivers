@@ -1,19 +1,21 @@
 <devicedata>
-	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Jellyfin or Control4</copyright>
+	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Jellyfin, Plex or Control4</copyright>
 	<creator>Custom Driver Project</creator>
-	<manufacturer>Jellyfin</manufacturer>
-	<name>Jellyfin Now Playing</name>
-	<model>Jellyfin Server (REST API)</model>
+	<manufacturer>Custom</manufacturer>
+	<name>Media Server (Jellyfin / Plex)</name>
+	<model>Media Server (Jellyfin / Plex)</model>
 	<created>11/12/2026 12:00 PM</created>
 	<modified>11/12/2026 12:00 PM</modified>
-	<version>1</version>
+	<version>2</version>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
 	<combo>false</combo>
 	<proxies />
 	<capabilities />
-	<templatedescription>Jellyfin Now Playing - polls a Jellyfin server for the active session and exposes now-playing variables and transport commands. UNTESTED.</templatedescription>
+	<templatedescription>Media Server now playing for Jellyfin or Plex. Polls the server for the active session and exposes now-playing variables and transport commands. UNTESTED.</templatedescription>
+	<small image_source="c4z">icons/device_sm.png</small>
+	<large image_source="c4z">icons/device_lg.png</large>
 
 	<config>
 		<power_management_method>AlwaysOn</power_management_method>
@@ -25,7 +27,7 @@
 		<commands>
 			<command>
 				<name>Play/Pause</name>
-				<description>Toggle play or pause on the active Jellyfin session</description>
+				<description>Toggle play or pause on the active session</description>
 			</command>
 			<command>
 				<name>Play</name>
@@ -97,13 +99,23 @@
 
 		<properties>
 			<property>
+				<name>Server Type</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Jellyfin</default>
+				<items>
+					<item>Jellyfin</item>
+					<item>Plex</item>
+				</items>
+			</property>
+			<property>
 				<name>Server URL</name>
 				<type>STRING</type>
 				<readonly>false</readonly>
-				<default></default>
+				<default>https://jellyfin.onyxlens.com</default>
 			</property>
 			<property>
-				<name>API Key</name>
+				<name>API Key / Plex Token</name>
 				<type>STRING</type>
 				<readonly>false</readonly>
 				<default></default>
@@ -158,7 +170,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>0.1.0</default>
+				<default>0.2.0</default>
 			</property>
 		</properties>
 	</config>

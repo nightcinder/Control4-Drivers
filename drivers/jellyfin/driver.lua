@@ -1,19 +1,21 @@
 --[[
-  Jellyfin Now Playing (Control4 DriverWorks, OS 3.x)
-  Version: 0.1.0  (UNTESTED on real Composer/Director; see docs/jellyfin.md)
+  Media Server Now Playing: Jellyfin or Plex (Control4 DriverWorks, OS 3.x)
+  Version: 0.2.0  (UNTESTED on real Composer/Director; Plex backend unverified; see docs/jellyfin.md)
 
-  Polls GET {Server URL}/Sessions and publishes the chosen session's now-playing data as driver variables.
-  Transport commands go to POST {Server URL}/Sessions/{SessionId}/Playing/{Command}.
-  The API key is a plain STRING property (Composer cannot mask it). It is never written to the log.
-  A future Plex driver should reuse the same variable names (see docs/jellyfin.md).
+  Server Type = Jellyfin: polls GET {Server URL}/Sessions, sends POST {Server URL}/Sessions/{SessionId}/Playing/{Cmd}.
+  Server Type = Plex:     polls GET {Server URL}/status/sessions, sends GET {Server URL}/player/playback/{cmd}.
+  Both backends publish the same driver variables, events and commands.
+  The API key / Plex token is a plain STRING property (Composer cannot mask it). It is never written to the log.
+  Plex artwork URLs contain the token, so the Artwork URL variable carries it too.
 ]]
 
-local DRIVER_VERSION = "0.1.0"
+local DRIVER_VERSION = "0.2.0"
 local TICKS_PER_SECOND = 10000000
 local WATCHDOG_SECONDS = 20
 local DEFAULT_POLL_SECONDS = 4
 local RETRY_NOT_CONFIGURED_SECONDS = 30
 local ACTIVE_WITHIN_SECONDS = 960
+local PLEX_CLIENT_ID = "control4-media-server-driver"
 
 local EVENT_STATE_CHANGED = 1
 local EVENT_PLAYBACK_STARTED = 2
@@ -34,11 +36,13 @@ local state = {
   inflight = false,
   inflightSince = 0,
   lastOk = 0,
-  authHeaderMode = "Authorization",   -- switches to "X-Emby-Token" if the first form gets 401/403
+  authMode = "Authorization",   -- Jellyfin only: switches to "X-Emby-Token" if the first form gets 401/403
   activeSessionId = "",
+  activeClientId = "",          -- Plex only: the player's machineIdentifier, used as the target client
   itemId = "",
   playState = "",
-  runtimeTicks = 0,
+  runSec = 0,
+  commandId = 0,                -- Plex only: increments on each playback command
 }
 local lastVars = {}
 local lastProps = {}
@@ -49,6 +53,12 @@ local lastStatus = ""
 -- ============================================================================
 local function trim(s)
   return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function join(a, b)
+  if a == "" then return b end
+  if b == "" then return a end
+  return a .. " - " .. b
 end
 
 local function prop(name)
@@ -66,7 +76,7 @@ end
 
 local function debugLog(msg)
   if prop("Debug Log") == "On" then
-    pcall(function() print("[Jellyfin] " .. tostring(msg)) end)
+    pcall(function() print("[MediaServer] " .. tostring(msg)) end)
   end
 end
 
@@ -84,19 +94,17 @@ local function serverBase()
   return u
 end
 
-local function configured()
-  return serverBase() ~= "" and prop("API Key") ~= ""
+local function token()
+  return prop("API Key / Plex Token")
 end
 
-local function authHeaders()
-  local key = prop("API Key")
-  local h = { ["Accept"] = "application/json" }
-  if state.authHeaderMode == "X-Emby-Token" then
-    h["X-Emby-Token"] = key
-  else
-    h["Authorization"] = 'MediaBrowser Token="' .. key .. '"'
-  end
-  return h
+local function configured()
+  return serverBase() ~= "" and token() ~= ""
+end
+
+local function serverType()
+  if prop("Server Type") == "Plex" then return "Plex" end
+  return "Jellyfin"
 end
 
 local function tlsOptions()
@@ -104,39 +112,6 @@ local function tlsOptions()
     return { ssl_verifypeer = 0, ssl_verifyhost = 0 }
   end
   return {}
-end
-
--- ============================================================================
--- HTTP. Handlers receive (data, httpCode, err). A 401/403 on the first auth form
--- is retried once with the other form (Authorization <-> X-Emby-Token).
--- ============================================================================
-local function request(method, path, handler, retried)
-  local url = serverBase() .. path
-  local opts = tlsOptions()
-  local headers = authHeaders()
-  debugLog(method .. " " .. path)
-
-  local function onReply(_, data, code, _, err)
-    code = tonumber(code) or 0
-    if (code == 401 or code == 403) and not retried and state.authHeaderMode == "Authorization" then
-      state.authHeaderMode = "X-Emby-Token"
-      debugLog("auth rejected, retrying with X-Emby-Token form")
-      request(method, path, handler, true)
-      return
-    end
-    handler(data, code, err)
-  end
-
-  local ok, perr = pcall(function()
-    if method == "POST" then
-      C4:urlPost(url, "", headers, false, onReply, opts)
-    else
-      C4:urlGet(url, headers, false, onReply, opts)
-    end
-  end)
-  if not ok then
-    handler(nil, 0, tostring(perr))
-  end
 end
 
 -- ============================================================================
@@ -250,7 +225,7 @@ local function jsonDecode(str)
 end
 
 -- ============================================================================
--- Formatting and session selection
+-- Formatting
 -- ============================================================================
 local function fmtTime(sec)
   sec = math.max(0, math.floor(sec or 0))
@@ -261,8 +236,22 @@ local function fmtTime(sec)
   return string.format("%d:%02d", m, s)
 end
 
--- Returns title, subtitle, artist for the item shown on the TV.
-local function describeItem(item)
+-- ============================================================================
+-- Backends. Each one knows its own paths, auth headers, reply parsing and transport.
+-- parse() returns a list of normalized sessions with the fields:
+--   id, clientId, user, device, client, paused, posSec, runSec, itemId, mediaType,
+--   title, subtitle, artist, year, artwork, activity
+-- transport(action, session, offsetMs) returns method, path, extra headers, query.
+-- ============================================================================
+local BACKENDS = {}
+
+-- Jellyfin ------------------------------------------------------------------
+local JELLYFIN_COMMANDS = {
+  PlayPause = "PlayPause", Unpause = "Unpause", Pause = "Pause", Stop = "Stop",
+  NextTrack = "NextTrack", PreviousTrack = "PreviousTrack",
+}
+
+local function jellyfinDescribe(item)
   local t = tostring(item.Type or "")
   local title = tostring(item.Name or "")
   local subtitle, artist = "", ""
@@ -282,31 +271,195 @@ local function describeItem(item)
   return title, subtitle, artist
 end
 
-local function artworkUrl(item)
-  if type(item.ImageTags) == "table" and item.ImageTags.Primary and item.Id then
-    return serverBase() .. "/Items/" .. tostring(item.Id) .. "/Images/Primary?maxWidth=480&quality=90"
-  end
-  return ""
+BACKENDS.Jellyfin = {
+  name = "Jellyfin",
+  headers = function(key, mode)
+    local h = { ["Accept"] = "application/json" }
+    if mode == "X-Emby-Token" then
+      h["X-Emby-Token"] = key
+    else
+      h["Authorization"] = 'MediaBrowser Token="' .. key .. '"'
+    end
+    return h
+  end,
+  canRetryAuth = true,
+  pollPath = function() return "/Sessions?activeWithinSeconds=" .. ACTIVE_WITHIN_SECONDS end,
+  testPath = function() return "/System/Info" end,
+  parse = function(data)
+    local out = {}
+    if type(data) ~= "table" then return out end
+    for _, s in ipairs(data) do
+      if type(s) == "table" and type(s.NowPlayingItem) == "table" then
+        local item = s.NowPlayingItem
+        local ps = type(s.PlayState) == "table" and s.PlayState or {}
+        local title, subtitle, artist = jellyfinDescribe(item)
+        local art = ""
+        if type(item.ImageTags) == "table" and item.ImageTags.Primary and item.Id then
+          art = serverBase() .. "/Items/" .. tostring(item.Id) .. "/Images/Primary?maxWidth=480&quality=90"
+        end
+        out[#out + 1] = {
+          id = tostring(s.Id or ""), clientId = "", user = tostring(s.UserName or ""),
+          device = tostring(s.DeviceName or ""), client = tostring(s.Client or ""),
+          paused = ps.IsPaused == true,
+          posSec = (tonumber(ps.PositionTicks) or 0) / TICKS_PER_SECOND,
+          runSec = (tonumber(item.RunTimeTicks) or 0) / TICKS_PER_SECOND,
+          itemId = tostring(item.Id or ""), mediaType = tostring(item.Type or ""),
+          title = title, subtitle = subtitle, artist = artist,
+          year = item.ProductionYear and tostring(item.ProductionYear) or "",
+          artwork = art, activity = tostring(s.LastActivityDate or ""),
+        }
+      end
+    end
+    return out
+  end,
+  transport = function(action, s, offsetMs)
+    if action == "Seek" then
+      return "POST", "/Sessions/" .. s.id .. "/Playing/Seek", {},
+        "?seekPositionTicks=" .. string.format("%.0f", offsetMs * 10000)
+    end
+    return "POST", "/Sessions/" .. s.id .. "/Playing/" .. JELLYFIN_COMMANDS[action], {}, ""
+  end,
+}
+
+-- Plex ----------------------------------------------------------------------
+local PLEX_COMMANDS = {
+  PlayPause = "playPause", Unpause = "play", Pause = "pause", Stop = "stop",
+  NextTrack = "skipNext", PreviousTrack = "skipPrevious", Seek = "seekTo",
+}
+
+BACKENDS.Plex = {
+  name = "Plex",
+  headers = function(key)
+    return {
+      ["Accept"] = "application/json",
+      ["X-Plex-Token"] = key,
+      ["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID,
+    }
+  end,
+  canRetryAuth = false,
+  pollPath = function() return "/status/sessions" end,
+  testPath = function() return "/identity" end,
+  parse = function(data)
+    local out = {}
+    local mc = type(data) == "table" and data.MediaContainer or nil
+    local meta = type(mc) == "table" and mc.Metadata or nil
+    if type(meta) ~= "table" then return out end
+    for _, m in ipairs(meta) do
+      if type(m) == "table" then
+        local p = type(m.Player) == "table" and m.Player or {}
+        local u = type(m.User) == "table" and m.User or {}
+        local se = type(m.Session) == "table" and m.Session or {}
+        local t = tostring(m.type or "")
+        local mTitle = tostring(m.title or "")
+        local gTitle = tostring(m.grandparentTitle or "")
+        local pTitle = tostring(m.parentTitle or "")
+        local title, subtitle, artist = mTitle, "", ""
+        if t == "episode" then
+          title = gTitle ~= "" and gTitle or mTitle
+          subtitle = join(pTitle, mTitle)
+        elseif t == "track" then
+          artist = gTitle
+          subtitle = pTitle
+        else
+          subtitle = m.year and tostring(m.year) or ""
+        end
+        local thumb = tostring(m.thumb or "")
+        local art = ""
+        if thumb ~= "" then art = serverBase() .. thumb .. "?X-Plex-Token=" .. token() end
+        out[#out + 1] = {
+          id = tostring(se.id or ""), clientId = tostring(p.machineIdentifier or ""),
+          user = tostring(u.title or ""), device = tostring(p.title or ""), client = tostring(p.product or ""),
+          paused = tostring(p.state or "") == "paused",
+          posSec = (tonumber(m.viewOffset) or 0) / 1000,
+          runSec = (tonumber(m.duration) or 0) / 1000,
+          itemId = tostring(m.ratingKey or ""), mediaType = t,
+          title = title, subtitle = subtitle, artist = artist,
+          year = m.year and tostring(m.year) or "",
+          artwork = art, activity = "",
+        }
+      end
+    end
+    return out
+  end,
+  transport = function(action, s, offsetMs)
+    state.commandId = state.commandId + 1
+    local q = "?commandID=" .. state.commandId
+    if action == "Seek" then
+      q = q .. "&offset=" .. string.format("%.0f", offsetMs)
+    end
+    return "GET", "/player/playback/" .. PLEX_COMMANDS[action],
+      { ["X-Plex-Target-Client-Identifier"] = s.clientId }, q
+  end,
+}
+
+local function backend()
+  return BACKENDS[serverType()]
 end
 
+-- ============================================================================
+-- HTTP. Handlers receive (data, httpCode, err). Jellyfin only: a 401/403 on the
+-- first auth form is retried once with the other form (Authorization <-> X-Emby-Token).
+-- ============================================================================
+local function request(method, path, handler, extraHeaders, retried)
+  local b = backend()
+  local url = serverBase() .. path
+  local opts = tlsOptions()
+  local headers = b.headers(token(), state.authMode)
+  for k, v in pairs(extraHeaders or {}) do headers[k] = v end
+  debugLog(method .. " " .. path)
+
+  local function onReply(_, data, code, _, err)
+    code = tonumber(code) or 0
+    if (code == 401 or code == 403) and not retried and b.canRetryAuth and state.authMode == "Authorization" then
+      state.authMode = "X-Emby-Token"
+      debugLog("auth rejected, retrying with X-Emby-Token form")
+      request(method, path, handler, extraHeaders, true)
+      return
+    end
+    handler(data, code, err)
+  end
+
+  local ok, perr = pcall(function()
+    if method == "POST" then
+      C4:urlPost(url, "", headers, false, onReply, opts)
+    else
+      C4:urlGet(url, headers, false, onReply, opts)
+    end
+  end)
+  if not ok then
+    handler(nil, 0, tostring(perr))
+  end
+end
+
+local function reportHttpError(code, err)
+  if code == 401 or code == 403 then
+    setStatus("Auth failed: check API Key / Plex Token")
+  elseif code == 0 then
+    setStatus("Cannot reach server: " .. tostring(err or "no response"))
+  else
+    setStatus("Server returned HTTP " .. tostring(code))
+  end
+end
+
+-- ============================================================================
+-- Session selection
+-- ============================================================================
 local function matchesFilter(s, filter)
   if filter == "" then return true end
   local f = string.lower(filter)
-  local user = string.lower(tostring(s.UserName or ""))
-  local device = string.lower(tostring(s.DeviceName or "") .. " " .. tostring(s.Client or ""))
-  return string.find(user, f, 1, true) ~= nil or string.find(device, f, 1, true) ~= nil
+  return string.find(string.lower(s.user), f, 1, true) ~= nil
+    or string.find(string.lower(s.device .. " " .. s.client), f, 1, true) ~= nil
 end
 
--- Playing sessions beat paused ones; ties go to the most recent LastActivityDate (ISO strings compare correctly).
-local function pickSession(sessions)
+-- Playing sessions beat paused ones; ties go to the most recent activity (Jellyfin only; ISO strings compare correctly).
+local function pickSession(list)
   local filter = prop("Target User Or Device Filter")
   local best, bestPlaying, bestActivity = nil, false, ""
-  for _, s in ipairs(sessions) do
-    if type(s) == "table" and type(s.NowPlayingItem) == "table" and matchesFilter(s, filter) then
-      local playing = not (type(s.PlayState) == "table" and s.PlayState.IsPaused == true)
-      local activity = tostring(s.LastActivityDate or "")
-      if best == nil or (playing and not bestPlaying) or (playing == bestPlaying and activity > bestActivity) then
-        best, bestPlaying, bestActivity = s, playing, activity
+  for _, s in ipairs(list) do
+    if matchesFilter(s, filter) then
+      local playing = not s.paused
+      if best == nil or (playing and not bestPlaying) or (playing == bestPlaying and s.activity > bestActivity) then
+        best, bestPlaying, bestActivity = s, playing, s.activity
       end
     end
   end
@@ -337,15 +490,16 @@ local function fireEvent(id)
   pcall(function() C4:FireEvent(id) end)
 end
 
--- Applies one /Sessions reply. Returns a short text for the Status property.
-local function applySessions(sessions)
-  local s = pickSession(sessions)
+-- Applies the chosen normalized session (or nil for nothing playing). Returns a short text for Status.
+local function applySession(s)
   local prevState, prevItem = state.playState, state.itemId
 
   if s == nil then
+    state.active = nil
     state.activeSessionId = ""
+    state.activeClientId = ""
     state.itemId = ""
-    state.runtimeTicks = 0
+    state.runSec = 0
     state.playState = "Stopped"
     setVar("Play State", "Stopped")
     setVar("Session Id", "")
@@ -357,50 +511,39 @@ local function applySessions(sessions)
     return "nothing playing"
   end
 
-  local item = s.NowPlayingItem
-  local ps = type(s.PlayState) == "table" and s.PlayState or {}
-  local newState = (ps.IsPaused == true) and "Paused" or "Playing"
-  local title, subtitle, artist = describeItem(item)
-  local runTicks = tonumber(item.RunTimeTicks) or 0
-  local posSec = (tonumber(ps.PositionTicks) or 0) / TICKS_PER_SECOND
-  local itemId = tostring(item.Id or "")
-
-  state.activeSessionId = tostring(s.Id or "")
-  state.itemId = itemId
-  state.runtimeTicks = runTicks
+  local newState = s.paused and "Paused" or "Playing"
+  state.active = s
+  state.activeSessionId = s.id
+  state.activeClientId = s.clientId
+  state.itemId = s.itemId
+  state.runSec = s.runSec
   state.playState = newState
 
   setVar("Play State", newState)
-  setVar("Session Id", state.activeSessionId)
-  setVar("Now Playing Title", title)
-  setVar("Now Playing Subtitle", subtitle)
-  if title ~= "" and subtitle ~= "" then
-    setVar("Now Playing Summary", title .. " - " .. subtitle)
-  else
-    setVar("Now Playing Summary", title)
-  end
-  setVar("Artist", artist)
-  setVar("Year", item.ProductionYear or "")
-  setVar("Media Type", item.Type or "")
-  setVar("Position", fmtTime(posSec))
-  setVar("Position Seconds", math.floor(posSec))
-  setVar("Runtime", fmtTime(runTicks / TICKS_PER_SECOND))
-  setVar("Runtime Seconds", math.floor(runTicks / TICKS_PER_SECOND))
-  setVar("Client", s.Client or "")
-  setVar("Device", s.DeviceName or "")
-  setVar("User", s.UserName or "")
-  setVar("Item Id", itemId)
-  setVar("Artwork URL", artworkUrl(item))
+  setVar("Session Id", s.id)
+  setVar("Now Playing Title", s.title)
+  setVar("Now Playing Subtitle", s.subtitle)
+  setVar("Now Playing Summary", join(s.title, s.subtitle))
+  setVar("Artist", s.artist)
+  setVar("Year", s.year)
+  setVar("Media Type", s.mediaType)
+  setVar("Position", fmtTime(s.posSec))
+  setVar("Position Seconds", math.floor(s.posSec))
+  setVar("Runtime", fmtTime(s.runSec))
+  setVar("Runtime Seconds", math.floor(s.runSec))
+  setVar("Client", s.client)
+  setVar("Device", s.device)
+  setVar("User", s.user)
+  setVar("Item Id", s.itemId)
+  setVar("Artwork URL", s.artwork)
 
   if newState ~= prevState then
     fireEvent(EVENT_STATE_CHANGED)
     if newState == "Playing" then fireEvent(EVENT_PLAYBACK_STARTED) end
   end
-  if itemId ~= prevItem then fireEvent(EVENT_ITEM_CHANGED) end
+  if s.itemId ~= prevItem then fireEvent(EVENT_ITEM_CHANGED) end
 
-  local text = title
-  if subtitle ~= "" then text = text .. " - " .. subtitle end
-  return newState .. ": " .. text
+  return newState .. ": " .. join(s.title, s.subtitle)
 end
 
 -- ============================================================================
@@ -440,26 +583,16 @@ watchdogTick = function()
   armWatchdog()
 end
 
-local function reportHttpError(code, err)
-  if code == 401 or code == 403 then
-    setStatus("Auth failed: check API Key")
-  elseif code == 0 then
-    setStatus("Cannot reach server: " .. tostring(err or "no response"))
-  else
-    setStatus("Server returned HTTP " .. tostring(code))
-  end
-end
-
-local function onSessions(data, code, err)
+local function onPoll(data, code, err)
   state.inflight = false
   if code >= 200 and code < 300 then
-    local sessions, decodeErr = jsonDecode(data or "")
-    if type(sessions) ~= "table" then
+    local decoded, decodeErr = jsonDecode(data or "")
+    if type(decoded) ~= "table" then
       setStatus("Unexpected reply from server")
       debugLog("decode error: " .. tostring(decodeErr))
     else
       state.lastOk = os.time()
-      setStatus("Connected: " .. applySessions(sessions))
+      setStatus("Connected: " .. applySession(pickSession(backend().parse(decoded))))
     end
   else
     reportHttpError(code, err)
@@ -469,14 +602,14 @@ end
 
 pollNow = function()
   if not configured() then
-    setStatus("Not configured: set Server URL and API Key")
+    setStatus("Not configured: set Server URL and API Key / Plex Token")
     schedulePoll(RETRY_NOT_CONFIGURED_SECONDS)
     return
   end
   if state.inflight then return end
   state.inflight = true
   state.inflightSince = os.time()
-  request("GET", "/Sessions?activeWithinSeconds=" .. ACTIVE_WITHIN_SECONDS, onSessions)
+  request("GET", backend().pollPath(), onPoll)
 end
 
 -- ============================================================================
@@ -484,14 +617,17 @@ end
 -- ============================================================================
 local function testConnection()
   if not configured() then
-    setStatus("Not configured: set Server URL and API Key")
+    setStatus("Not configured: set Server URL and API Key / Plex Token")
     return
   end
   setStatus("Testing connection...")
-  request("GET", "/System/Info", function(data, code, err)
+  request("GET", backend().testPath(), function(data, code, err)
     if code >= 200 and code < 300 then
       local info = jsonDecode(data or "")
-      if type(info) == "table" then
+      if serverType() == "Plex" then
+        local mc = type(info) == "table" and info.MediaContainer or {}
+        setStatus("OK: Plex " .. tostring(type(mc) == "table" and mc.version or "server"))
+      elseif type(info) == "table" then
         setProp("Server Name", tostring(info.ServerName or ""))
         setStatus("OK: " .. tostring(info.ServerName or "server") .. " " .. tostring(info.Version or ""))
       else
@@ -503,19 +639,24 @@ local function testConnection()
   end)
 end
 
-local function sendTransport(command, query)
-  local sid = state.activeSessionId
-  if sid == "" or not string.find(sid, "^[%w%-]+$") then
+local function sendTransport(action, offsetMs)
+  local s = state.active
+  if s == nil or s.id == "" or not string.find(s.id, "^[%w%-]+$") then
     setStatus("No active session to control")
     return
   end
-  request("POST", "/Sessions/" .. sid .. "/Playing/" .. command .. (query or ""), function(_, code, err)
+  if serverType() == "Plex" and not string.find(s.clientId, "^[%w%-]+$") then
+    setStatus("No Plex player to control")
+    return
+  end
+  local method, path, extra, query = backend().transport(action, s, offsetMs or 0)
+  request(method, path .. query, function(_, code, err)
     if code >= 200 and code < 300 then
       schedulePoll(0.5)
     else
       reportHttpError(code, err)
     end
-  end)
+  end, extra)
 end
 
 local function seekToPercent(params)
@@ -527,12 +668,11 @@ local function seekToPercent(params)
     setStatus("Seek needs Percent between 0 and 100")
     return
   end
-  if state.runtimeTicks <= 0 then
+  if state.runSec <= 0 then
     setStatus("Seek unavailable: runtime unknown")
     return
   end
-  local ticks = math.floor(state.runtimeTicks * pct / 100)
-  sendTransport("Seek", "?seekPositionTicks=" .. string.format("%.0f", ticks))
+  sendTransport("Seek", math.floor(state.runSec * 1000 * pct / 100))
 end
 
 -- Command names are normalized, so "Play/Pause", "Play Pause" and "PLAY_PAUSE" all work.
@@ -561,7 +701,7 @@ function OnDriverInit()
 end
 
 function OnDriverLateInit()
-  state.authHeaderMode = "Authorization"
+  state.authMode = "Authorization"
   armWatchdog()
   schedulePoll(1)
 end
@@ -572,8 +712,12 @@ function OnDriverDestroyed()
 end
 
 function OnPropertyChanged(name)
-  if name == "Server URL" or name == "API Key" or name == "Allow Self-Signed TLS" then
-    state.authHeaderMode = "Authorization"
+  if name == "Server Type" then
+    applySession(nil)
+    state.authMode = "Authorization"
+    schedulePoll(1)
+  elseif name == "Server URL" or name == "API Key / Plex Token" or name == "Allow Self-Signed TLS" then
+    state.authMode = "Authorization"
     schedulePoll(1)
   elseif name == "Poll Interval Seconds" or name == "Target User Or Device Filter" then
     schedulePoll(1)
