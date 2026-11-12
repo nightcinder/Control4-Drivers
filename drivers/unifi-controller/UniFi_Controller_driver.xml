@@ -6,13 +6,12 @@
 	<model>UniFi Controller</model>
 	<created>11/11/2026 12:00 PM</created>
 	<modified>11/11/2026 7:00 PM</modified>
-	<version>6</version>
+	<version>7</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
-	<combo>true</combo>
 	<proxies qty="1">
 		<proxy proxybindingid="5001" name="UniFi Outlets" primary="True" image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png">uibutton</proxy>
 	</proxies>
@@ -169,7 +168,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>1.0.5</default>
+				<default>1.0.6</default>
 			</property>
 		</properties>
 	</config>
