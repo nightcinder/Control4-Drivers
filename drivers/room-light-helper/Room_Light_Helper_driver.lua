@@ -1,6 +1,11 @@
 --[[
-  Room Light Helper v1.0.0 (Control4 DriverWorks, OS 3.x)
+  Room Light Helper v1.1.0 (Control4 DriverWorks, OS 3.x)
   One instance per room. Laundry is the first room.
+  Changelog:
+    1.1.0  Off Delay default 180 s. New Quick-Release Sources (default Roborock) with
+           Quick Off Delay (90 s). The last source to release uses the quick delay when its
+           name is in that list. Timeouts and Release All always use Off Delay.
+    1.0.0  First release.
 
   Other programming calls the helper with a Source name:
     Request On (Source), Release (Source), Release All, Set Lux (Lux).
@@ -16,7 +21,7 @@
   Not in v1: keypad holds, away mode, DLS integration. Max Level is a plain property.
 ]]
 
-local DRIVER_VERSION = "1.0.0"
+local DRIVER_VERSION = "1.1.0"
 local LIGHT_BINDING = 5001
 local LIGHT_LEVEL_VAR = 1001          -- light proxy LIGHT_LEVEL variable id
 local RAMP_MS = 1500
@@ -145,13 +150,28 @@ local function cancelOffTimer()
   end
 end
 
-local function scheduleOff()
+-- True when the source name is in the comma-separated Quick-Release Sources list (case-insensitive).
+local function isQuickSource(name)
+  local target = trim(name):lower()
+  for item in string.gmatch(tostring(Properties["Quick-Release Sources"] or ""), "[^,]+") do
+    if trim(item):lower() == target and target ~= "" then return true end
+  end
+  return false
+end
+
+-- Off delay for the last source to release: quick delay for quick-release sources, else Off Delay.
+local function offDelayFor(name)
+  if isQuickSource(name) then return num("Quick Off Delay (sec)", 90) end
+  return num("Off Delay (sec)", 180)
+end
+
+local function scheduleOff(delaySec)
   cancelOffTimer()
   if not helperOn then
     refreshAll()
     return
   end
-  local delay = math.max(0, num("Off Delay (sec)", 30))
+  local delay = math.max(0, delaySec)
   offTimer = C4:SetTimer(delay * 1000, function()
     offTimer = nil
     if sourceCount == 0 and helperOn then
@@ -211,7 +231,7 @@ local function releaseSource(name)
   sourceCount = sourceCount - 1
   dbg("Released " .. name)
   if sourceCount == 0 then
-    scheduleOff()
+    scheduleOff(offDelayFor(name))
   else
     refreshAll()
   end
@@ -221,7 +241,7 @@ local function releaseAll()
   sources = {}
   sourceCount = 0
   dbg("Release All")
-  scheduleOff()
+  scheduleOff(num("Off Delay (sec)", 180))
 end
 
 local function setLux(value)
@@ -254,7 +274,8 @@ local function checkTimeouts()
     logf("Source timeout: auto-released '" .. name .. "' after " .. (limit / 60) .. " min")
     C4:FireEvent(EVENT_SOURCE_TIMEOUT)
   end
-  if sourceCount == 0 then scheduleOff() else refreshAll() end
+  -- Safety timeouts always use Off Delay, never the quick delay.
+  if sourceCount == 0 then scheduleOff(num("Off Delay (sec)", 180)) else refreshAll() end
 end
 
 -- Listen for light level changes once the binding is bound (and again if the light changes).

@@ -3,10 +3,10 @@
 	<creator>Custom Driver Project</creator>
 	<manufacturer>Custom Driver Project</manufacturer>
 	<name>Room Light Helper</name>
-	<model>Room Light Helper v1.0.0 (one instance per room)</model>
+	<model>Room Light Helper v1.1.0 (one instance per room)</model>
 	<created>11/12/2026 10:00 PM</created>
-	<modified>11/12/2026 10:00 PM</modified>
-	<version>1</version>
+	<modified>11/12/2026 11:39 PM</modified>
+	<version>2</version>
 	<control>lua_gen</control>
 	<controlmethod>none</controlmethod>
 	<driver>DriverWorks</driver>
@@ -79,7 +79,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>1.0.0</default>
+				<default>1.1.0</default>
 			</property>
 			<property>
 				<name>Status</name>
@@ -153,7 +153,21 @@
 				<minimum>0</minimum>
 				<maximum>3600</maximum>
 				<readonly>false</readonly>
-				<default>30</default>
+				<default>180</default>
+			</property>
+			<property>
+				<name>Quick Off Delay (sec)</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>0</minimum>
+				<maximum>3600</maximum>
+				<readonly>false</readonly>
+				<default>90</default>
+			</property>
+			<property>
+				<name>Quick-Release Sources</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>Roborock</default>
 			</property>
 			<property>
 				<name>Source Timeout (min)</name>
