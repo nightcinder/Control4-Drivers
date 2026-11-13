@@ -1,17 +1,17 @@
--- UniFi Controller (parent) driver for Control4 OS 3.4.x. Version 1.0.10 (UNTESTED on hardware).
+-- UniFi PDU Controls (parent, file UniFi_Controller) driver for Control4 OS 3.4.x. Version 1.0.12 (UNTESTED on hardware).
 -- Logs in to a UniFi controller, polls power outlets (USP PDU Pro, USP Plug), serves UniFi Outlet child
 -- drivers over a connection, and shows a uibutton web view page listing every outlet with tap-to-toggle.
 -- UNVERIFIED: API paths, outlet JSON fields, PUT body, cookie/CSRF handling, self-signed certificate
 -- handling (TLS_OPTIONS key names). Raw responses are logged at Debug level (secrets masked).
 
-local DRIVER_VERSION = "1.0.10"
+local DRIVER_VERSION = "1.0.12"
 -- The UniFi console uses a self-signed certificate that Control4 cannot verify, so certificate checks are
 -- turned off for this controller only. Passed as the 6th argument (options) of C4:urlGet / urlPost / urlPut
 -- (signature confirmed from the Snap One drivers-common-public url.lua). The key names are curl-style and
 -- UNVERIFIED on OS 3.4; if verification still fails, check these keys first.
 local TLS_OPTIONS = { ssl_verifypeer = 0, ssl_verifyhost = 0 }
-local PAGE_FILE = "outlets3.html"   -- renamed every page release (Navigator caches controller:// pages)
-local PAGE_BUILD = "3"              -- must match the page's PAGE_BUILD and web_view_url in driver.xml
+local PAGE_FILE = "outlets4.html"   -- renamed every page release (Navigator caches controller:// pages)
+local PAGE_BUILD = "4"              -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 local UI_BINDING = 5001
 local CONTROLLER_BINDING = 1        -- child-facing connection on this driver
 local MAX_UI_OUTLETS = 32
