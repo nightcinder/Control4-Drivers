@@ -242,7 +242,7 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "209"
+DRIVER_VERSION = "210"
 PAGE_FILE  = 'fireplace3.html'   -- renamed every page release (Navigator caches controller:// pages)
 PAGE_BUILD = '3'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 
@@ -410,7 +410,11 @@ function BindTo(sIP)
 	if (sIP == g_boundIP) then return end
 	LOG("Binding network connection to " .. sIP)
 	local ok, err = pcall(function()
-		C4:CreateNetworkConnection(NET_BINDING, sIP)
+		-- v210: the binding is kept pointed at 0.0.0.0 on purpose. Control4 keeps
+		-- (re)connecting a bound TCP connection by itself, and the module serves one
+		-- connection at a time, so that idle socket blocked every C4:url request
+		-- (timeout after ~5 s, then reconnect, repeat). Requests use C4:url().
+		C4:CreateNetworkConnection(NET_BINDING, "0.0.0.0")
 	end)
 	if (not ok) then
 		LOG("CreateNetworkConnection failed: " .. tostring(err))
@@ -434,6 +438,11 @@ function OnConnectionStatusChanged(idBinding, nPort, strStatus)
 	if (idBinding ~= NET_BINDING) then return end
 	LOG("OnConnectionStatusChanged: " .. tostring(strStatus))
 	g_netOnline = (strStatus == "ONLINE")
+	if (g_netOnline) then
+		-- v210: never keep a raw socket open to the module (single-connection server).
+		pcall(function() C4:NetDisconnect(NET_BINDING, HTTP_PORT) end)
+		return
+	end
 	if (g_netOnline) then
 		-- Back online - cancel any pending "really offline" notification;
 		-- whatever OFFLINE blip preceded this was just the normal
