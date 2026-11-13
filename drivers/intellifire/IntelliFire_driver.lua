@@ -242,7 +242,7 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "208"
+DRIVER_VERSION = "209"
 PAGE_FILE  = 'fireplace3.html'   -- renamed every page release (Navigator caches controller:// pages)
 PAGE_BUILD = '3'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 
@@ -548,7 +548,9 @@ function DrainQueue()
 	g_pendingReq = req
 	do
 		local url = "http://" .. g_ip .. req.path
-		local headers = { ["Connection"] = "close" }
+		-- v209: no custom Connection header. A bare C4:url():Get from the Lua tab
+		-- got a 200 from the module instantly; 208 (with "Connection: close") timed out.
+		local headers = {}
 		if (req.method ~= "GET") then
 			headers["Content-Type"] = "application/x-www-form-urlencoded"
 		end
@@ -556,7 +558,7 @@ function DrainQueue()
 		local myReq = req
 		local okU, errU = pcall(function()
 			local t = C4:url()
-			t:SetOptions({ ["fail_on_error"] = false, ["timeout"] = 15, ["connect_timeout"] = 8 })
+			t:SetOptions({ ["fail_on_error"] = false, ["timeout"] = 12, ["connect_timeout"] = 6 })
 			t:OnDone(function(transfer, responses, errCode, errMsg)
 				if (g_pendingReq ~= myReq) then return end -- already timed out / replaced
 				if (errCode ~= 0 or responses == nil or #responses == 0) then
