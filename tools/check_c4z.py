@@ -31,6 +31,10 @@ ONINIT_RE = re.compile(r'function\s+OnDriverInit\s*\(|OnDriverInit\s*=\s*functio
 EXEC_RE = re.compile(r'function\s+ExecuteCommand\s*\(')
 SCRIPT_RE = re.compile(r'<script\s+file="([^"]+)"')
 PROPERTIES_WRITE_RE = re.compile(r'\bProperties\s*\[[^\]]*\]\s*=(?!=)')
+# Check g: version labels that must equal DRIVER_VERSION. Lines that look like history are skipped.
+LUA_HEADER_VERSION_RE = re.compile(r'^\s*Version:\s*v?(\d+\.\d+\.\d+)', re.M | re.I)
+LABEL_VERSION_RE = re.compile(r'\bversion\b[^\n<]{0,20}?v?(\d+\.\d+\.\d+)', re.I)
+HISTORY_LINE_RE = re.compile(r'changelog|history|previous|since|\badds?\b|\bfixed\b|\b(?:19|20)\d\d\b', re.I)
 
 
 def package_names():
@@ -394,6 +398,36 @@ def check_folder(path, xml_override=None, version_check=True):
             fail("f", f"Driver Version <default> '{default}' differs from Lua constant '{m.group(1)}'")
         if not DRIVER_SET_RE.search(lua_text):
             fail("f", "Lua never sets the Driver Version property (no UpdateProperty/setProp call for it)")
+
+    # g. Version labels agree with DRIVER_VERSION: the Lua "Version:" header comment, the XML <description>
+    # (and <templatedescription>) and bundled www HTML. Lines that read as history are skipped.
+    const = DRIVER_CONST_RE.search(lua_text)
+    if const:
+        expected_v = const.group(1).strip()
+
+        def label_fail(where, found):
+            fail("g", f"{where} says version {found} but DRIVER_VERSION is '{expected_v}' (found {found!r}, expected {expected_v!r})")
+
+        for hm in LUA_HEADER_VERSION_RE.finditer(lua_text[:4000]):
+            if hm.group(1) != expected_v:
+                label_fail(f"{lua_rel} header comment", hm.group(1))
+        if root is not None:
+            for tag in ("description", "templatedescription"):
+                for el in root.iter(tag):
+                    for line in (el.text or "").splitlines():
+                        if HISTORY_LINE_RE.search(line):
+                            continue
+                        for lm in LABEL_VERSION_RE.finditer(line):
+                            if lm.group(1) != expected_v:
+                                label_fail(f"{xml_rel} <{tag}>", lm.group(1))
+        for rel, data in files.items():
+            if rel.lower().endswith((".html", ".htm")):
+                for line in data.decode("utf-8", "replace").splitlines():
+                    if HISTORY_LINE_RE.search(line):
+                        continue
+                    for lm in LABEL_VERSION_RE.finditer(line):
+                        if lm.group(1) != expected_v:
+                            label_fail(rel, lm.group(1))
 
     # j. Writes to the Properties table do not update the property shown in Composer
     for lineno, line in enumerate(lua_code_lines(lua_text), 1):
