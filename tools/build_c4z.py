@@ -130,15 +130,16 @@ def build(folder, dry_run=False):
         print(f"FAIL {name} [b] {e}")
         return False
     xml_override = None
+    to_write = None
     if bump:
         new_bytes, old_v, new_v, new_mod = bump
         if dry_run:
             print(f"would bump {name}: <version> {old_v} -> {new_v}, <modified> {new_mod}")
             xml_override = new_bytes
         else:
-            with open(xml_path, "wb") as fh:
-                fh.write(new_bytes)
-            print(f"bumped {name}: <version> {old_v} -> {new_v}, <modified> {new_mod}")
+            # Checked in memory first; written to disk only after the checks pass.
+            to_write = bump
+            xml_override = new_bytes
     else:
         print(f"no bump {name}: {why}")
 
@@ -148,9 +149,13 @@ def build(folder, dry_run=False):
     if problems:
         for line in problems:
             print(line)
-        note = " (the XML was already bumped on disk)" if bump and not dry_run else ""
-        print(f"refusing to build {name}{note}")
+        print(f"REFUSED {name}: pre-flight check failed; nothing written, no c4z built")
         return False
+    if to_write:
+        new_bytes, old_v, new_v, new_mod = to_write
+        with open(xml_path, "wb") as fh:
+            fh.write(new_bytes)
+        print(f"bumped {name}: <version> {old_v} -> {new_v}, <modified> {new_mod}")
 
     out = os.path.join(DIST, PACKAGE_NAMES.get(name, name) + ".c4z")
     if dry_run:
