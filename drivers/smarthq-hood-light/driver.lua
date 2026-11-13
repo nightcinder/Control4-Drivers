@@ -1,9 +1,10 @@
 --[[
   SmartHQ Hood Light (child) for Control4 DriverWorks, OS 3.4.x
-  Version: 0.3.0  (UNTESTED in Composer/Director; see docs/smarthq.md)
+  Version: 0.3.1  (UNTESTED in Composer/Director; see docs/smarthq.md)
 
   The hood light as a light_v2 proxy (binding 5001), so it can sit in a room for lighting automation.
-  Levels: off, dim, high. A Control4 ON sends high. SET_LEVEL 1-50 sends dim, above 50 sends high.
+  Levels: off=0, dim=33, high=100. A Control4 ON sends high. SET_LEVEL and RAMP_TO_LEVEL: 0 sends off,
+  1-66 sends dim, 67-100 sends high.
   Bind its "SmartHQ Bridge" connection to the SmartHQ Bridge (parent) driver. The parent does the
   actual write (POST /appliances/{hood}/command on the liesa bridge) and sends the new state back.
 
@@ -12,12 +13,12 @@
                  SH_HOOD_CMD {CHILD_ID, APPLIANCE_ID, LEVEL = off|dim|on}
     from parent: SH_STATUS {STATE = OFF|DIM|HIGH, FAN, ONLINE}, SH_PARENT {REACHABLE}, SH_HELLO {}
 
-  Feedback to Control4: ON / OFF notifies, and LIGHT_CHANGED with LEVEL (0, 50 or 100) for dim and high.
+  Feedback to Control4: ON / OFF notifies, and LIGHT_CHANGED with LEVEL (0, 33 or 100) for dim and high.
   The LIGHT_CHANGED name and its LEVEL param are UNVERIFIED for light_v2: check in Composer that the
   light's level slider follows the hood. ON and OFF are the same as the 0.2.x driver.
 ]]
 
-local DRIVER_VERSION = "0.3.0"
+local DRIVER_VERSION = "0.3.1"
 local BRIDGE_BINDING = 1
 local PROXY_BINDING = 5001
 local APPLIANCE_KIND = "hood"
@@ -82,7 +83,7 @@ local function notifyLevel(level)
     else
       C4:SendToProxy(PROXY_BINDING, "OFF", {}, "NOTIFY")
     end
-    local pct = (level == "dim") and 50 or (level == "on" and 100 or 0)
+    local pct = (level == "dim") and 33 or (level == "on" and 100 or 0)
     C4:SendToProxy(PROXY_BINDING, "LIGHT_CHANGED", { LEVEL = tostring(pct) }, "NOTIFY")
   end)
 end
@@ -115,10 +116,10 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
     sendLevel("on")
   elseif strCommand == "OFF" then
     sendLevel("off")
-  elseif strCommand == "SET_LEVEL" then
+  elseif strCommand == "SET_LEVEL" or strCommand == "RAMP_TO_LEVEL" then
     local lvl = tonumber(tParams.LEVEL) or 0
     if lvl <= 0 then sendLevel("off")
-    elseif lvl <= 50 then sendLevel("dim")
+    elseif lvl <= 66 then sendLevel("dim")
     else sendLevel("on")
     end
   end

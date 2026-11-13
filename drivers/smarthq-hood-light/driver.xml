@@ -5,8 +5,8 @@
 	<name>SmartHQ Hood Light</name>
 	<model>SmartHQ Hood Light (child, light_v2)</model>
 	<created>11/12/2026 12:00 PM</created>
-	<modified>11/12/2026 08:50 AM</modified>
-	<version>1</version>
+	<modified>11/12/2026 12:00 PM</modified>
+	<version>2</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -16,7 +16,12 @@
 	<proxies qty="1">
 		<proxy proxybindingid="5001" name="SmartHQ Hood Light" primary="True" image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png">light_v2</proxy>
 	</proxies>
-	<capabilities />
+	<capabilities>
+		<dimmer>True</dimmer>
+		<on_off>True</on_off>
+		<set_level>True</set_level>
+		<ramp_level>True</ramp_level>
+	</capabilities>
 	<templatedescription>SmartHQ hood light as a Control4 light (off, dim, high). Writes go through the SmartHQ Bridge parent. Place it in a room for lighting automation. UNTESTED.</templatedescription>
 
 	<connections>
@@ -82,7 +87,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>0.3.0</default>
+				<default>0.3.1</default>
 			</property>
 		</properties>
 	</config>
