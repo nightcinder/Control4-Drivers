@@ -360,7 +360,9 @@ def check_folder(path, xml_override=None, version_check=True):
     # d. Lua syntax
     lua_bytes = files[lua_rel]
     err = luac_error(lua_bytes, lua_rel)
-    if err:
+    if err and err.startswith("luac is not on PATH"):
+        warn("d", err + "; Lua syntax was not checked")
+    elif err:
         fail("d", err)
     lua_text = strip_bom(lua_bytes).decode("utf-8", "replace")
 
@@ -435,7 +437,213 @@ def check_folder(path, xml_override=None, version_check=True):
             fail("j", f"{lua_rel}:{lineno} assigns to Properties[...]; use C4:UpdateProperty(name, value) instead")
             break
 
+    run_extra_checks(xml_rel, lua_rel, root, files, lua_text, fail, warn)
+
     return problems, warnings
+
+
+# ---------------------------------------------------------------------------
+# Extra checks. P = property XML, U = uniqueness, X = cross-references, L = Lua vs XML,
+# H = referenced web pages, B = binding sanity. Each function reports through fail(id, msg) or warn(id, msg).
+# ---------------------------------------------------------------------------
+KNOWN_PROPERTY_TYPES = {
+    "STRING", "INTEGER", "LONG", "FLOAT", "DOUBLE", "BOOL", "RANGED_INTEGER", "RANGED_FLOAT", "PASSWORD",
+    "LIST", "DEVICE_SELECTOR", "COLOR_SELECTOR", "TRACK", "LABEL", "CUSTOM_SELECT",
+}
+NUMERIC_TYPES = {"INTEGER", "LONG", "FLOAT", "DOUBLE"}
+LUA_BLOCK_COMMENT_RE = re.compile(r"--\[(=*)\[.*?\]\1\]", re.S)
+PROP_READ_RE = re.compile(r"\bProperties\s*\[\s*([\"'])([^\"'\n]+)\1\s*\](?!\s*=(?!=))")
+PROP_DOT_READ_RE = re.compile(r"\bProperties\.([A-Za-z_]\w*)\b(?!\s*=(?!=))")
+PROP_DOT_WRITE_RE = re.compile(r"\bProperties\.([A-Za-z_]\w*)\s*=(?!=)")
+UPDATE_PROP_RE = re.compile(r"C4:UpdateProperty\s*\(\s*(['\"])([^'\"\n]+)\1")
+FIRE_EVENT_RE = re.compile(r"C4:FireEvent\s*\(\s*(['\"])([^'\"\n]+)\1")
+LOCAL_HANDLER_RE = re.compile(
+    r"\blocal\s+function\s+(ExecuteCommand|OnPropertyChanged|OnDriverLateInit|OnDriverInit)\b"
+    r"|\blocal\s+(ExecuteCommand|OnPropertyChanged|OnDriverLateInit|OnDriverInit)\s*="
+)
+HTML_REF_RE = re.compile(r"(?<![\w:/.\\-])([\w\-./]+\.html?)\b", re.I)
+
+
+def lua_no_comments(text):
+    """Lua source with comments removed and string contents kept (line numbers kept)."""
+    text = LUA_BLOCK_COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+    return "\n".join(re.sub(r"--(?!\[=*\[).*$", "", line) for line in text.splitlines())
+
+
+def _child_text(el, tag):
+    c = el.find(tag)
+    return None if c is None else (c.text or "").strip()
+
+
+def _num(s):
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def check_property_xml(root, xml_rel, fail, warn):
+    """P001: name and known type. P002: the children each type needs, and a default that fits them."""
+    for p in root.iter("property"):
+        pname = _child_text(p, "name")
+        if not pname:
+            fail("P001", f"{xml_rel} has a <property> with no <name>")
+            continue
+        where = f"{xml_rel} property '{pname}'"
+        ptype = _child_text(p, "type")
+        if not ptype:
+            fail("P001", f"{where} has no <type>")
+            continue
+        if ptype not in KNOWN_PROPERTY_TYPES:
+            warn("P001", f"{where} has unknown <type> {ptype}")
+            continue
+        items = [(i.text or "").strip() for i in p.findall("items/item")]
+        items = [i for i in items if i]
+        default = _child_text(p, "default") or ""
+        if ptype == "LIST":
+            if not items:
+                fail("P002", f"{where} is a LIST with no <items>/<item>")
+            elif default and default not in items:
+                fail("P002", f"{where} default '{default}' is not one of its <items>")
+        elif ptype == "DEVICE_SELECTOR":
+            if not items:
+                fail("P002", f"{where} is a DEVICE_SELECTOR with no <items>/<item> "
+                             "(Composer reports 'Error creating property')")
+            for it in items:
+                if not it.endswith(".c4i"):
+                    fail("P002", f"{where} item '{it}' does not end in .c4i")
+            multi = (_child_text(p, "multiselect") or "").lower()
+            if multi not in ("true", "false"):
+                fail("P002", f"{where} needs <multiselect> true or false, found '{multi or 'none'}'")
+        elif ptype in ("RANGED_INTEGER", "RANGED_FLOAT"):
+            lo = _num(_child_text(p, "minimum"))
+            hi = _num(_child_text(p, "maximum"))
+            if lo is None or hi is None:
+                fail("P002", f"{where} needs numeric <minimum> and <maximum>")
+            elif lo > hi:
+                fail("P002", f"{where} has <minimum> {lo:g} above <maximum> {hi:g}")
+            if default:
+                dv = _num(default)
+                if dv is None:
+                    fail("P002", f"{where} default '{default}' is not a number")
+                elif lo is not None and hi is not None and not lo <= dv <= hi:
+                    fail("P002", f"{where} default {default} is outside {lo:g}..{hi:g}")
+        elif ptype in NUMERIC_TYPES and default and _num(default) is None:
+            fail("P002", f"{where} default '{default}' is not a number")
+
+
+def check_unique(root, xml_rel, fail):
+    """U001: names and ids must be unique within the driver."""
+    groups = {
+        "property name": [_child_text(p, "name") for p in root.iter("property")],
+        "command name": [_child_text(c, "name") for c in root.findall("commands/command")],
+        "event name": [_child_text(e, "name") for e in root.findall("events/event")],
+        "action name": [_child_text(a, "name") for a in root.findall("actions/action")],
+        "connection id": [_child_text(c, "id") for c in root.iter("connection")],
+        "connection name": [_child_text(c, "connectionname") for c in root.iter("connection")],
+        "proxy binding id": [p.get("proxybindingid") for p in root.iter("proxy")],
+    }
+    for what, values in groups.items():
+        counts = {}
+        for v in values:
+            if v:
+                counts[v] = counts.get(v, 0) + 1
+        for v, n in counts.items():
+            if n > 1:
+                fail("U001", f"{xml_rel} has {n} {what}s with value '{v}'")
+
+
+def check_cross_refs(root, xml_rel, lua_text, fail):
+    """X001: proxy bindings need a type-2 connection. X002: connection type 1-7. X003: classname present.
+    X004: C4:FireEvent names must be events in the XML."""
+    conns = {}
+    for c in root.iter("connection"):
+        cid = _child_text(c, "id")
+        conns.setdefault(cid, c)
+        cname = _child_text(c, "connectionname") or cid
+        ctype = _child_text(c, "type")
+        if ctype is None or not ctype.isdigit() or not 1 <= int(ctype) <= 7:
+            fail("X002", f"{xml_rel} connection '{cname}' has <type> '{ctype or ''}'; it must be a number 1-7")
+        for cl in c.findall("classes/class"):
+            if not _child_text(cl, "classname"):
+                fail("X003", f"{xml_rel} connection '{cname}' has a <class> with no <classname>")
+    for p in root.iter("proxy"):
+        pid = p.get("proxybindingid")
+        c = conns.get(pid)
+        if c is None or _child_text(c, "type") != "2":
+            fail("X001", f"{xml_rel} <proxy proxybindingid='{pid}'> has no connection with <id> {pid} and <type> 2")
+    events = {_child_text(e, "name") for e in root.findall("events/event")}
+    for lineno, line in enumerate(lua_no_comments(lua_text).splitlines(), 1):
+        for m in FIRE_EVENT_RE.finditer(line):
+            if m.group(2) not in events:
+                fail("X004", f"Lua line {lineno} fires event '{m.group(2)}', which is not an <event> in {xml_rel}")
+
+
+def check_lua_vs_xml(root, xml_rel, lua_rel, lua_text, fail, warn):
+    """L001: Properties assignments are errors. L002: Properties reads and L003: UpdateProperty names must be
+    XML properties. L004: handlers that the XML needs. L005: handlers defined as local."""
+    code = lua_no_comments(lua_text)
+    props = {_child_text(p, "name") for p in root.iter("property")}
+    props.discard(None)
+    lines = code.splitlines()
+    for lineno, line in enumerate(lines, 1):
+        for m in PROP_DOT_WRITE_RE.finditer(line):
+            fail("L001", f"{lua_rel}:{lineno} assigns Properties.{m.group(1)}; use C4:UpdateProperty instead")
+        for m in PROP_READ_RE.finditer(line):
+            if m.group(2) not in props:
+                fail("L002", f"{lua_rel}:{lineno} reads Properties['{m.group(2)}'], which is not a property in {xml_rel}")
+        for m in PROP_DOT_READ_RE.finditer(line):
+            if m.group(1) not in props:
+                fail("L002", f"{lua_rel}:{lineno} reads Properties.{m.group(1)}, which is not a property in {xml_rel}")
+        for m in UPDATE_PROP_RE.finditer(line):
+            if m.group(2) not in props:
+                fail("L003", f"{lua_rel}:{lineno} calls C4:UpdateProperty('{m.group(2)}'), "
+                             f"which is not a property in {xml_rel}")
+
+    def defined(fn):
+        return re.search(r"\bfunction\s+%s\s*\(|\b%s\s*=\s*function\b" % (fn, fn), code) is not None
+
+    if root.findall("commands/command") and not defined("ExecuteCommand"):
+        fail("L004", f"{xml_rel} defines commands but {lua_rel} defines no ExecuteCommand")
+    if props and not (defined("OnPropertyChanged") or defined("OnDriverLateInit")):
+        fail("L004", f"{xml_rel} defines properties but {lua_rel} defines neither OnPropertyChanged nor OnDriverLateInit")
+    for m in LOCAL_HANDLER_RE.finditer(code):
+        fn = m.group(1) or m.group(2)
+        warn("L005", f"{lua_rel} defines {fn} as local; Composer calls it as a global, so make it global")
+
+
+def check_html_refs(root, xml_rel, lua_rel, lua_text, files, fail):
+    """H001: an .html page named in driver.xml or the Lua must be in the package (at the path or under www/)."""
+    sources = [(xml_rel, files[xml_rel].decode("utf-8", "replace")), (lua_rel, lua_no_comments(lua_text))]
+    for src, text in sources:
+        for m in HTML_REF_RE.finditer(text):
+            ref = m.group(1).lstrip("./")
+            if ref.lower().startswith("www/"):
+                ref = ref[4:]
+            if ref in files or ("www/" + ref) in files:
+                continue
+            fail("H001", f"{src} references page '{ref}', which is not in the driver folder (expected at www/{ref})")
+
+
+def check_binding(root, xml_rel, warn):
+    """B001: a dimmer's LIGHT_V2 is a proxy binding. A consumer LIGHT_V2 connection of type 1 is probably a mistake."""
+    for c in root.iter("connection"):
+        if (_child_text(c, "consumer") or "").lower() != "true" or _child_text(c, "type") != "1":
+            continue
+        classes = [_child_text(cl, "classname") for cl in c.findall("classes/class")]
+        if "LIGHT_V2" in classes:
+            cname = _child_text(c, "connectionname") or _child_text(c, "id")
+            warn("B001", f"{xml_rel} connection '{cname}' is a consumer of LIGHT_V2 with <type>1>; "
+                         "a dimmer exposes LIGHT_V2 as a proxy binding, or use a DEVICE_SELECTOR property")
+
+
+def run_extra_checks(xml_rel, lua_rel, root, files, lua_text, fail, warn):
+    check_property_xml(root, xml_rel, fail, warn)
+    check_unique(root, xml_rel, fail)
+    check_cross_refs(root, xml_rel, lua_text, fail)
+    check_lua_vs_xml(root, xml_rel, lua_rel, lua_text, fail, warn)
+    check_html_refs(root, xml_rel, lua_rel, lua_text, files, fail)
+    check_binding(root, xml_rel, warn)
 
 
 def driver_path(arg):
