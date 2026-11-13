@@ -242,7 +242,7 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "206"
+DRIVER_VERSION = "207"
 PAGE_FILE  = 'fireplace3.html'   -- renamed every page release (Navigator caches controller:// pages)
 PAGE_BUILD = '3'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 
@@ -286,7 +286,7 @@ RECONCILE_RETRY_MS      = 10000
 
 -- v204: poll spacing and request timeout guards.
 POLL_MIN_INTERVAL_MS    = 10000  -- minimum gap between the start of two /poll requests
-REQUEST_TIMEOUT_MS      = 8000   -- a request still pending after this long is abandoned
+REQUEST_TIMEOUT_MS      = 20000  -- v207: module takes ~5 s to answer a /poll (measured); abandon after 20 s
 g_pollCooling      = false  -- true for POLL_MIN_INTERVAL_MS after a /poll request is sent
 g_pollCoolTimerId  = nil
 g_reqSeq           = 0      -- increments on every request sent; lets stale timers be ignored
@@ -1341,16 +1341,8 @@ function ExecuteCommand(strCommand, tParams)
 			" queued=" .. tostring(#g_reqQueue) .. " cooling=" .. tostring(g_pollCooling) ..
 			" bound=" .. tostring(g_netBound) .. " online=" .. tostring(g_netOnline) ..
 			" boundIP=" .. tostring(g_boundIP) .. " ip=" .. tostring(g_ip))
-		CancelRequestTimer()
-		g_pendingReq = nil
-		g_reqQueue = {}
-		g_rxBuffer = ""
-		g_pollCooling = false
-		g_boundIP = nil
-		BindTo(g_ip)
-		local okC, errC = pcall(function() C4:NetConnect(NET_BINDING, HTTP_PORT, "TCP") end)
-		print("[IntelliFire] Refresh: NetConnect ok=" .. tostring(okC) .. " err=" .. tostring(errC) ..
-			" port=" .. tostring(HTTP_PORT) .. " binding=" .. tostring(NET_BINDING))
+		-- v207: NOT a reset. The module answers a /poll only after ~5 s and serves one
+		-- connection at a time, so tearing down a request in flight made things worse.
 		QueuePoll()
 
 	elseif (strCommand == "ACTION_PRINT_DEBUG") then
