@@ -1,7 +1,14 @@
 --[[
-  Room Light Helper v1.1.0 (Control4 DriverWorks, OS 3.x)
+  Room Light Helper v1.1.1 (Control4 DriverWorks, OS 3.x)
   One instance per room. Laundry is the first room.
   Changelog:
+    1.1.1  Commands moved from Actions to programmable Commands (Request On, Release,
+           Release All, Set Lux) so they accept parameters in Composer Programming. Set Lux
+           Lux param is RANGED_INTEGER 0-100000 (NUMBER is not a DriverWorks param type).
+           OnDriverDestroyed cancels the off timer and the check timer. OnPropertyChanged
+           re-runs ensureLightListener. The check timer runs every 10 s until the light
+           listener registers, then every 60 s.
+           controlmethod is still "none"; its effect on Composer is UNVERIFIED.
     1.1.0  Off Delay default 180 s. New Quick-Release Sources (default Roborock) with
            Quick Off Delay (90 s). The last source to release uses the quick delay when its
            name is in that list. Timeouts and Release All always use Off Delay.
@@ -21,8 +28,10 @@
   Not in v1: keypad holds, away mode, DLS integration. Max Level is a plain property.
 ]]
 
-local DRIVER_VERSION = "1.1.0"
+local DRIVER_VERSION = "1.1.1"
 local LIGHT_BINDING = 5001
+local CHECK_FAST_MS = 10000   -- check timer while the light listener is not registered
+local CHECK_SLOW_MS = 60000   -- check timer once the listener is registered
 local LIGHT_LEVEL_VAR = 1001          -- light proxy LIGHT_LEVEL variable id
 local RAMP_MS = 1500
 local RELAMP_MIN_CHANGE = 10
@@ -38,6 +47,7 @@ local lux = nil
 local luxTime = 0
 local offTimer = nil
 local checkTimer = nil
+local checkInterval = nil   -- ms the current checkTimer was created with
 local listenedId = nil
 
 local function dbg(msg)
@@ -281,12 +291,31 @@ end
 -- Listen for light level changes once the binding is bound (and again if the light changes).
 local function ensureLightListener()
   local id = getLightId()
-  if id and id ~= 0 and id ~= listenedId then
-    if listenedId then C4:UnregisterVariableListener(listenedId, LIGHT_LEVEL_VAR) end
+  if not id or id == 0 then
+    if listenedId then
+      pcall(C4.UnregisterVariableListener, C4, listenedId, LIGHT_LEVEL_VAR)
+      listenedId = nil
+    end
+    return
+  end
+  if id ~= listenedId then
+    if listenedId then pcall(C4.UnregisterVariableListener, C4, listenedId, LIGHT_LEVEL_VAR) end
     C4:RegisterVariableListener(id, LIGHT_LEVEL_VAR)
     listenedId = id
     refreshAll()
   end
+end
+
+-- (Re)create the check timer: fast until the light listener is registered, slow after.
+local function setCheckInterval(ms)
+  if checkTimer and checkInterval == ms then return end
+  if checkTimer then checkTimer:Cancel() end
+  checkInterval = ms
+  checkTimer = C4:SetTimer(ms, function()
+    checkTimeouts()
+    ensureLightListener()
+    setCheckInterval(listenedId and CHECK_SLOW_MS or CHECK_FAST_MS)
+  end, true)
 end
 
 function OnWatchedVariableChanged(idDevice, idVariable, strValue)
@@ -322,15 +351,23 @@ end
 
 function OnDriverLateInit()
   C4:UpdateProperty("Driver Version", DRIVER_VERSION)
-  if checkTimer then checkTimer:Cancel() end
-  checkTimer = C4:SetTimer(60000, function()
-    checkTimeouts()
-    ensureLightListener()
-  end, true)
   ensureLightListener()
+  setCheckInterval(listenedId and CHECK_SLOW_MS or CHECK_FAST_MS)
   refreshAll()
 end
 
 function OnPropertyChanged(name)
+  ensureLightListener()
+  setCheckInterval(listenedId and CHECK_SLOW_MS or CHECK_FAST_MS)
   refreshAll()
+end
+
+function OnDriverDestroyed()
+  cancelOffTimer()
+  if checkTimer then
+    checkTimer:Cancel()
+    checkTimer = nil
+    checkInterval = nil
+  end
+  -- Sources are in memory only; no other timers are kept per source.
 end
