@@ -1,14 +1,14 @@
-# UniFi Controller and UniFi Outlet (v1.0.0, untested on hardware)
+# UniFi PDU Controls and UniFi Outlet (untested on hardware)
 
 Two self-written drivers that expose UniFi power outlets (USP PDU Pro, USP Plug) to Control4 as on/off relays.
 
-- `UniFi_Controller.c4z` (parent): logs in, polls outlets, serves children, web view page on binding 5001.
+- `UniFi_Controller.c4z`, shown in Composer as UniFi PDU Controls (parent; the file name stays so Composer updates in place): logs in, polls outlets, serves children, web view page on binding 5001.
 - `UniFi_Outlet.c4z` (child): one relay per outlet, relay proxy on binding 5001, bound to the parent over connection 1.
 
 ## Setup
 
 1. On the UniFi console, create a local admin account for Control4. A Viewer role cannot switch outlets.
-2. Add a **UniFi Controller** driver. Set Host, Username and Password. Leave Controller Type on Auto.
+2. Add a **UniFi PDU Controls** driver. Set Host, Username and Password. Leave Controller Type on Auto.
 3. Add one **UniFi Outlet** per outlet. Bind its **UniFi Controller** connection to the parent.
 4. Copy the `Device ID:Outlet Index` key for each outlet from the parent's **Discovered Outlets** property, then enter Device ID and Outlet Index on the child.
 5. Web view: a page-address change needs a Director reboot. Proxy changes need delete and re-add.

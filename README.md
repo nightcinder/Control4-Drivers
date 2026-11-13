@@ -29,7 +29,7 @@ Versions are the XML `<version>` (what Composer compares), with the Lua `DRIVER_
 | `smarthq` | SmartHQ Bridge (first single-driver version) | 4 (0.2.2) | `smarthq.c4z` | Replaced by the parent and child set above |
 | `jellyfin` | Media Server Now Playing (Jellyfin and Plex) | 5 (0.3.0) | `media_server.c4z` | Untested, Plex backend unverified |
 | `media-remote-bridge-untested` | Media Remote Bridge | 9 (0.4.4) | `MediaRemoteBridge.c4z` | For the phone and watch remote app, untested |
-| `unifi-controller` | UniFi Controller (parent) | 11 (1.0.10) | `UniFi_Controller.c4z` | PDU Pro and Plug outlets, untested |
+| `unifi-controller` | UniFi PDU Controls (parent) | 15 (1.0.12) | `UniFi_Controller.c4z` | PDU Pro and Plug outlets, untested. Package keeps its old file name so Composer updates in place |
 | `unifi-outlet` | UniFi Outlet (child relay) | 3 (1.0.2) | `UniFi_Outlet.c4z` | One per outlet, untested |
 | `lifx-bulb-legacy` | LIFX Bulb (earlier driver, kept for reference) | 107 (1.0.6) | not built | Replaced by LIFX LAN |
 
@@ -117,11 +117,11 @@ One driver for Jellyfin or Plex (or both, each on its own poll timer). It finds 
 
 Exposes a small HTTP/JSON API on the controller that sends room-level media commands to the Upstairs or Downstairs room, and accepts now-playing reports pushed by a Shield poller. It is the Control4 end of the phone and watch remote app (separate repo, `nightcinder/c4-media-remote`). Untested. See its own README.
 
-### UniFi Controller (parent) and UniFi Outlet (child)
+### UniFi PDU Controls (parent) and UniFi Outlet (child)
 
 Exposes UniFi power outlets (USP PDU Pro, USP Plug) to Control4 as on/off relays. Untested on hardware.
 
-Setup: on the UniFi console, create a local admin account for Control4 (a Viewer role cannot switch outlets). Add a **UniFi Controller** driver, set Host, Username and Password (leave Controller Type on Auto). Add one **UniFi Outlet** per outlet, bind its **UniFi Controller** connection to the parent, then enter the Device ID and Outlet Index copied from the parent's Discovered Outlets property. The web view page needs a Director reboot after a page-address change. Proxy changes need delete and re-add. The API paths and outlet fields are unverified; see `docs/unifi-outlet.md`.
+Setup: on the UniFi console, create a local admin account for Control4 (a Viewer role cannot switch outlets). Add a **UniFi PDU Controls** driver, set Host, Username and Password (leave Controller Type on Auto). Add one **UniFi Outlet** per outlet, bind its **UniFi Controller** connection to the parent, then enter the Device ID and Outlet Index copied from the parent's Discovered Outlets property. The web view page needs a Director reboot after a page-address change. Proxy changes need delete and re-add. The API paths and outlet fields are unverified; see `docs/unifi-outlet.md`.
 
 ### LIFX Bulb, earlier driver
 
