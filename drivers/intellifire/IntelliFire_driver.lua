@@ -242,7 +242,7 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "203"
+DRIVER_VERSION = "204"
 PAGE_FILE  = 'fireplace3.html'   -- renamed every page release (Navigator caches controller:// pages)
 PAGE_BUILD = '3'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 
@@ -281,8 +281,18 @@ g_igniting        = false -- v203: true from a Heat command until a poll confirm
 g_pendingFlame    = nil   -- v203: flame height waiting for the debounce timer
 g_flameDebounceId = nil   -- v203: one-shot timer id for the flame debounce
 g_reconcileAttempts = 0
-MAX_RECONCILE_ATTEMPTS  = 14   -- ~1.5s + 13*2s =~ 27.5s of retrying before giving up
-RECONCILE_RETRY_MS      = 2000
+MAX_RECONCILE_ATTEMPTS  = 14   -- 14 reconcile polls, each at least POLL_MIN_INTERVAL_MS apart
+RECONCILE_RETRY_MS      = 10000
+
+-- v204: poll spacing and request timeout guards.
+POLL_MIN_INTERVAL_MS    = 10000  -- minimum gap between the start of two /poll requests
+REQUEST_TIMEOUT_MS      = 8000   -- a request still pending after this long is abandoned
+g_pollCooling      = false  -- true for POLL_MIN_INTERVAL_MS after a /poll request is sent
+g_pollCoolTimerId  = nil
+g_reqSeq           = 0      -- increments on every request sent; lets stale timers be ignored
+g_reqTimerId       = nil    -- timeout timer for the request in flight
+g_reqTimerSeq      = 0      -- g_reqSeq value when g_reqTimerId was armed
+g_sentHvacOn       = nil    -- last power state announced to the thermostat proxy
 
 g_rxBuffer     = ""
 g_pendingReq   = nil     -- { kind = "poll"|"challenge"|"post", callback = fn }
@@ -455,6 +465,7 @@ function OnConnectionStatusChanged(idBinding, nPort, strStatus)
 		-- reconnect right away rather than waiting for the next poll timer.
 		if (g_pendingReq ~= nil) then
 			LOG("Connection dropped mid-request - requeuing and reconnecting")
+			CancelRequestTimer()
 			table.insert(g_reqQueue, 1, g_pendingReq)
 			g_pendingReq = nil
 		end
@@ -561,7 +572,53 @@ function DrainQueue()
 	if (not ok) then
 		LOG("SendToNetwork failed: " .. tostring(err))
 		FinishPendingRequest(nil, nil)
+		return
 	end
+	-- v204: a /poll that actually went out starts the minimum-spacing window,
+	-- and every request gets a timeout so one hung socket cannot block the queue.
+	if (req.callback == OnPollResponse) then StartPollCooldown() end
+	ArmRequestTimer()
+end
+
+-- v204: per-request timeout. Each request sent arms one timer; the response
+-- cancels it. If it fires first, the request is abandoned through the same
+-- FinishPendingRequest path a failed send uses, and the queue keeps draining.
+function ArmRequestTimer()
+	CancelRequestTimer()
+	g_reqSeq = g_reqSeq + 1
+	g_reqTimerSeq = g_reqSeq
+	g_reqTimerId = C4:AddTimer(REQUEST_TIMEOUT_MS, "MILLISECONDS", false, "OnRequestTimeout")
+end
+
+function CancelRequestTimer()
+	if (g_reqTimerId ~= nil) then
+		pcall(function() C4:KillTimer(g_reqTimerId) end)
+		g_reqTimerId = nil
+	end
+end
+
+function OnRequestTimeout(idTimer)
+	-- Ignore stale timers: anything other than the timer armed for the request now in flight.
+	if (idTimer ~= g_reqTimerId or g_reqTimerSeq ~= g_reqSeq) then return end
+	g_reqTimerId = nil
+	if (g_pendingReq == nil) then return end
+	LOG("Request timed out after " .. tostring(REQUEST_TIMEOUT_MS) .. "ms: " ..
+		tostring(g_pendingReq.method) .. " " .. tostring(g_pendingReq.path))
+	FinishPendingRequest(nil, nil)
+end
+
+-- v204: minimum spacing between the start of two /poll requests.
+function StartPollCooldown()
+	if (g_pollCoolTimerId ~= nil) then
+		pcall(function() C4:KillTimer(g_pollCoolTimerId) end)
+	end
+	g_pollCooling = true
+	g_pollCoolTimerId = C4:AddTimer(POLL_MIN_INTERVAL_MS, "MILLISECONDS", false, "OnPollCooldownTimer")
+end
+
+function OnPollCooldownTimer(idTimer)
+	g_pollCoolTimerId = nil
+	g_pollCooling = false
 end
 
 function ReceivedFromNetwork(idBinding, nPort, data)
@@ -591,6 +648,7 @@ function ReceivedFromNetwork(idBinding, nPort, data)
 end
 
 function FinishPendingRequest(statusCode, body)
+	CancelRequestTimer()
 	local req = g_pendingReq
 	g_pendingReq = nil
 	g_rxBuffer = ""
@@ -631,7 +689,21 @@ function OnPollTimer(idTimer)
 	QueuePoll()
 end
 
+-- v204: true if a /poll is already waiting in the queue or in flight.
+function PollQueuedOrInFlight()
+	if (g_pendingReq ~= nil and g_pendingReq.callback == OnPollResponse) then return true end
+	for _, r in ipairs(g_reqQueue) do
+		if (r.callback == OnPollResponse) then return true end
+	end
+	return false
+end
+
+-- v204: skips if a poll is already queued/in flight, or if the last /poll
+-- started less than POLL_MIN_INTERVAL_MS ago. The regular 20 s timer and
+-- the reconcile loop both go through here.
 function QueuePoll()
+	if (PollQueuedOrInFlight()) then return end
+	if (g_pollCooling) then return end
 	QueueRequest("GET", "/poll", nil, OnPollResponse)
 end
 
@@ -673,6 +745,11 @@ end
 
 function OnReconcilePollTimer(idTimer)
 	g_reconcileTimerId = nil
+	if (g_pollCooling) then
+		-- v204: too soon after the last /poll. Retry shortly instead of dropping the reconcile chain.
+		g_reconcileTimerId = C4:AddTimer(1000, "MILLISECONDS", false, "OnReconcilePollTimer")
+		return
+	end
 	QueuePoll()
 end
 
@@ -898,6 +975,13 @@ function NotifyRelayState(bInitial)
 		if ((not bOn) and g_prevPower ~= 0) then C4:FireEvent(EVT_FIRE_OFF) end
 	end
 	g_prevPower = bOn and 1 or 0
+	-- v204: keep the thermostat card in step with power. Sent only when power changes.
+	if (g_sentHvacOn ~= bOn) then
+		g_sentHvacOn = bOn
+		local sHvac = bOn and "Heat" or "Off"
+		C4:SendToProxy(FIREPLACE_BINDING, "HVAC_MODE_CHANGED", { MODE = sHvac }, "NOTIFY")
+		C4:SendToProxy(FIREPLACE_BINDING, "HVAC_STATE_CHANGED", { STATE = sHvac }, "NOTIFY")
+	end
 	C4:SetVariable("FIREPLACE_ON", bOn and "1" or "0")
 	C4:SetVariable("PILOT_ON", (g_state.pilot == 1) and "1" or "0")
 	C4:SetVariable("FLAME_LEVEL", bOn and tostring(FlameLevel()) or "0")
