@@ -9,13 +9,14 @@ local LEVEL_VAR = 1001     -- LIGHT_LEVEL variable on the light
 local MIN = 60000
 local SEC = 1000
 
--- Fresh driver per test: bind the light and set its level before OnDriverInit runs.
+-- Fresh driver per test: select the light in the Room Light property and set its level before OnDriverInit runs.
 local function start(props, extra)
+  props = props or {}
+  props["Room Light"] = tostring(LIGHT)
   local ok = sim.load_driver(LUA, {
     xml = XML,
     properties = props,
     before = function(s)
-      s.bind(1, 5001, LIGHT)
       s.set_var(LIGHT, LEVEL_VAR, "0")
       if extra then extra(s) end
     end,

@@ -3,10 +3,10 @@
 	<creator>Custom Driver Project</creator>
 	<manufacturer>Custom Driver Project</manufacturer>
 	<name>Room Light Helper</name>
-	<model>Room Light Helper v1.1.2 (one instance per room)</model>
+	<model>Room Light Helper v1.2.0 (one instance per room)</model>
 	<created>11/12/2026 10:00 PM</created>
-	<modified>11/13/2026 05:03 PM</modified>
-	<version>5</version>
+	<modified>11/13/2026 05:09 PM</modified>
+	<version>7</version>
 	<control>lua_gen</control>
 	<controlmethod>none</controlmethod>
 	<driver>DriverWorks</driver>
@@ -14,24 +14,6 @@
 	<proxies />
 	<capabilities />
 	<templatedescription>Room Light Helper - requests a room light on and releases it, with a lux-based level and an off delay</templatedescription>
-
-	<connections>
-		<connection>
-			<id>5001</id>
-			<facing>6</facing>
-			<connectionname>Room Light</connectionname>
-			<type>1</type>
-			<consumer>True</consumer>
-			<audiosource>False</audiosource>
-			<videosource>False</videosource>
-			<linelevel>False</linelevel>
-			<classes>
-				<class>
-					<classname>LIGHT_V2</classname>
-				</class>
-			</classes>
-		</connection>
-	</connections>
 
 	<config>
 		<script file="driver.lua" />
@@ -43,10 +25,16 @@
 				<default>Laundry</default>
 			</property>
 			<property>
+				<name>Room Light</name>
+				<type>DEVICE_SELECTOR</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>1.1.2</default>
+				<default>1.2.0</default>
 			</property>
 			<property>
 				<name>Status</name>
