@@ -2,18 +2,18 @@
 	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Jellyfin, Plex or Control4</copyright>
 	<creator>Custom Driver Project</creator>
 	<manufacturer>Custom</manufacturer>
-	<name>Media Server (Jellyfin / Plex)</name>
-	<model>Media Server (Jellyfin / Plex)</model>
-	<created>11/12/2026 12:00 PM</created>
-	<modified>11/12/2026 12:00 PM</modified>
-	<version>2</version>
+	<name>Media Server (Jellyfin and Plex)</name>
+	<model>Media Server (Jellyfin and Plex)</model>
+	<created>11/12/2026 7:00 AM</created>
+	<modified>11/12/2026 9:25 AM</modified>
+	<version>5</version>
 	<control>lua_gen</control>
-	<controlmethod>ip</controlmethod>
+	<controlmethod>other</controlmethod>
 	<driver>DriverWorks</driver>
-	<combo>false</combo>
+	<combo>true</combo>
 	<proxies />
 	<capabilities />
-	<templatedescription>Media Server now playing for Jellyfin or Plex. Polls the server for the active session and exposes now-playing variables and transport commands. UNTESTED.</templatedescription>
+	<templatedescription>Media Server now playing for Jellyfin and Plex at the same time. Polls each enabled server, shows the active session and exposes now-playing variables and transport commands. UNTESTED.</templatedescription>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 
@@ -99,23 +99,45 @@
 
 		<properties>
 			<property>
-				<name>Server Type</name>
+				<name>Jellyfin Enabled</name>
 				<type>LIST</type>
 				<readonly>false</readonly>
-				<default>Jellyfin</default>
+				<default>Off</default>
 				<items>
-					<item>Jellyfin</item>
-					<item>Plex</item>
+					<item>Off</item>
+					<item>On</item>
 				</items>
 			</property>
 			<property>
-				<name>Server URL</name>
+				<name>Jellyfin URL</name>
 				<type>STRING</type>
 				<readonly>false</readonly>
 				<default>https://jellyfin.onyxlens.com</default>
 			</property>
 			<property>
-				<name>API Key / Plex Token</name>
+				<name>Jellyfin API Key</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Plex Enabled</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Off</default>
+				<items>
+					<item>Off</item>
+					<item>On</item>
+				</items>
+			</property>
+			<property>
+				<name>Plex URL</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Plex Token</name>
 				<type>STRING</type>
 				<readonly>false</readonly>
 				<default></default>
@@ -161,6 +183,12 @@
 				<default></default>
 			</property>
 			<property>
+				<name>Active Source</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>None</default>
+			</property>
+			<property>
 				<name>Status</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
@@ -170,7 +198,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>0.2.0</default>
+				<default>0.3.0</default>
 			</property>
 		</properties>
 	</config>

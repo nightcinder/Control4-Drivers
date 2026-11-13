@@ -1,15 +1,17 @@
 --[[
-  Media Server Now Playing: Jellyfin or Plex (Control4 DriverWorks, OS 3.x)
-  Version: 0.2.0  (UNTESTED on real Composer/Director; Plex backend unverified; see docs/jellyfin.md)
+  Media Server Now Playing: Jellyfin and Plex together (Control4 DriverWorks, OS 3.x)
+  Version: 0.3.0  (UNTESTED on real Composer/Director)
 
-  Server Type = Jellyfin: polls GET {Server URL}/Sessions, sends POST {Server URL}/Sessions/{SessionId}/Playing/{Cmd}.
-  Server Type = Plex:     polls GET {Server URL}/status/sessions, sends GET {Server URL}/player/playback/{cmd}.
-  Both backends publish the same driver variables, events and commands.
-  The API key / Plex token is a plain STRING property (Composer cannot mask it). It is never written to the log.
-  Plex artwork URLs contain the token, so the Artwork URL variable carries it too.
+  Each enabled backend is polled on its own timer, with its own URL, key, status and last result.
+  Jellyfin: GET {Jellyfin URL}/Sessions, POST {base}/Sessions/{SessionId}/Playing/{Cmd}.
+  Plex:     GET {Plex URL}/status/sessions, GET {base}/player/playback/{cmd}.
+  The active view is a PLAYING session (sticky while it keeps playing), otherwise a PAUSED one.
+  Only the active view drives the now-playing variables, events and transport commands.
+  API keys and Plex tokens are plain STRING properties (Composer cannot mask them).
+  They are never written to the log. Plex artwork URLs contain the token, so the Artwork URL variable carries it too.
 ]]
 
-local DRIVER_VERSION = "0.2.0"
+local DRIVER_VERSION = "0.3.0"
 local TICKS_PER_SECOND = 10000000
 local WATCHDOG_SECONDS = 20
 local DEFAULT_POLL_SECONDS = 4
@@ -22,31 +24,40 @@ local EVENT_PLAYBACK_STARTED = 2
 local EVENT_PLAYBACK_STOPPED = 3
 local EVENT_ITEM_CHANGED = 4
 
+local BKEYS = { "Jellyfin", "Plex" }
+local CONF = {
+  Jellyfin = { enable = "Jellyfin Enabled", url = "Jellyfin URL", key = "Jellyfin API Key" },
+  Plex = { enable = "Plex Enabled", url = "Plex URL", key = "Plex Token" },
+}
+
 local ITEM_VARIABLES = {
   "Now Playing Title", "Now Playing Subtitle", "Now Playing Summary", "Artist", "Year", "Media Type",
   "Position", "Position Seconds", "Runtime", "Runtime Seconds", "Client", "Device", "User",
   "Artwork URL", "Item Id",
 }
-local ALL_VARIABLES = { "Play State", "Session Id" }
+local ALL_VARIABLES = { "Play State", "Session Id", "ACTIVE_SOURCE" }
 for _, n in ipairs(ITEM_VARIABLES) do ALL_VARIABLES[#ALL_VARIABLES + 1] = n end
 
+-- Per-backend state: each backend has its own status, timers, auth form and last result.
+local bs = {}
+for _, k in ipairs(BKEYS) do
+  bs[k] = {
+    status = "", inflight = false, inflightSince = 0, authMode = "Authorization",
+    best = nil, pollTimer = nil, commandId = 0, lastOk = 0,
+  }
+end
+
+-- Driver-wide state: which backend the now-playing view comes from.
 local state = {
-  pollTimer = nil,
-  watchdogTimer = nil,
-  inflight = false,
-  inflightSince = 0,
-  lastOk = 0,
-  authMode = "Authorization",   -- Jellyfin only: switches to "X-Emby-Token" if the first form gets 401/403
-  activeSessionId = "",
-  activeClientId = "",          -- Plex only: the player's machineIdentifier, used as the target client
-  itemId = "",
-  playState = "",
-  runSec = 0,
-  commandId = 0,                -- Plex only: increments on each playback command
+  activeKey = "", active = nil,
+  playState = "", itemId = "", runSec = 0,
+  primed = false, watchdogTimer = nil,
 }
 local lastVars = {}
 local lastProps = {}
 local lastStatus = ""
+
+local pollBackend, reselect, watchdogTick   -- defined below
 
 -- ============================================================================
 -- Small helpers
@@ -80,31 +91,26 @@ local function debugLog(msg)
   end
 end
 
-local function setStatus(text)
-  text = tostring(text or "")
-  if text == lastStatus then return end
-  lastStatus = text
-  setProp("Status", text)
+local function logAlways(msg)
+  pcall(function() print("[MediaServer] " .. tostring(msg)) end)
 end
 
-local function serverBase()
-  local u = prop("Server URL")
-  u = u:gsub("/+$", "")
+local function enabled(k)
+  return prop(CONF[k].enable) == "On"
+end
+
+local function baseOf(k)
+  local u = (prop(CONF[k].url):gsub("/+$", ""))
   if u ~= "" and not string.find(u, "^https?://") then u = "http://" .. u end
   return u
 end
 
-local function token()
-  return prop("API Key / Plex Token")
+local function keyOf(k)
+  return prop(CONF[k].key)
 end
 
-local function configured()
-  return serverBase() ~= "" and token() ~= ""
-end
-
-local function serverType()
-  if prop("Server Type") == "Plex" then return "Plex" end
-  return "Jellyfin"
+local function configured(k)
+  return baseOf(k) ~= "" and keyOf(k) ~= ""
 end
 
 local function tlsOptions()
@@ -112,6 +118,32 @@ local function tlsOptions()
     return { ssl_verifypeer = 0, ssl_verifyhost = 0 }
   end
   return {}
+end
+
+-- Status property: "Jellyfin: OK | Plex: HTTP 401", or "Not configured" when neither is enabled.
+local function statusLine()
+  local parts = {}
+  for _, k in ipairs(BKEYS) do
+    if enabled(k) then
+      local st = bs[k].status
+      if st == "" then st = "starting" end
+      parts[#parts + 1] = k .. ": " .. st
+    end
+  end
+  if #parts == 0 then return "Not configured" end
+  return table.concat(parts, " | ")
+end
+
+local function refreshStatus()
+  local text = statusLine()
+  if text == lastStatus then return end
+  lastStatus = text
+  setProp("Status", text)
+end
+
+local function setBackendStatus(k, text)
+  bs[k].status = tostring(text or "")
+  refreshStatus()
 end
 
 -- ============================================================================
@@ -237,11 +269,12 @@ local function fmtTime(sec)
 end
 
 -- ============================================================================
--- Backends. Each one knows its own paths, auth headers, reply parsing and transport.
--- parse() returns a list of normalized sessions with the fields:
+-- Backends. Each one is stateless: it takes a config table cfg = {base, key}
+-- and, where needed, its own per-backend state table st. Nothing reads a global
+-- server type. parse() returns normalized sessions with the fields:
 --   id, clientId, user, device, client, paused, posSec, runSec, itemId, mediaType,
 --   title, subtitle, artist, year, artwork, activity
--- transport(action, session, offsetMs) returns method, path, extra headers, query.
+-- transport(action, session, offsetMs, st) returns method, path, extra headers, query.
 -- ============================================================================
 local BACKENDS = {}
 
@@ -285,7 +318,7 @@ BACKENDS.Jellyfin = {
   canRetryAuth = true,
   pollPath = function() return "/Sessions?activeWithinSeconds=" .. ACTIVE_WITHIN_SECONDS end,
   testPath = function() return "/System/Info" end,
-  parse = function(data)
+  parse = function(data, cfg)
     local out = {}
     if type(data) ~= "table" then return out end
     for _, s in ipairs(data) do
@@ -295,7 +328,7 @@ BACKENDS.Jellyfin = {
         local title, subtitle, artist = jellyfinDescribe(item)
         local art = ""
         if type(item.ImageTags) == "table" and item.ImageTags.Primary and item.Id then
-          art = serverBase() .. "/Items/" .. tostring(item.Id) .. "/Images/Primary?maxWidth=480&quality=90"
+          art = cfg.base .. "/Items/" .. tostring(item.Id) .. "/Images/Primary?maxWidth=480&quality=90"
         end
         out[#out + 1] = {
           id = tostring(s.Id or ""), clientId = "", user = tostring(s.UserName or ""),
@@ -339,7 +372,7 @@ BACKENDS.Plex = {
   canRetryAuth = false,
   pollPath = function() return "/status/sessions" end,
   testPath = function() return "/identity" end,
-  parse = function(data)
+  parse = function(data, cfg)
     local out = {}
     local mc = type(data) == "table" and data.MediaContainer or nil
     local meta = type(mc) == "table" and mc.Metadata or nil
@@ -365,7 +398,7 @@ BACKENDS.Plex = {
         end
         local thumb = tostring(m.thumb or "")
         local art = ""
-        if thumb ~= "" then art = serverBase() .. thumb .. "?X-Plex-Token=" .. token() end
+        if thumb ~= "" then art = cfg.base .. thumb .. "?X-Plex-Token=" .. cfg.key end
         out[#out + 1] = {
           id = tostring(se.id or ""), clientId = tostring(p.machineIdentifier or ""),
           user = tostring(u.title or ""), device = tostring(p.title or ""), client = tostring(p.product or ""),
@@ -381,9 +414,9 @@ BACKENDS.Plex = {
     end
     return out
   end,
-  transport = function(action, s, offsetMs)
-    state.commandId = state.commandId + 1
-    local q = "?commandID=" .. state.commandId
+  transport = function(action, s, offsetMs, st)
+    st.commandId = st.commandId + 1
+    local q = "?commandID=" .. st.commandId
     if action == "Seek" then
       q = q .. "&offset=" .. string.format("%.0f", offsetMs)
     end
@@ -392,28 +425,26 @@ BACKENDS.Plex = {
   end,
 }
 
-local function backend()
-  return BACKENDS[serverType()]
-end
-
 -- ============================================================================
--- HTTP. Handlers receive (data, httpCode, err). Jellyfin only: a 401/403 on the
--- first auth form is retried once with the other form (Authorization <-> X-Emby-Token).
+-- HTTP for one backend k. Jellyfin only: a 401/403 on the first auth form is
+-- retried once with the other form (Authorization <-> X-Emby-Token).
+-- The handler receives (data, httpCode, err).
 -- ============================================================================
-local function request(method, path, handler, extraHeaders, retried)
-  local b = backend()
-  local url = serverBase() .. path
+local function request(k, method, path, handler, extraHeaders, retried)
+  local b = BACKENDS[k]
+  local st = bs[k]
+  local url = baseOf(k) .. path
   local opts = tlsOptions()
-  local headers = b.headers(token(), state.authMode)
-  for k, v in pairs(extraHeaders or {}) do headers[k] = v end
-  debugLog(method .. " " .. path)
+  local headers = b.headers(keyOf(k), st.authMode)
+  for hk, hv in pairs(extraHeaders or {}) do headers[hk] = hv end
+  debugLog(k .. " " .. method .. " " .. path)
 
   local function onReply(_, data, code, _, err)
     code = tonumber(code) or 0
-    if (code == 401 or code == 403) and not retried and b.canRetryAuth and state.authMode == "Authorization" then
-      state.authMode = "X-Emby-Token"
-      debugLog("auth rejected, retrying with X-Emby-Token form")
-      request(method, path, handler, extraHeaders, true)
+    if (code == 401 or code == 403) and not retried and b.canRetryAuth and st.authMode == "Authorization" then
+      st.authMode = "X-Emby-Token"
+      debugLog(k .. ": auth rejected, retrying with X-Emby-Token form")
+      request(k, method, path, handler, extraHeaders, true)
       return
     end
     handler(data, code, err)
@@ -431,14 +462,9 @@ local function request(method, path, handler, extraHeaders, retried)
   end
 end
 
-local function reportHttpError(code, err)
-  if code == 401 or code == 403 then
-    setStatus("Auth failed: check API Key / Plex Token")
-  elseif code == 0 then
-    setStatus("Cannot reach server: " .. tostring(err or "no response"))
-  else
-    setStatus("Server returned HTTP " .. tostring(code))
-  end
+local function errorText(code)
+  if code == 0 then return "Unreachable" end
+  return "HTTP " .. tostring(code)
 end
 
 -- ============================================================================
@@ -451,7 +477,8 @@ local function matchesFilter(s, filter)
     or string.find(string.lower(s.device .. " " .. s.client), f, 1, true) ~= nil
 end
 
--- Playing sessions beat paused ones; ties go to the most recent activity (Jellyfin only; ISO strings compare correctly).
+-- Best session of ONE backend: playing beats paused; ties go to the most recent activity.
+-- The Target User Or Device Filter applies here, so it covers both backends.
 local function pickSession(list)
   local filter = prop("Target User Or Device Filter")
   local best, bestPlaying, bestActivity = nil, false, ""
@@ -490,35 +517,40 @@ local function fireEvent(id)
   pcall(function() C4:FireEvent(id) end)
 end
 
--- Applies the chosen normalized session (or nil for nothing playing). Returns a short text for Status.
-local function applySession(s)
+-- Publishes the chosen session of backend k (or nil for nothing playing).
+-- Events fire only on changes of the active view, and never on the first state after load.
+local function applySession(k, s)
+  local fire = state.primed
+  state.primed = true
   local prevState, prevItem = state.playState, state.itemId
 
   if s == nil then
+    state.activeKey = ""
     state.active = nil
-    state.activeSessionId = ""
-    state.activeClientId = ""
     state.itemId = ""
     state.runSec = 0
     state.playState = "Stopped"
     setVar("Play State", "Stopped")
     setVar("Session Id", "")
+    setVar("ACTIVE_SOURCE", "None")
+    setProp("Active Source", "None")
     clearItemVars()
-    if prevState == "Playing" or prevState == "Paused" then
+    if fire and (prevState == "Playing" or prevState == "Paused") then
       fireEvent(EVENT_STATE_CHANGED)
       fireEvent(EVENT_PLAYBACK_STOPPED)
     end
-    return "nothing playing"
+    return
   end
 
   local newState = s.paused and "Paused" or "Playing"
+  state.activeKey = k
   state.active = s
-  state.activeSessionId = s.id
-  state.activeClientId = s.clientId
   state.itemId = s.itemId
   state.runSec = s.runSec
   state.playState = newState
 
+  setVar("ACTIVE_SOURCE", k)
+  setProp("Active Source", k)
   setVar("Play State", newState)
   setVar("Session Id", s.id)
   setVar("Now Playing Title", s.title)
@@ -537,20 +569,48 @@ local function applySession(s)
   setVar("Item Id", s.itemId)
   setVar("Artwork URL", s.artwork)
 
-  if newState ~= prevState then
-    fireEvent(EVENT_STATE_CHANGED)
-    if newState == "Playing" then fireEvent(EVENT_PLAYBACK_STARTED) end
+  if fire then
+    if newState ~= prevState then
+      fireEvent(EVENT_STATE_CHANGED)
+      if newState == "Playing" then fireEvent(EVENT_PLAYBACK_STARTED) end
+    end
+    if s.itemId ~= prevItem then fireEvent(EVENT_ITEM_CHANGED) end
   end
-  if s.itemId ~= prevItem then fireEvent(EVENT_ITEM_CHANGED) end
+end
 
-  return newState .. ": " .. join(s.title, s.subtitle)
+-- Chooses the active view from the per-backend results.
+-- Playing beats paused. Among several candidates the current active backend wins (sticky).
+reselect = function()
+  local playing, paused = {}, {}
+  for _, k in ipairs(BKEYS) do
+    local s = enabled(k) and bs[k].best or nil
+    if s ~= nil then
+      if s.paused then paused[#paused + 1] = k else playing[#playing + 1] = k end
+    end
+  end
+  local function choose(list)
+    for _, k in ipairs(list) do
+      if k == state.activeKey then return k end
+    end
+    return list[1]
+  end
+  local pick = nil
+  if #playing > 0 then
+    pick = choose(playing)
+  elseif #paused > 0 then
+    pick = choose(paused)
+  end
+  if pick then
+    applySession(pick, bs[pick].best)
+  else
+    applySession(nil, nil)
+  end
+  refreshStatus()
 end
 
 -- ============================================================================
--- Polling and watchdog
+-- Polling (one timer per backend) and watchdog
 -- ============================================================================
-local pollNow, watchdogTick   -- defined below (forward declarations for the timers)
-
 local function pollSeconds()
   local n = tonumber(prop("Poll Interval Seconds")) or DEFAULT_POLL_SECONDS
   if n < 2 then n = 2 end
@@ -558,11 +618,18 @@ local function pollSeconds()
   return n
 end
 
-local function schedulePoll(seconds)
-  if state.pollTimer then pcall(function() state.pollTimer:Cancel() end) end
-  state.pollTimer = C4:SetTimer(math.floor(seconds * 1000), function()
-    state.pollTimer = nil
-    pollNow()
+local function cancelPoll(k)
+  local st = bs[k]
+  if st.pollTimer then pcall(function() st.pollTimer:Cancel() end) end
+  st.pollTimer = nil
+end
+
+local function schedulePoll(k, seconds)
+  local st = bs[k]
+  cancelPoll(k)
+  st.pollTimer = C4:SetTimer(math.floor(seconds * 1000), function()
+    st.pollTimer = nil
+    pollBackend(k)
   end)
 end
 
@@ -574,87 +641,119 @@ local function armWatchdog()
 end
 
 watchdogTick = function()
-  if state.inflight and os.time() - state.inflightSince >= WATCHDOG_SECONDS then
-    state.inflight = false
-    setStatus("No reply from server within " .. WATCHDOG_SECONDS .. "s")
-    debugLog("watchdog reset a stuck request")
-    schedulePoll(pollSeconds())
+  local changed = false
+  for _, k in ipairs(BKEYS) do
+    local st = bs[k]
+    if st.inflight and os.time() - st.inflightSince >= WATCHDOG_SECONDS then
+      st.inflight = false
+      st.best = nil
+      changed = true
+      setBackendStatus(k, "no reply within " .. WATCHDOG_SECONDS .. "s")
+      debugLog(k .. ": watchdog reset a stuck request")
+      schedulePoll(k, pollSeconds())
+    end
   end
+  if changed then reselect() end
   armWatchdog()
 end
 
-local function onPoll(data, code, err)
-  state.inflight = false
+local function onPoll(k, data, code, err)
+  local st = bs[k]
+  st.inflight = false
   if code >= 200 and code < 300 then
     local decoded, decodeErr = jsonDecode(data or "")
     if type(decoded) ~= "table" then
-      setStatus("Unexpected reply from server")
-      debugLog("decode error: " .. tostring(decodeErr))
+      st.best = nil
+      setBackendStatus(k, "unexpected reply")
+      debugLog(k .. " decode error: " .. tostring(decodeErr))
     else
-      state.lastOk = os.time()
-      setStatus("Connected: " .. applySession(pickSession(backend().parse(decoded))))
+      st.lastOk = os.time()
+      st.best = pickSession(BACKENDS[k].parse(decoded, { base = baseOf(k), key = keyOf(k) }))
+      setBackendStatus(k, "OK")
     end
   else
-    reportHttpError(code, err)
+    st.best = nil
+    setBackendStatus(k, errorText(code))
+    debugLog(k .. " poll failed: HTTP " .. tostring(code) .. " " .. tostring(err or ""))
   end
-  schedulePoll(pollSeconds())
+  reselect()
+  schedulePoll(k, pollSeconds())
 end
 
-pollNow = function()
-  if not configured() then
-    setStatus("Not configured: set Server URL and API Key / Plex Token")
-    schedulePoll(RETRY_NOT_CONFIGURED_SECONDS)
+pollBackend = function(k)
+  local st = bs[k]
+  if not enabled(k) then
+    cancelPoll(k)
+    st.best = nil
+    st.status = ""
+    reselect()
     return
   end
-  if state.inflight then return end
-  state.inflight = true
-  state.inflightSince = os.time()
-  request("GET", backend().pollPath(), onPoll)
+  if not configured(k) then
+    st.best = nil
+    setBackendStatus(k, "not configured")
+    reselect()
+    schedulePoll(k, RETRY_NOT_CONFIGURED_SECONDS)
+    return
+  end
+  if st.inflight then return end
+  st.inflight = true
+  st.inflightSince = os.time()
+  request(k, "GET", BACKENDS[k].pollPath(), function(data, code, err)
+    onPoll(k, data, code, err)
+  end)
 end
 
 -- ============================================================================
 -- Actions and commands
 -- ============================================================================
 local function testConnection()
-  if not configured() then
-    setStatus("Not configured: set Server URL and API Key / Plex Token")
-    return
-  end
-  setStatus("Testing connection...")
-  request("GET", backend().testPath(), function(data, code, err)
-    if code >= 200 and code < 300 then
-      local info = jsonDecode(data or "")
-      if serverType() == "Plex" then
-        local mc = type(info) == "table" and info.MediaContainer or {}
-        setStatus("OK: Plex " .. tostring(type(mc) == "table" and mc.version or "server"))
-      elseif type(info) == "table" then
-        setProp("Server Name", tostring(info.ServerName or ""))
-        setStatus("OK: " .. tostring(info.ServerName or "server") .. " " .. tostring(info.Version or ""))
+  local any = false
+  for _, k in ipairs(BKEYS) do
+    if enabled(k) then
+      any = true
+      if not configured(k) then
+        setBackendStatus(k, "not configured")
       else
-        setStatus("Connected, but the reply was not JSON")
+        setBackendStatus(k, "testing")
+        request(k, "GET", BACKENDS[k].testPath(), function(data, code, err)
+          if code >= 200 and code < 300 then
+            local info = jsonDecode(data or "")
+            if k == "Jellyfin" and type(info) == "table" then
+              setProp("Server Name", tostring(info.ServerName or ""))
+            end
+            setBackendStatus(k, "OK")
+          else
+            setBackendStatus(k, errorText(code))
+            debugLog(k .. " test failed: HTTP " .. tostring(code) .. " " .. tostring(err or ""))
+          end
+        end)
       end
-    else
-      reportHttpError(code, err)
     end
-  end)
+  end
+  if not any then logAlways("Test Connection: no backend is enabled") end
+  refreshStatus()
 end
 
+-- Sends a transport command to the ACTIVE backend, using its own session id.
 local function sendTransport(action, offsetMs)
+  local k = state.activeKey
   local s = state.active
-  if s == nil or s.id == "" or not string.find(s.id, "^[%w%-]+$") then
-    setStatus("No active session to control")
+  if k == "" or s == nil or s.id == "" or not string.find(s.id, "^[%w%-]+$") then
+    logAlways("transport " .. tostring(action) .. ": no active session, nothing sent")
     return
   end
-  if serverType() == "Plex" and not string.find(s.clientId, "^[%w%-]+$") then
-    setStatus("No Plex player to control")
+  if k == "Plex" and not string.find(s.clientId, "^[%w%-]+$") then
+    logAlways("transport " .. tostring(action) .. ": no Plex player to control, nothing sent")
     return
   end
-  local method, path, extra, query = backend().transport(action, s, offsetMs or 0)
-  request(method, path .. query, function(_, code, err)
+  local method, path, extra, query = BACKENDS[k].transport(action, s, offsetMs or 0, bs[k])
+  request(k, method, path .. query, function(_, code, err)
     if code >= 200 and code < 300 then
-      schedulePoll(0.5)
+      schedulePoll(k, 0.5)
     else
-      reportHttpError(code, err)
+      setBackendStatus(k, errorText(code))
+      debugLog(k .. " transport failed: HTTP " .. tostring(code) .. " " .. tostring(err or ""))
     end
   end, extra)
 end
@@ -665,11 +764,11 @@ local function seekToPercent(params)
     pct = tonumber(params["Percent"] or params["PERCENT"] or params["percent"])
   end
   if not pct or pct < 0 or pct > 100 then
-    setStatus("Seek needs Percent between 0 and 100")
+    logAlways("Seek needs Percent between 0 and 100")
     return
   end
   if state.runSec <= 0 then
-    setStatus("Seek unavailable: runtime unknown")
+    logAlways("Seek unavailable: runtime unknown")
     return
   end
   sendTransport("Seek", math.floor(state.runSec * 1000 * pct / 100))
@@ -686,7 +785,8 @@ function ExecuteCommand(strCommand, tParams)
   elseif key == "PREVIOUS" then sendTransport("PreviousTrack")
   elseif key == "SEEK_TO_PERCENT" then seekToPercent(tParams)
   elseif key == "TEST_CONNECTION" then testConnection()
-  elseif key == "REFRESH_NOW" then pollNow()
+  elseif key == "REFRESH_NOW" then
+    for _, k in ipairs(BKEYS) do schedulePoll(k, 0.5) end
   else debugLog("unknown command " .. key)
   end
 end
@@ -696,30 +796,45 @@ end
 -- ============================================================================
 function OnDriverInit()
   setProp("Driver Version", DRIVER_VERSION)
+  setProp("Active Source", "None")
   ensureVariables()
-  setStatus("Starting")
+  refreshStatus()
 end
 
 function OnDriverLateInit()
-  state.authMode = "Authorization"
+  for _, k in ipairs(BKEYS) do bs[k].authMode = "Authorization" end
   armWatchdog()
-  schedulePoll(1)
+  for _, k in ipairs(BKEYS) do schedulePoll(k, 1) end
 end
 
 function OnDriverDestroyed()
-  pcall(function() if state.pollTimer then state.pollTimer:Cancel() end end)
+  for _, k in ipairs(BKEYS) do cancelPoll(k) end
   pcall(function() if state.watchdogTimer then state.watchdogTimer:Cancel() end end)
 end
 
+-- Restarts one backend after its enable flag, URL or key changed.
+local function restartBackend(k)
+  bs[k].authMode = "Authorization"
+  bs[k].best = nil
+  bs[k].inflight = false
+  if not enabled(k) then bs[k].status = "" end
+  reselect()
+  schedulePoll(k, 1)
+end
+
 function OnPropertyChanged(name)
-  if name == "Server Type" then
-    applySession(nil)
-    state.authMode = "Authorization"
-    schedulePoll(1)
-  elseif name == "Server URL" or name == "API Key / Plex Token" or name == "Allow Self-Signed TLS" then
-    state.authMode = "Authorization"
-    schedulePoll(1)
-  elseif name == "Poll Interval Seconds" or name == "Target User Or Device Filter" then
-    schedulePoll(1)
+  if name == "Jellyfin Enabled" or name == "Jellyfin URL" or name == "Jellyfin API Key" then
+    restartBackend("Jellyfin")
+  elseif name == "Plex Enabled" or name == "Plex URL" or name == "Plex Token" then
+    restartBackend("Plex")
+  elseif name == "Allow Self-Signed TLS" then
+    for _, k in ipairs(BKEYS) do restartBackend(k) end
+  elseif name == "Poll Interval Seconds" then
+    for _, k in ipairs(BKEYS) do
+      if enabled(k) then schedulePoll(k, 1) end
+    end
+  elseif name == "Target User Or Device Filter" then
+    reselect()
   end
+  refreshStatus()
 end
