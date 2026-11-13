@@ -1,7 +1,8 @@
 --[[
-  Room Light Helper v1.2.2 (Control4 DriverWorks, OS 3.x)
+  Room Light Helper v1.2.3 (Control4 DriverWorks, OS 3.x)
   One instance per room. Laundry is the first room.
   Changelog:
+    1.2.3 - Room Light ID is a RANGED_INTEGER (plain INTEGER made Composer throw 'Error creating property')
     1.2.2 - light is chosen by typing its device ID (Room Light ID); the Composer device selector was unusable
     1.2.1  Room Light device selector now lists light proxies (fixes 'Error creating property').
            The Room Light property is DEVICE_SELECTOR with an items list (light_v2.c4i, light.c4i)
@@ -36,7 +37,7 @@
   Not in v1: keypad holds, away mode, DLS integration. Max Level is a plain property.
 ]]
 
-local DRIVER_VERSION = "1.2.2"
+local DRIVER_VERSION = "1.2.3"
 local CHECK_FAST_MS = 10000   -- check timer while the light listener is not registered
 local CHECK_SLOW_MS = 60000   -- check timer once the listener is registered
 local LIGHT_LEVEL_VAR = 1001          -- light proxy LIGHT_LEVEL variable id
