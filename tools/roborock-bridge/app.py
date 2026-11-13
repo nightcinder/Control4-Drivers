@@ -18,7 +18,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DATA_FILE = os.environ.get("ROBOROCK_DATA", "/data/roborock.json")
 PORT = int(os.environ.get("PORT", "8788"))
-POLL_INTERVAL = max(60, int(os.environ.get("POLL_INTERVAL", "60")))
+# Status poll cadence. Idle uses POLL_INTERVAL (floor 15 s). While the robot is cleaning or returning,
+# POLL_ACTIVE (default 5 s, floor 5 s) is used so the driver sees state changes quickly. Each poll is one
+# python-roborock status read; the library prefers the local LAN link, so this is not a cloud call per poll
+# unless the local link is down. If cloud rate limits appear in the log, raise POLL_ACTIVE.
+POLL_INTERVAL = max(15, int(os.environ.get("POLL_INTERVAL", "60")))
+POLL_ACTIVE = max(5, int(os.environ.get("POLL_ACTIVE", "5")))
 MAX_AGE = 300
 ROOMS_REFRESH_SECONDS = 600
 MAP_REFRESH_ACTIVE = 15     # seconds between map fetches while the robot is cleaning
@@ -141,6 +146,7 @@ async def map_loop():
 async def poller(saved):
     manager = None
     rooms_at = 0.0  # time of the last room refresh (0 = never)
+    wait = POLL_INTERVAL
     asyncio.ensure_future(map_loop())
     while True:
         try:
@@ -148,6 +154,8 @@ async def poller(saved):
                 manager = await build_manager(saved)
             props, snap = await poll_once(manager)
             RUNTIME["props"] = props
+            busy = _is_cleaning(snap["state"]) or str(snap["state"]).lower() == "returning"
+            wait = POLL_ACTIVE if busy else POLL_INTERVAL
             with state_lock:
                 STATE.update(snap)
                 STATE["last_success"] = time.time()
@@ -164,13 +172,14 @@ async def poller(saved):
             log.warning("poll failed: %s", type(exc).__name__)
             with state_lock:
                 STATE["last_error"] = type(exc).__name__
+            wait = POLL_INTERVAL
             if manager is not None:
                 try:
                     await manager.close()
                 except Exception:
                     pass
                 manager = None
-        await asyncio.sleep(POLL_INTERVAL)
+        await asyncio.sleep(wait)
 
 
 async def run_command(action, rooms):
@@ -253,7 +262,7 @@ def parse_command(raw):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "roborock-bridge/0.2.0"
+    server_version = "roborock-bridge/0.2.1"
 
     def log_message(self, fmt, *args):  # no per-request logs
         return
