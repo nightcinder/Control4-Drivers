@@ -41,3 +41,28 @@ Migration per fan:
 3. Rebind Composer programming, room Lighting/Comfort bindings and Navigator groups from the old driver's Light/Fan to the new ones.
 4. Delete the old Haiku SenseME Fan instance (fans with no Driver Version row are on the very old driver), then remove the old driver entries.
 Only one driver can hold the fan's TCP connection reliably, so remove the old instance before testing the new one.
+
+## Pre-flight
+
+`tools/check_c4z.py` checks a driver folder (and its c4z/ package, if one exists) before it ships:
+
+- **a** driver.xml starts directly with `<devicedata>` (no BOM, `<?xml?>` declaration or comment) and parses.
+- **b** `<version>` is an integer, and is greater than the HEAD version when the source changed, and greater than the c4z version when the source differs from the c4z. `--no-version-check` skips the ordering part.
+- **c** `<modified>` changed when the source changed since HEAD.
+- **d** the Lua passes `luac -p`.
+- **e** the Lua defines OnDriverInit, and every `<action><command>` name appears in the Lua.
+- **f** a "Driver Version" property has a `<default>` equal to the Lua DRIVER_VERSION / VERSION constant, and the Lua writes it.
+- **g** the package name matches an existing c4z/ file exactly (case-sensitive). Warns when a differently named c4z exists for the same driver.
+- **h** the package holds only driver.xml, driver.lua, www/ and icons the XML references, and every referenced icon exists.
+- **j** no `Properties[...] = ...` writes in the Lua. Those change the Lua table only. Use `C4:UpdateProperty(name, value)`.
+
+    python tools/check_c4z.py --all --no-version-check
+    python tools/check_c4z.py drivers/<name>
+
+`tools/build_c4z.py` runs the checks before it builds each driver and refuses to build a driver that fails any of them.
+
+**Auto-bump.** If the driver's source (ignoring `<version>` and `<modified>`) differs from the existing c4z/<name>.c4z, the build sets `<version>` to max(XML version, HEAD version, c4z version) + 1 and `<modified>` to the local time, in the file's existing format. Unchanged source is not bumped. A version bumped by hand is raised once more by this rule.
+
+    python tools/build_c4z.py --dry-run [<name> ...]
+
+`--dry-run` runs the bump plan and all checks, and reports what would be bumped and built. It writes nothing.
