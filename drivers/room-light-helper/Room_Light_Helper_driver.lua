@@ -1,7 +1,8 @@
 --[[
-  Room Light Helper v1.2.1 (Control4 DriverWorks, OS 3.x)
+  Room Light Helper v1.2.2 (Control4 DriverWorks, OS 3.x)
   One instance per room. Laundry is the first room.
   Changelog:
+    1.2.2 - light is chosen by typing its device ID (Room Light ID); the Composer device selector was unusable
     1.2.1  Room Light device selector now lists light proxies (fixes 'Error creating property').
            The Room Light property is DEVICE_SELECTOR with an items list (light_v2.c4i, light.c4i)
            and multiselect. The helper reads the first number from it.
@@ -29,13 +30,13 @@
   after Off Delay, but only if the helper turned it on. A new request cancels a pending off.
   Each source auto-releases after Source Timeout (min), with a log line.
 
-  Room Light: device selector property (Composer) holding the room light's device ID. No binding.
+  Room Light ID: plain integer property (typed in Composer) holding the room light's device ID. No binding.
   State is in memory. A driver reload forgets the sources and leaves the light as it is.
 
   Not in v1: keypad holds, away mode, DLS integration. Max Level is a plain property.
 ]]
 
-local DRIVER_VERSION = "1.2.1"
+local DRIVER_VERSION = "1.2.2"
 local CHECK_FAST_MS = 10000   -- check timer while the light listener is not registered
 local CHECK_SLOW_MS = 60000   -- check timer once the listener is registered
 local LIGHT_LEVEL_VAR = 1001          -- light proxy LIGHT_LEVEL variable id
@@ -80,10 +81,9 @@ local function trim(s)
   return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
--- Light device ID from the Room Light device selector property; nil when none is selected.
+-- Light device ID from the Room Light ID property; nil when empty, 0 or not a number (no light selected).
 local function getLightId()
-  local digits = string.match(tostring(Properties["Room Light"] or ""), "%d+")
-  local id = tonumber(digits)
+  local id = tonumber(Properties["Room Light ID"] or "")
   if id == nil or id == 0 then return nil end
   return id
 end
@@ -122,7 +122,7 @@ end
 local function rampTo(level)
   local id = getLightId()
   if not id or id == 0 then
-    logf("No light selected in the Room Light property")
+    logf("No light selected: set the Room Light ID property")
     return false
   end
   C4:SendToDevice(id, "RAMP_TO_LEVEL", { LEVEL = level, TIME = RAMP_MS })
