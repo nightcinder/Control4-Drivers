@@ -19,6 +19,7 @@ Reads appliance state from the LAN HTTP bridge running on liesa.
 | Oven Appliance ID | string | Paste from Discovered Appliances |
 | Dishwasher Appliance ID | string | Paste from Discovered Appliances |
 | Discovered Appliances | read-only | Filled by the Discover Appliances action: `id \| type \| name \| online` |
+| Auto Create Children | On / Off | Default On. Parent creates a missing child per appliance after each good poll (0.3.6) |
 | Poll Interval | 30-3600 s | Default 60 |
 | Log Mode | Off / Print / Log | Print goes to the driver console, Log goes to the error log |
 | Status | read-only | Last poll result |
@@ -31,6 +32,7 @@ The dropdown for the appliance IDs is a free-text field in this version. Control
 
 - Discover Appliances: calls `/appliances`, logs id, type and name for each, fills Discovered Appliances.
 - Refresh Now: polls immediately.
+- Discover Children (0.3.6): polls now and creates any missing children, even when Auto Create Children is Off.
 
 ## Events
 
@@ -104,3 +106,13 @@ Door Left Open fires once per opening after Door Open Alert Minutes (default 2, 
 - Dishwasher, washer and dryer "Done" events fire when the operating state goes from active to idle. "Active" means any state not in the idle list in the bridge parent (STATUS_DASH, STATUS_OFF, NA, and similar). Those names are unverified.
 - The hood light level feedback uses `LIGHT_CHANGED` with LEVEL, which is not confirmed for light_v2. ON and OFF match the 0.2.x driver. Check that the light's slider follows the hood.
 - Nothing here has been sent to a real appliance during testing. The only write is the hood light, and it has not been exercised in 0.3.0.
+
+## Version 0.3.6: auto-create children (UNTESTED in Composer)
+
+- The parent (`drivers/smarthq-bridge`, `c4z/smarthq-bridge.c4z`) creates one child per appliance at runtime with `C4:AddDevice`. The call is the one the DriverWorks `idc_controller` sample uses: `C4:AddDevice(driver_file, room_id, name, callback)`. The callback gets the new device ID (0 on failure). The parent then calls `C4:Bind(parent, 1, child, 1, "SMARTHQ_BRIDGE")`.
+- Driver file per inventory type: `smarthq-appliance.c4z` for oven, beverage_center, dishwasher, fridge, washer and dryer. `smarthq-hood-light.c4z` for hood. Both .c4z files must already be installed in the project.
+- Ten seconds after the bind, the parent sends `SH_CONFIGURE {APPLIANCE_ID, APPLIANCE_TYPE}`. The child sets its own Appliance Type and Appliance ID properties and registers. The parent cannot set another device's properties directly.
+- Idempotent: a child is not created for an appliance that already has a registered child, or an AddDevice still in flight. Creation waits while a bound child has not registered yet, so hand-added children are not duplicated. Creation also waits 60 s after startup.
+- Nothing is deleted. If a child is removed in Composer, its registration is forgotten, and with Auto Create On the next poll creates a new one. Set Auto Create Children to Off to stop that.
+- Open questions: `C4:RoomGetId()` is used for the room (copied from the sample, which calls it from an action). If it returns no room from a timer, creation is skipped and logged. `C4:UpdateProperty` on a LIST property (Appliance Type) from a child is not confirmed.
+

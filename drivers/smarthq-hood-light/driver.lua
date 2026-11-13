@@ -1,6 +1,6 @@
 --[[
   SmartHQ Hood Light (child) for Control4 DriverWorks, OS 3.4.x
-  Version: 0.3.2  (UNTESTED in Composer/Director; see docs/smarthq.md)
+  Version: 0.3.3  (UNTESTED in Composer/Director; see docs/smarthq.md)
 
   The hood light as a light_v2 proxy (binding 5001), so it can sit in a room for lighting automation.
   Levels: off=0, dim=33, high=100. A Control4 ON sends high. SET_LEVEL and RAMP_TO_LEVEL: 0 sends off,
@@ -18,7 +18,7 @@
   light's level slider follows the hood. ON and OFF are the same as the 0.2.x driver.
 ]]
 
-local DRIVER_VERSION = "0.3.2"
+local DRIVER_VERSION = "0.3.3"
 local BRIDGE_BINDING = 1
 local PROXY_BINDING = 5001
 local APPLIANCE_KIND = "hood"
@@ -136,6 +136,13 @@ function ExecuteCommand(strCommand, tParams)
     if (tParams.REACHABLE or "") == "false" then setStatus("SmartHQ Bridge unreachable") end
   elseif strCommand == "SH_HELLO" then
     register()
+  elseif strCommand == "SH_CONFIGURE" then
+    -- Sent once by a parent that created this child (0.3.3). Hood has no Appliance Type.
+    local appId = trim(tParams.APPLIANCE_ID or "")
+    if appId ~= "" then
+      setProp("Appliance ID", appId)
+      register()
+    end
   end
 end
 

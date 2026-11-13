@@ -5,8 +5,8 @@
 	<name>SmartHQ Hub</name>
 	<model>SmartHQ Hub (parent, read-only LAN bridge client)</model>
 	<created>11/12/2026 12:00 PM</created>
-	<modified>11/12/2026 10:12 PM</modified>
-	<version>12</version>
+	<modified>11/12/2026 11:58 PM</modified>
+	<version>14</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -50,6 +50,10 @@
 			<action>
 				<name>List Appliances</name>
 				<command>LIST_APPLIANCES</command>
+			</action>
+			<action>
+				<name>Discover Children</name>
+				<command>DISCOVER_CHILDREN</command>
 			</action>
 		</actions>
 
@@ -108,10 +112,20 @@
 				<default>Run the List Appliances action</default>
 			</property>
 			<property>
+				<name>Auto Create Children</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>On</default>
+				<items>
+					<item>On</item>
+					<item>Off</item>
+				</items>
+			</property>
+			<property>
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>0.3.5</default>
+				<default>0.3.6</default>
 			</property>
 		</properties>
 	</config>

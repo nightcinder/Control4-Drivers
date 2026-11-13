@@ -5,8 +5,8 @@
 	<name>SmartHQ Hood Light</name>
 	<model>SmartHQ Hood Light (child, light_v2)</model>
 	<created>11/12/2026 12:00 PM</created>
-	<modified>11/12/2026 10:12 PM</modified>
-	<version>3</version>
+	<modified>11/12/2026 11:58 PM</modified>
+	<version>5</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -87,7 +87,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>0.3.2</default>
+				<default>0.3.3</default>
 			</property>
 		</properties>
 	</config>

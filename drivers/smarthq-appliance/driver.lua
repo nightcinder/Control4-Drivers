@@ -1,6 +1,6 @@
 --[[
   SmartHQ Appliance (child) for Control4 DriverWorks, OS 3.4.x
-  Version: 0.3.2  (UNTESTED in Composer/Director; see docs/smarthq.md)
+  Version: 0.3.3  (UNTESTED in Composer/Director; see docs/smarthq.md)
 
   One instance = one appliance: oven, beverage center, dishwasher, refrigerator, washer or dryer.
   It has no network code. Bind its "SmartHQ Bridge" connection to the SmartHQ Bridge (parent) driver.
@@ -17,7 +17,7 @@
   (0 turns it off). Updates come from the parent poll, so the timing is only as fine as Poll Interval.
 ]]
 
-local DRIVER_VERSION = "0.3.2"
+local DRIVER_VERSION = "0.3.3"
 local BRIDGE_BINDING = 1
 
 local EVENT_OVEN_PREHEATED = 1
@@ -167,6 +167,16 @@ end
 -- ============================================================================
 -- Driver callbacks
 -- ============================================================================
+-- Sent once by a parent that created this child (0.3.3). Sets the two properties, then registers.
+local function applyConfig(tParams)
+  local appId = trim(tParams.APPLIANCE_ID or "")
+  local typeName = trim(tParams.APPLIANCE_TYPE or "")
+  if appId == "" then return end
+  if typeName ~= "" then setProp("Appliance Type", typeName) end
+  setProp("Appliance ID", appId)
+  register()
+end
+
 function ExecuteCommand(strCommand, tParams)
   tParams = tParams or {}
   if strCommand == "SH_STATUS" then
@@ -178,6 +188,8 @@ function ExecuteCommand(strCommand, tParams)
     if (tParams.REACHABLE or "") == "false" then setStatus("SmartHQ Bridge unreachable") end
   elseif strCommand == "SH_HELLO" then
     register()
+  elseif strCommand == "SH_CONFIGURE" then
+    applyConfig(tParams)
   end
 end
 
