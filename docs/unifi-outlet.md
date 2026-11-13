@@ -2,7 +2,7 @@
 
 Two self-written drivers that expose UniFi power outlets (USP PDU Pro, USP Plug) to Control4 as on/off relays.
 
-- `UniFi_Controller.c4z`, shown in Composer as UniFi PDU Controls (parent; the file name stays so Composer updates in place): logs in, polls outlets, serves children, web view page on binding 5001.
+- `UniFi_PDU_Controls.c4z` (parent; renamed from `UniFi_Controller.c4z`, so an old install needs delete and re-add): logs in, polls outlets, serves children, web view page on binding 5001.
 - `UniFi_Outlet.c4z` (child): one relay per outlet, relay proxy on binding 5001, bound to the parent over connection 1.
 
 ## Setup

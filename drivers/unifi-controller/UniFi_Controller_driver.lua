@@ -1,4 +1,4 @@
--- UniFi PDU Controls (parent, file UniFi_Controller) driver for Control4 OS 3.4.x. Version 1.0.12 (UNTESTED on hardware).
+-- UniFi PDU Controls (parent) driver for Control4 OS 3.4.x. Version 1.0.12 (UNTESTED on hardware).
 -- Logs in to a UniFi controller, polls power outlets (USP PDU Pro, USP Plug), serves UniFi Outlet child
 -- drivers over a connection, and shows a uibutton web view page listing every outlet with tap-to-toggle.
 -- UNVERIFIED: API paths, outlet JSON fields, PUT body, cookie/CSRF handling, self-signed certificate
