@@ -242,7 +242,7 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "204"
+DRIVER_VERSION = "205"
 PAGE_FILE  = 'fireplace3.html'   -- renamed every page release (Navigator caches controller:// pages)
 PAGE_BUILD = '3'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 
@@ -298,6 +298,7 @@ g_rxBuffer     = ""
 g_pendingReq   = nil     -- { kind = "poll"|"challenge"|"post", callback = fn }
 g_reqQueue     = {}
 g_pollTimerId  = nil
+g_missedPolls   = 0      -- v205: poll ticks since the last successful /poll
 g_netBound     = false
 g_netOnline    = false
 g_boundIP      = nil
@@ -359,6 +360,7 @@ function OnDriverLateInit()
 	-- announces itself (even if the real values happen to equal the
 	-- placeholder defaults), so Navigator still gets an authoritative
 	-- state a moment later, just never a guessed one.
+	LOG("Started - IP=" .. tostring(g_ip) .. ", poll interval=" .. tostring(g_pollInt) .. "s")
 end
 
 function OnDriverDestroyed()
@@ -436,7 +438,6 @@ function OnConnectionStatusChanged(idBinding, nPort, strStatus)
 	if (idBinding ~= NET_BINDING) then return end
 	LOG("OnConnectionStatusChanged: " .. tostring(strStatus))
 	g_netOnline = (strStatus == "ONLINE")
-	C4:UpdateProperty("Connection Status", tostring(strStatus))
 	if (g_netOnline) then
 		-- Back online - cancel any pending "really offline" notification;
 		-- whatever OFFLINE blip preceded this was just the normal
@@ -463,6 +464,12 @@ function OnConnectionStatusChanged(idBinding, nPort, strStatus)
 		-- interrupted request back at the front of the queue so it's
 		-- retried instead of silently lost, and proactively try to
 		-- reconnect right away rather than waiting for the next poll timer.
+		if (g_pendingReq ~= nil and g_pendingReq.callback == OnPollResponse) then
+			-- v205: a /poll whose socket closed is completed from the buffered body.
+			LOG("Connection closed while poll pending - completing from buffered data")
+			TryCompleteRequest(true)
+			return
+		end
 		if (g_pendingReq ~= nil) then
 			LOG("Connection dropped mid-request - requeuing and reconnecting")
 			CancelRequestTimer()
@@ -488,9 +495,6 @@ function OnConnectionStatusChanged(idBinding, nPort, strStatus)
 		-- STILL down OFFLINE_NOTIFY_GRACE_MS later - comfortably longer
 		-- than one reconnect+request round trip - so the normal per-request
 		-- blips never reach the proxy at all, only genuine outages do.
-		if (g_offlineNotifyTimerId == nil) then
-			g_offlineNotifyTimerId = C4:AddTimer(OFFLINE_NOTIFY_GRACE_MS, "MILLISECONDS", false, "OnOfflineGraceTimer")
-		end
 		DrainQueue()
 	end
 end
@@ -505,6 +509,8 @@ end
 function NotifyOnline(bOnline)
 	-- v200: online state rides in UI_STATE (the uibutton proxy has no CONNECTION).
 	g_uiOnline = bOnline and true or false
+	-- v205: Connection Status mirrors the last /poll result, not the raw socket state.
+	pcall(function() C4:UpdateProperty("Connection Status", g_uiOnline and "ONLINE" or "OFFLINE") end)
 	PublishUI(false)
 end
 
@@ -604,6 +610,7 @@ function OnRequestTimeout(idTimer)
 	if (g_pendingReq == nil) then return end
 	LOG("Request timed out after " .. tostring(REQUEST_TIMEOUT_MS) .. "ms: " ..
 		tostring(g_pendingReq.method) .. " " .. tostring(g_pendingReq.path))
+	NotifyOnline(false)
 	FinishPendingRequest(nil, nil)
 end
 
@@ -624,25 +631,41 @@ end
 function ReceivedFromNetwork(idBinding, nPort, data)
 	if (idBinding ~= NET_BINDING) then return end
 	g_rxBuffer = g_rxBuffer .. tostring(data)
+	TryCompleteRequest(false)
+end
+
+-- v205: finishes the pending request once its response is complete.
+-- With Content-Length: unchanged, wait for the full body.
+-- Without Content-Length (the fireplace sends none): complete when the body
+-- ends with "}" or when the socket closes (bSocketClosed).
+function TryCompleteRequest(bSocketClosed)
+	if (g_pendingReq == nil) then
+		g_rxBuffer = "" -- nothing is waiting for these bytes: drop them
+		return
+	end
 
 	local headerEnd = g_rxBuffer:find("\r\n\r\n", 1, true)
-	if (headerEnd == nil) then return end -- headers not fully received yet
+	if (headerEnd == nil) then
+		if (bSocketClosed and g_pendingReq.callback == OnPollResponse) then
+			FinishPendingRequest(nil, nil)
+		end
+		return -- headers not fully received yet
+	end
 
 	local headers = g_rxBuffer:sub(1, headerEnd - 1)
 	local bodySoFar = g_rxBuffer:sub(headerEnd + 4)
-
 	local statusCode = headers:match("HTTP/1%.[01]%s+(%d+)")
 	local contentLength = tonumber(headers:match("[Cc]ontent%-[Ll]ength:%s*(%d+)"))
 
 	if (contentLength ~= nil) then
 		if (#bodySoFar < contentLength) then return end -- wait for more
-		local body = bodySoFar:sub(1, contentLength)
-		FinishPendingRequest(statusCode, body)
-	else
-		-- No content-length given; assume the connection closing (or a
-		-- reasonable idle gap) marks the end. Since we always send
-		-- "Connection: close", treat whatever we have as final once we
-		-- see the double-CRLF and some body, or an explicit 0-length reply.
+		FinishPendingRequest(statusCode, bodySoFar:sub(1, contentLength))
+		return
+	end
+
+	-- v205: no Content-Length: body is complete at a closing brace, or when the socket closed.
+	local trimmed = bodySoFar:match("^%s*(.-)%s*$") or ""
+	if (bSocketClosed or trimmed:sub(-1) == "}") then
 		FinishPendingRequest(statusCode, bodySoFar)
 	end
 end
@@ -660,11 +683,9 @@ function FinishPendingRequest(statusCode, body)
 		end
 	end
 
-	if (statusCode ~= nil) then
-		if (not g_state.connected_seen) then
-			g_state.connected_seen = true
-		end
-		NotifyOnline(true)
+	-- v205: online state is set only by /poll results (OnPollResponse), not here.
+	if (statusCode ~= nil and not g_state.connected_seen) then
+		g_state.connected_seen = true
 	end
 
 	DrainQueue()
@@ -686,6 +707,12 @@ function StopPolling()
 end
 
 function OnPollTimer(idTimer)
+	-- v205: count poll ticks without a successful /poll; after more than 3 intervals show OFFLINE.
+	g_missedPolls = g_missedPolls + 1
+	if (g_missedPolls > 3 and g_uiOnline) then
+		LOG("No successful poll for " .. tostring(g_missedPolls) .. " intervals - OFFLINE")
+		NotifyOnline(false)
+	end
 	QueuePoll()
 end
 
@@ -793,7 +820,8 @@ function OnPollResponse(statusCode, body)
 		return
 	end
 	if (statusCode ~= "200") then
-		LOG("Poll returned status " .. tostring(statusCode))
+		LOG("Poll failed: status " .. tostring(statusCode))
+		NotifyOnline(false)
 		return
 	end
 
@@ -802,6 +830,15 @@ function OnPollResponse(statusCode, body)
 	local height = JsonNumberField(body, "height")
 	-- v203: ignition is over once a poll confirms power on. Cleared before the restore block below runs.
 	if (power == 1) then g_igniting = false end
+	-- v205: a body without a parsed power field is a failed poll.
+	if (power == nil) then
+		LOG("Poll failed: empty or unparsable body (" .. tostring(#body) .. " bytes)")
+		NotifyOnline(false)
+		return
+	end
+	g_missedPolls = 0
+	LOG("Poll OK: power=" .. tostring(power) .. " pilot=" .. tostring(pilot) .. " height=" .. tostring(height))
+	NotifyOnline(true)
 
 	-- Still waiting to confirm a recently-issued command? Don't let a poll
 	-- that hasn't caught up yet (hardware still igniting/purging) stomp the
@@ -994,7 +1031,7 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
 	LOG("ReceivedFromProxy [" .. tostring(idBinding) .. "] " .. tostring(strCommand))
 
 	if (strCommand == "GET_CONNECTED_STATE") then
-		NotifyOnline(g_netOnline)
+		NotifyOnline(g_uiOnline)
 		return
 	end
 
