@@ -5,8 +5,8 @@
 	<name>roborock</name>
 	<model>Roborock Vacuum (LAN Bridge)</model>
 	<created>11/12/2026 12:00 PM</created>
-	<modified>11/12/2026 08:38 PM</modified>
-	<version>10</version>
+	<modified>11/12/2026 10:59 PM</modified>
+	<version>13</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -89,6 +89,7 @@
 		in the Lua and the file in www/ must agree.
 		Commands, actions, events, variables and properties from v1 are unchanged.
 		v5.1 (0.5.1) - events moved to devicedata level so Composer lists them
+		v5.2 (0.6.0) - Room field shows Docked when docked or charging and the target room (e.g. "Laundry (target)") while a room job runs; events 8 Laundry Room Clean Started and 9 Laundry Room Clean Finished (UNTESTED on hardware and in Composer)
 	-->
 	<events>
 		<event>
@@ -125,6 +126,16 @@
 			<id>7</id>
 			<name>Laundry Room Left</name>
 			<description>Fires when the robot leaves the Laundry Room ID while cleaning, or when cleaning ends (docked, charging or idle; not on pause)</description>
+		</event>
+		<event>
+			<id>8</id>
+			<name>Laundry Room Clean Started</name>
+			<description>Fires when a clean job that includes the Laundry Room ID starts (from the driver's Clean Rooms action or web view). Does not depend on the robot's current room, so it fires while the robot travels to the laundry</description>
+		</event>
+		<event>
+			<id>9</id>
+			<name>Laundry Room Clean Finished</name>
+			<description>Fires when a clean job that included the Laundry Room ID ends (docked, charging or idle; not on pause)</description>
 		</event>
 	</events>
 	<config>
@@ -254,7 +265,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>0.5.1</default>
+				<default>0.6.0</default>
 			</property>
 			<property>
 				<name>Active Room</name>

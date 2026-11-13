@@ -16,7 +16,7 @@
   The state fields are read with simple key patterns (the bridge sends flat scalar fields).
 ]]
 
-local DRIVER_VERSION = "0.5.1"
+local DRIVER_VERSION = "0.6.0"
 local PROXY_BINDING = 5001          -- uibutton proxy (tile, icon and web view)
 local UI_BUILD = "3"                -- must match PAGE_BUILD in www/vacuum2.html
 local DEFAULT_HOST = "172.21.1.157"
@@ -34,6 +34,8 @@ local EVENT_BATTERY_LOW = 4
 local EVENT_BRIDGE_UNREACHABLE = 5
 local EVENT_LAUNDRY_ENTERED = 6
 local EVENT_LAUNDRY_LEFT = 7
+local EVENT_LAUNDRY_CLEAN_STARTED = 8   -- v0.6.0: a clean job that includes the Laundry Room ID starts
+local EVENT_LAUNDRY_CLEAN_FINISHED = 9  -- v0.6.0: that clean job ends (docked or charging or idle)
 
 local VAR_STATE = "VACUUM_STATE"
 local VAR_BATTERY = "VACUUM_BATTERY"
@@ -51,6 +53,7 @@ local state = {
   unreachable = false,  -- Bridge Unreachable already fired for this outage
   runRooms = nil,      -- room ids of the last clean_rooms command (list of strings), nil otherwise
   laundryActive = false, -- Laundry Room Entered fired for the current run, Left not yet fired
+  laundryJob = false,    -- v0.6.0: Laundry Room Clean Started fired for the current run, Finished not yet
   -- web view and tile icon snapshot (v0.2.0)
   uiSeq = 0,
   online = false,
@@ -141,6 +144,42 @@ local function isDocked(s)
   return s == "docked" or s == "charging"
 end
 
+-- v0.6.0: true when a clean_rooms run list contains the Laundry Room ID.
+local function targetsLaundry(rooms)
+  local laundry = tonumber(prop("Laundry Room ID"))
+  if not laundry or laundry <= 0 or not rooms then return false end
+  for _, r in ipairs(rooms) do
+    if tonumber(r) == laundry then return true end
+  end
+  return false
+end
+
+-- v0.6.0: room name for a numeric id from the last UI room list ("Room <id>" if unknown).
+local function roomNameFor(id)
+  local n = tonumber(id)
+  if not n then return tostring(id) end
+  local name = state.roomsJson:match('"id"%s*:%s*' .. n .. '%s*,%s*"name"%s*:%s*"([^"]*)"')
+  return name or ("Room " .. n)
+end
+
+-- v0.6.0: text for the Room field. Docked wins for docked or charging. While a room job runs,
+-- the target shows, because the bridge's current room is often unknown during the trip.
+local function displayRoom(st)
+  if isDocked(st) then return "Docked" end
+  local running = isCleaning(st) or st == "paused" or st == "returning"
+  if running and state.runRooms and #state.runRooms > 0 then
+    local names = {}
+    for _, id in ipairs(state.runRooms) do names[#names + 1] = roomNameFor(id) end
+    local target = table.concat(names, ", ")
+    if state.activeRoom ~= "" and state.activeRoom ~= target then
+      return state.activeRoom .. " (to " .. target .. ")"
+    end
+    if state.activeRoom == "" then return target .. " (target)" end
+    return target
+  end
+  return state.activeRoom ~= "" and state.activeRoom or "Unknown"
+end
+
 -- ============================================================================
 -- HTTP
 -- ============================================================================
@@ -186,7 +225,7 @@ local function publishUi()
     '{"t":"rbrock","seq":%d,"build":"%s","version":"%s","online":%s,"state":"%s","battery":%s,"error":"%s","lastError":"%s","activeRoom":"%s","roomProgress":%s,"rooms":%s}',
     state.uiSeq, UI_BUILD, DRIVER_VERSION, state.online and "true" or "false",
     jsonEscape(state.st or ""), batt, jsonEscape(state.err or "none"), jsonEscape(state.lastErr or ""),
-    jsonEscape(state.activeRoom or ""), progress, state.roomsJson)
+    jsonEscape(displayRoom(state.st or "")), progress, state.roomsJson)
   setVar(VAR_UI, json)
   pcall(C4.SendDataToUI, C4, json)
 end
@@ -262,7 +301,7 @@ local function applyState(body)
   setProp("Last Error", lastErr or err)
 
   -- v0.5.0 room properties and variables
-  setProp("Active Room", state.activeRoom ~= "" and state.activeRoom or "Unknown")
+  setProp("Active Room", displayRoom(st))
   setVar(VAR_ROOM, state.activeRoom)
   if state.roomProgress then
     setProp("Room Progress", string.format("%.0f%%", state.roomProgress))
@@ -304,9 +343,21 @@ local function applyState(body)
       logmsg("laundry room entered (run target)")
     end
   end
+  -- v0.6.0 laundry clean job events. These do not depend on the bridge's current room, so they
+  -- fire while the robot is still travelling to the Laundry Room ID.
+  if cleaningNow and not isCleaning(state.lastState) and targetsLaundry(state.runRooms) then
+    state.laundryJob = true
+    fire(EVENT_LAUNDRY_CLEAN_STARTED)
+    logmsg("laundry clean job started")
+  end
   -- Run ended (docked, charging or idle), not on pause or returning
   if isCleaning(state.lastState) and not cleaningNow
       and st ~= "paused" and st ~= "returning" then
+    if state.laundryJob then
+      state.laundryJob = false
+      fire(EVENT_LAUNDRY_CLEAN_FINISHED)
+      logmsg("laundry clean job finished")
+    end
     state.runRooms = nil
     if state.laundryActive then
       state.laundryActive = false
