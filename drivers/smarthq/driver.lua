@@ -1,6 +1,6 @@
 --[[
   SmartHQ Bridge (Control4 DriverWorks, OS 3.4.x)
-  Version: 0.2.1  (fixes proxy declaration and icon path; 0.2.0 adds hood light control; UNTESTED on real Composer/Director; see docs/smarthq.md)
+  Version: 0.2.2  (fixes proxy declaration and icon path; 0.2.0 adds hood light control; UNTESTED on real Composer/Director; see docs/smarthq.md)
 
   Client for the LAN HTTP bridge on liesa:
     GET {base}/health

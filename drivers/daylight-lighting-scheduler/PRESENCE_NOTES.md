@@ -1,4 +1,4 @@
-# DLS presence lighting (driver 1.8.0) - UNTESTED
+# DLS presence lighting (driver 1.10.1) - UNTESTED
 
 Status: first slice written, not yet run against any hardware. Nothing changes until Nick sets
 **Presence Lighting = On**. With it Off, the driver behaves exactly as 1.7.0.
