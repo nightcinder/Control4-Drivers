@@ -1,7 +1,10 @@
 --[[
-  Room Light Helper v1.2.0 (Control4 DriverWorks, OS 3.x)
+  Room Light Helper v1.2.1 (Control4 DriverWorks, OS 3.x)
   One instance per room. Laundry is the first room.
   Changelog:
+    1.2.1  Room Light device selector now lists light proxies (fixes 'Error creating property').
+           The Room Light property is DEVICE_SELECTOR with an items list (light_v2.c4i, light.c4i)
+           and multiselect. The helper reads the first number from it.
     1.2.0  The room light is now chosen with a device selector (Room Light property) instead
            of a binding. Light Connection 5001 removed; the property holds the light's device ID.
     1.1.2  Packaging fix: XML now declares its script (driver.lua), combo and empty
@@ -32,7 +35,7 @@
   Not in v1: keypad holds, away mode, DLS integration. Max Level is a plain property.
 ]]
 
-local DRIVER_VERSION = "1.2.0"
+local DRIVER_VERSION = "1.2.1"
 local CHECK_FAST_MS = 10000   -- check timer while the light listener is not registered
 local CHECK_SLOW_MS = 60000   -- check timer once the listener is registered
 local LIGHT_LEVEL_VAR = 1001          -- light proxy LIGHT_LEVEL variable id
@@ -79,7 +82,8 @@ end
 
 -- Light device ID from the Room Light device selector property; nil when none is selected.
 local function getLightId()
-  local id = tonumber(Properties["Room Light"])
+  local digits = string.match(tostring(Properties["Room Light"] or ""), "%d+")
+  local id = tonumber(digits)
   if id == nil or id == 0 then return nil end
   return id
 end

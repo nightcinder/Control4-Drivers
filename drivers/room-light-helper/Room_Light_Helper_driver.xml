@@ -3,10 +3,10 @@
 	<creator>Custom Driver Project</creator>
 	<manufacturer>Custom Driver Project</manufacturer>
 	<name>Room Light Helper</name>
-	<model>Room Light Helper v1.2.0 (one instance per room)</model>
+	<model>Room Light Helper v1.2.1 (one instance per room)</model>
 	<created>11/12/2026 10:00 PM</created>
-	<modified>11/13/2026 05:09 PM</modified>
-	<version>7</version>
+	<modified>11/13/2026 05:12 PM</modified>
+	<version>8</version>
 	<control>lua_gen</control>
 	<controlmethod>none</controlmethod>
 	<driver>DriverWorks</driver>
@@ -27,14 +27,19 @@
 			<property>
 				<name>Room Light</name>
 				<type>DEVICE_SELECTOR</type>
-				<readonly>false</readonly>
+				<items>
+					<item>light_v2.c4i</item>
+					<item>light.c4i</item>
+				</items>
+				<multiselect>false</multiselect>
 				<default></default>
+				<readonly>false</readonly>
 			</property>
 			<property>
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>1.2.0</default>
+				<default>1.2.1</default>
 			</property>
 			<property>
 				<name>Status</name>
