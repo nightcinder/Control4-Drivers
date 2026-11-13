@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DLS presence bridge v1.2.1 - tells the Daylight Lighting Scheduler (Control4 EA-1) when you are Home/Away.
+"""DLS presence bridge v1.3.0 - tells the Daylight Lighting Scheduler (Control4 EA-1) when you are Home/Away.
 
 Sources (each returns True=here, False=not here, None=unknown/unavailable):
   unifi   - phone present in UniFi Poller metrics in Prometheus (stdlib only)
