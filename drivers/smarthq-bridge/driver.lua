@@ -1,6 +1,6 @@
 --[[
   SmartHQ Bridge (parent) for Control4 DriverWorks, OS 3.4.x
-  Version: 0.3.0  (UNTESTED in Composer/Director; see docs/smarthq.md)
+  Version: 0.3.3  (UNTESTED in Composer/Director; see docs/smarthq.md)
 
   Polls the LAN HTTP bridge on liesa (read-only, except the hood light write):
     GET  {base}/inventory                     every Poll Interval seconds, all appliances
