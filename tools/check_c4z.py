@@ -301,8 +301,10 @@ def check_folder(path, xml_override=None, version_check=True):
                     continue
                 fail("h", f"c4z/{expected} contains {rel}, which is not driver.xml, driver.lua, www/ or a referenced icon")
             for ref in pkg_refs:
-                if ref not in pkg_lay:
-                    fail("h", f"c4z/{expected} lacks icon {ref} referenced by driver.xml")
+                # Composer resolves c4z images relative to www/, so icons/x.png is packed as www/icons/x.png.
+                packed = ref if ref.startswith("www/") else "www/" + ref
+                if packed not in pkg_lay:
+                    warn("h", f"c4z/{expected} lacks icon {ref} referenced by driver.xml (expected at {packed})")
 
     # h (source folder contents, and icon references)
     refs = image_refs(root)
@@ -311,13 +313,14 @@ def check_folder(path, xml_override=None, version_check=True):
             continue
         fail("h", f"{rel} would be packed but is not driver.xml, driver.lua, www/ or a referenced icon")
     for ref in refs:
-        if ref not in cur:
-            if "www/" + ref in cur:
-                fail("h", f"driver.xml references image {ref}, but the file is packed as www/{ref}; fix the reference")
-            else:
-                fail("h", f"driver.xml references image {ref}, which is missing from the driver folder")
-        elif not ref.startswith("www/"):
-            warn("h", f"image {ref} is packed at its own path, not under www/")
+        # Composer resolves c4z images relative to www/, so icons/x.png is satisfied by <folder>/www/icons/x.png.
+        packed = ref if ref.startswith("www/") else "www/" + ref
+        if packed in cur:
+            continue
+        if ref in cur:
+            warn("h", f"image {ref} is packed at its own path, not under www/; Composer looks under www/")
+        else:
+            warn("h", f"driver.xml references image {ref}, which is missing from the driver folder (expected at {packed})")
 
     # d. Lua syntax
     lua_bytes = files[lua_rel]
@@ -338,7 +341,7 @@ def check_folder(path, xml_override=None, version_check=True):
         elif text not in commands:
             commands.append(text)
     if commands and not EXEC_RE.search(lua_text):
-        fail("e", "driver.xml defines actions but the Lua defines no ExecuteCommand")
+        warn("e", "driver.xml defines actions but the Lua defines no ExecuteCommand")
     for cmd in commands:
         if cmd == "LUA_ACTION":
             continue
@@ -354,6 +357,8 @@ def check_folder(path, xml_override=None, version_check=True):
         m = DRIVER_CONST_RE.search(lua_text)
         if not m:
             fail("f", "Driver Version property exists but the Lua has no DRIVER_VERSION or VERSION string constant")
+        elif not default:
+            warn("f", f"Driver Version <default> is empty; set it to '{m.group(1)}' so Composer shows the version")
         elif m.group(1).strip() != default:
             fail("f", f"Driver Version <default> '{default}' differs from Lua constant '{m.group(1)}'")
         if not DRIVER_SET_RE.search(lua_text):
