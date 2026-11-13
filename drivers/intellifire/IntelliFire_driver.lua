@@ -242,7 +242,7 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "205"
+DRIVER_VERSION = "206"
 PAGE_FILE  = 'fireplace3.html'   -- renamed every page release (Navigator caches controller:// pages)
 PAGE_BUILD = '3'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 
@@ -729,8 +729,8 @@ end
 -- started less than POLL_MIN_INTERVAL_MS ago. The regular 20 s timer and
 -- the reconcile loop both go through here.
 function QueuePoll()
-	if (PollQueuedOrInFlight()) then return end
-	if (g_pollCooling) then return end
+	if (PollQueuedOrInFlight()) then LOG("QueuePoll skipped: poll already queued/in flight") return end
+	if (g_pollCooling) then LOG("QueuePoll skipped: cooling down") return end
 	QueueRequest("GET", "/poll", nil, OnPollResponse)
 end
 
@@ -1336,6 +1336,21 @@ function ExecuteCommand(strCommand, tParams)
 		FireplaceProxyCommand("SET_MODE_HVAC", { MODE = "Off" })
 
 	elseif (strCommand == "ACTION_REFRESH_STATUS") then
+		-- v206: hard reset. Clears any stuck request/cooldown, rebinds, reconnects, polls.
+		print("[IntelliFire] Refresh: pending=" .. tostring(g_pendingReq ~= nil) ..
+			" queued=" .. tostring(#g_reqQueue) .. " cooling=" .. tostring(g_pollCooling) ..
+			" bound=" .. tostring(g_netBound) .. " online=" .. tostring(g_netOnline) ..
+			" boundIP=" .. tostring(g_boundIP) .. " ip=" .. tostring(g_ip))
+		CancelRequestTimer()
+		g_pendingReq = nil
+		g_reqQueue = {}
+		g_rxBuffer = ""
+		g_pollCooling = false
+		g_boundIP = nil
+		BindTo(g_ip)
+		local okC, errC = pcall(function() C4:NetConnect(NET_BINDING, HTTP_PORT, "TCP") end)
+		print("[IntelliFire] Refresh: NetConnect ok=" .. tostring(okC) .. " err=" .. tostring(errC) ..
+			" port=" .. tostring(HTTP_PORT) .. " binding=" .. tostring(NET_BINDING))
 		QueuePoll()
 
 	elseif (strCommand == "ACTION_PRINT_DEBUG") then

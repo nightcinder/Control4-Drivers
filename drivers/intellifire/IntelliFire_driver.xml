@@ -6,7 +6,7 @@
 	<model>IntelliFire Fireplace</model>
 	<created>08/15/2026 12:00 PM</created>
 	<modified>11/12/2026 8:55 PM</modified>
-	<version>205</version>
+	<version>206</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
