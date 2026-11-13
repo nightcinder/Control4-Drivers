@@ -242,7 +242,7 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "210"
+DRIVER_VERSION = "211"
 PAGE_FILE  = 'fireplace3.html'   -- renamed every page release (Navigator caches controller:// pages)
 PAGE_BUILD = '3'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 
@@ -303,6 +303,24 @@ g_netBound     = false
 g_netOnline    = false
 g_boundIP      = nil
 g_uiOnline     = false   -- v200: online state reported to the web page (see Web view section)
+
+-- v211: ROOT CAUSE of the stuck driver. Control4 never calls a handler named in a
+-- 4th argument of C4:AddTimer; it calls the global OnTimerExpired(idTimer). None of
+-- this driver's timers (poll, cooldown, request timeout, reconcile, flame debounce)
+-- ever fired, so the first /poll left g_pollCooling true forever.
+g_timerMap = {}
+function AddTimerCb(interval, units, repeating, handlerName)
+	local id = C4:AddTimer(interval, units, repeating)
+	g_timerMap[id] = handlerName
+	return id
+end
+
+function OnTimerExpired(idTimer)
+	local h = g_timerMap[idTimer]
+	if (h ~= nil and type(_G[h]) == "function") then
+		_G[h](idTimer)
+	end
+end
 
 -- ===================== Logging helper ============================
 function LOG(msg)
@@ -640,7 +658,7 @@ function ArmRequestTimer()
 	CancelRequestTimer()
 	g_reqSeq = g_reqSeq + 1
 	g_reqTimerSeq = g_reqSeq
-	g_reqTimerId = C4:AddTimer(REQUEST_TIMEOUT_MS, "MILLISECONDS", false, "OnRequestTimeout")
+	g_reqTimerId = AddTimerCb(REQUEST_TIMEOUT_MS, "MILLISECONDS", false, "OnRequestTimeout")
 end
 
 function CancelRequestTimer()
@@ -667,7 +685,7 @@ function StartPollCooldown()
 		pcall(function() C4:KillTimer(g_pollCoolTimerId) end)
 	end
 	g_pollCooling = true
-	g_pollCoolTimerId = C4:AddTimer(POLL_MIN_INTERVAL_MS, "MILLISECONDS", false, "OnPollCooldownTimer")
+	g_pollCoolTimerId = AddTimerCb(POLL_MIN_INTERVAL_MS, "MILLISECONDS", false, "OnPollCooldownTimer")
 end
 
 function OnPollCooldownTimer(idTimer)
@@ -742,7 +760,7 @@ end
 function StartPolling()
 	StopPolling()
 	if (g_pollInt <= 0) then return end
-	g_pollTimerId = C4:AddTimer(g_pollInt * 1000, "SECONDS", true, "OnPollTimer")
+	g_pollTimerId = AddTimerCb(g_pollInt, "SECONDS", true, "OnPollTimer")
 	QueuePoll()
 end
 
@@ -814,14 +832,14 @@ function ScheduleReconcilePoll()
 		pcall(function() C4:KillTimer(g_reconcileTimerId) end)
 	end
 	g_reconcileAttempts = 0
-	g_reconcileTimerId = C4:AddTimer(1500, "MILLISECONDS", false, "OnReconcilePollTimer")
+	g_reconcileTimerId = AddTimerCb(1500, "MILLISECONDS", false, "OnReconcilePollTimer")
 end
 
 function OnReconcilePollTimer(idTimer)
 	g_reconcileTimerId = nil
 	if (g_pollCooling) then
 		-- v204: too soon after the last /poll. Retry shortly instead of dropping the reconcile chain.
-		g_reconcileTimerId = C4:AddTimer(1000, "MILLISECONDS", false, "OnReconcilePollTimer")
+		g_reconcileTimerId = AddTimerCb(1000, "MILLISECONDS", false, "OnReconcilePollTimer")
 		return
 	end
 	QueuePoll()
@@ -903,7 +921,7 @@ function OnPollResponse(statusCode, body)
 				LOG("Hardware hasn't confirmed the last command yet (attempt " ..
 					g_reconcileAttempts .. "/" .. MAX_RECONCILE_ATTEMPTS ..
 					") - rechecking in " .. RECONCILE_RETRY_MS .. "ms")
-				g_reconcileTimerId = C4:AddTimer(RECONCILE_RETRY_MS, "MILLISECONDS", false, "OnReconcilePollTimer")
+				g_reconcileTimerId = AddTimerCb(RECONCILE_RETRY_MS, "MILLISECONDS", false, "OnReconcilePollTimer")
 				return
 			else
 				LOG("Gave up waiting for hardware to confirm the last command - showing real state")
@@ -1306,7 +1324,7 @@ for n = 1, 5 do
 		if (g_flameDebounceId ~= nil) then
 			pcall(function() C4:KillTimer(g_flameDebounceId) end)
 		end
-		g_flameDebounceId = C4:AddTimer(700, "MILLISECONDS", false, "OnFlameDebounceTimer")
+		g_flameDebounceId = AddTimerCb(700, "MILLISECONDS", false, "OnFlameDebounceTimer")
 	end
 end
 
