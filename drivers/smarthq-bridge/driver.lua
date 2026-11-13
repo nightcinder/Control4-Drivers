@@ -1,6 +1,10 @@
 --[[
   SmartHQ Bridge (parent) for Control4 DriverWorks, OS 3.4.x
-  Version: 0.3.5  (UNTESTED in Composer/Director; see docs/smarthq.md)
+  Version: 0.3.6  (UNTESTED in Composer/Director; see docs/smarthq.md)
+
+  0.3.6: creates missing child devices at runtime (C4:AddDevice) after each good /inventory
+    poll, binds them to this driver, and sends them SH_CONFIGURE. Property "Auto Create Children"
+    (On/Off, default On). Action "Discover Children" runs the same step once. Nothing is deleted.
 
   Polls the LAN HTTP bridge on liesa (read-only, except the hood light write):
     GET  {base}/inventory                     every Poll Interval seconds, all appliances
@@ -16,9 +20,10 @@
     to child:   SH_STATUS {ONLINE, ACTIVE, STATE, DOOR, TEMP, FREEZER, SETPOINT, TIME, CYCLE, LIGHT, FAN, REMOTE, ALERT}
                 SH_PARENT {REACHABLE}
                 SH_HELLO {}  (sent at startup so children register again after a parent restart)
+                SH_CONFIGURE {APPLIANCE_ID, APPLIANCE_TYPE}  (sent once to a child this driver created)
 ]]
 
-local DRIVER_VERSION = "0.3.5"
+local DRIVER_VERSION = "0.3.6"
 local DEFAULT_HOST = "172.21.1.157"
 local DEFAULT_PORT = "8789"
 local DEFAULT_POLL_SECONDS = 60
@@ -27,6 +32,27 @@ local INFLIGHT_TIMEOUT_SECONDS = 30
 local BRIDGE_BINDING = 1          -- connection id used by the child drivers
 local EVENT_BRIDGE_UNREACHABLE = 1
 local HOOD_LEVELS = { off = true, dim = true, on = true }
+
+-- Auto-create (0.3.6). Driver filenames must match the .c4z packages Composer has installed.
+local CHILD_DRIVER_BY_KIND = {
+  oven = "smarthq-appliance.c4z",
+  beverage_center = "smarthq-appliance.c4z",
+  dishwasher = "smarthq-appliance.c4z",
+  fridge = "smarthq-appliance.c4z",
+  washer = "smarthq-appliance.c4z",
+  dryer = "smarthq-appliance.c4z",
+  hood = "smarthq-hood-light.c4z",
+}
+local APPLIANCE_TYPE_NAME = {
+  oven = "Oven", beverage_center = "Beverage Center", dishwasher = "Dishwasher",
+  fridge = "Refrigerator", washer = "Washer", dryer = "Dryer",
+}
+local CHILD_BINDING_CLASS = "SMARTHQ_BRIDGE"  -- connection class on both sides (parent id 1, child id 1)
+local AUTO_CREATE_GRACE_SECONDS = 60          -- after startup, let hand-added children register first
+local PENDING_CREATE_SECONDS = 120            -- an AddDevice that never calls back is retried after this
+local CONFIGURE_DELAY_MS = 10000              -- wait after Bind before sending SH_CONFIGURE
+local pendingCreates = {}                     -- [appliance id] = os.time() while AddDevice is in flight
+local startedAt = 0
 
 -- Machine states that mean "not running". Anything else counts as active. UNVERIFIED names.
 local IDLE_STATES = {
@@ -366,12 +392,109 @@ local function applyInventory(list)
   return count
 end
 
+-- ============================================================================
+-- Auto-create child devices (0.3.6)
+-- Runs after each good /inventory poll. Creates one child per appliance that has
+-- no child yet. "Has a child" = a registered child with that Appliance ID, or an
+-- AddDevice still in flight. Never deletes anything.
+-- ============================================================================
+local function boundChildren()
+  local ok, bound = pcall(function() return C4:GetBoundConsumerDevices(C4:GetDeviceID(), BRIDGE_BINDING) end)
+  if not ok or type(bound) ~= "table" then return nil end
+  return bound
+end
+
+local function childKnownFor(appId)
+  local t = pendingCreates[appId]
+  if t and os.time() - t < PENDING_CREATE_SECONDS then return true end
+  for _, reg in pairs(state.children) do
+    if reg.appliance == appId then return true end
+  end
+  return false
+end
+
+local function createChild(item, kind, driverFile)
+  local appId = item.id
+  local label = trim(item.nickname or item.name or "")
+  if label == "" then label = (APPLIANCE_TYPE_NAME[kind] or kind) .. " " .. appId:sub(-4) end
+  local name = "SmartHQ " .. label
+  local roomId = nil
+  pcall(function() roomId = C4:RoomGetId() end)
+  roomId = tonumber(roomId)
+  if not roomId or roomId == 0 then
+    logMsg("auto-create skipped for " .. appId .. ": no room id from C4:RoomGetId()")
+    return
+  end
+  pendingCreates[appId] = os.time()
+  local ok, err = pcall(function()
+    C4:AddDevice(driverFile, roomId, name, function(newId)
+      pendingCreates[appId] = nil
+      local id = tonumber(newId)
+      if not id or id == 0 then
+        logMsg("auto-create failed for " .. appId .. " (" .. driverFile .. "): AddDevice returned 0")
+        return
+      end
+      C4:Bind(C4:GetDeviceID(), BRIDGE_BINDING, id, BRIDGE_BINDING, CHILD_BINDING_CLASS)
+      logMsg("auto-created " .. driverFile .. " id " .. tostring(id) .. " for appliance " .. appId)
+      C4:SetTimer(CONFIGURE_DELAY_MS, function()
+        sendToChild(id, "SH_CONFIGURE", { APPLIANCE_ID = appId, APPLIANCE_TYPE = APPLIANCE_TYPE_NAME[kind] or "" })
+      end)
+    end)
+  end)
+  if not ok then
+    pendingCreates[appId] = nil
+    logMsg("auto-create error for " .. appId .. ": " .. tostring(err))
+  end
+end
+
+local function autoCreateChildren(list, manual)
+  if not manual and prop("Auto Create Children") == "Off" then return end
+  if os.time() - startedAt < AUTO_CREATE_GRACE_SECONDS then return end
+  local bound = boundChildren()
+  if not bound then return end
+
+  -- Forget registrations whose child is no longer bound (owner deleted it), so a
+  -- missing child is created again while Auto Create is On.
+  local live, liveCount = {}, 0
+  for k in pairs(bound) do
+    local n = tonumber(k)
+    if n then live[n] = true; liveCount = liveCount + 1 end
+  end
+  local registered = 0
+  for cid in pairs(state.children) do
+    if not live[cid] then
+      state.children[cid] = nil
+      logMsg("child " .. tostring(cid) .. " is no longer bound; forgotten")
+    else
+      registered = registered + 1
+    end
+  end
+  -- A bound child that has not registered yet might be the appliance we are about to create.
+  -- Wait for it, so a hand-added child is never duplicated.
+  if liveCount > registered then
+    logMsg("auto-create waiting: " .. tostring(liveCount - registered) .. " bound child(ren) not registered yet")
+    return
+  end
+
+  for _, item in ipairs(list) do
+    if type(item) == "table" and type(item.id) == "string" and item.id ~= "" then
+      local kind = trim(item.type or "")
+      local driverFile = CHILD_DRIVER_BY_KIND[kind]
+      if driverFile and not childKnownFor(item.id) then
+        createChild(item, kind, driverFile)
+      end
+    end
+  end
+end
+
 local function poll()
   if state.inflight and os.time() - state.inflightSince < INFLIGHT_TIMEOUT_SECONDS then
     return
   end
   state.inflight = true
   state.inflightSince = os.time()
+  local manual = state.manualDiscover
+  state.manualDiscover = false
   httpGet("/inventory", function(data, code, err)
     state.inflight = false
     if code == 200 then
@@ -381,6 +504,8 @@ local function poll()
         return
       end
       local n = applyInventory(list)
+      local okCreate, errCreate = pcall(autoCreateChildren, list, manual)
+      if not okCreate then logMsg("auto-create error: " .. tostring(errCreate)) end
       setReachable(true, "Connected, polled " .. stamp() .. ", " .. tostring(n) .. " appliances")
     else
       local why = "HTTP " .. tostring(code)
@@ -511,6 +636,10 @@ function ExecuteCommand(strCommand, tParams)
     poll()
   elseif strCommand == "LIST_APPLIANCES" then
     listAppliances()
+  elseif strCommand == "DISCOVER_CHILDREN" then
+    -- Manual: runs the create step even when Auto Create Children is Off.
+    state.manualDiscover = true
+    poll()
   elseif strCommand == "SH_REGISTER" then
     onRegister(tParams)
   elseif strCommand == "SH_HOOD_CMD" then
@@ -524,6 +653,7 @@ function OnDriverInit()
 end
 
 function OnDriverLateInit()
+  startedAt = os.time()
   schedulePoll(1)
   -- Children may still be starting; ask them to register once the timer runs.
   pcall(function() C4:SetTimer(5000, function() helloChildren() end) end)
