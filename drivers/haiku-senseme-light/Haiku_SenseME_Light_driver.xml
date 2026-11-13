@@ -5,8 +5,8 @@
 	<name>Haiku SenseME Light</name>
 	<model>Haiku / i6 light kit (child)</model>
 	<created>11/11/2026 04:00 PM</created>
-	<modified>11/11/2026 04:00 PM</modified>
-	<version>400</version>
+	<modified>11/13/2026 05:03 PM</modified>
+	<version>403</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -97,7 +97,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default></default>
+				<default>403</default>
 			</property>
 			<property>
 				<name>Fan</name>

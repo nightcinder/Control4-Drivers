@@ -3,13 +3,16 @@
 	<creator>Custom Driver Project</creator>
 	<manufacturer>Custom Driver Project</manufacturer>
 	<name>Room Light Helper</name>
-	<model>Room Light Helper v1.1.1 (one instance per room)</model>
+	<model>Room Light Helper v1.1.2 (one instance per room)</model>
 	<created>11/12/2026 10:00 PM</created>
-	<modified>11/12/2026 11:45 PM</modified>
-	<version>3</version>
+	<modified>11/13/2026 05:03 PM</modified>
+	<version>5</version>
 	<control>lua_gen</control>
 	<controlmethod>none</controlmethod>
 	<driver>DriverWorks</driver>
+	<combo>true</combo>
+	<proxies />
+	<capabilities />
 	<templatedescription>Room Light Helper - requests a room light on and releases it, with a lux-based level and an off delay</templatedescription>
 
 	<connections>
@@ -31,6 +34,7 @@
 	</connections>
 
 	<config>
+		<script file="driver.lua" />
 		<properties>
 			<property>
 				<name>Room Name</name>
@@ -42,7 +46,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>1.1.1</default>
+				<default>1.1.2</default>
 			</property>
 			<property>
 				<name>Status</name>

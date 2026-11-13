@@ -1,6 +1,6 @@
 --[[
   Haiku SenseME Light (child) driver for Control4 (OS 3.4.x)
-  Version: 4.0.0 (package version 400)
+  Version: 403
   One instance = the light kit of one Big Ass Fans Haiku / i6 fan. It has no network settings: bind its
   "Haiku Fan" connection to the "Light Kit Link" connection of that fan's "Haiku SenseME Fan" driver.
 
@@ -9,7 +9,7 @@
     from fan: HK_LIGHT {POWER, LEVEL, HASLIGHT, ONLINE, FANNAME}, HK_HELLO
 ]]
 
-local DRIVER_VERSION = "400"
+local DRIVER_VERSION = "403"
 local PROXY_BINDING = 5001
 local FAN_LINK = 1
 
