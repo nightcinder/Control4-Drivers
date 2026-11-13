@@ -5,8 +5,8 @@
 	<name>roborock</name>
 	<model>Roborock Vacuum (LAN Bridge)</model>
 	<created>11/12/2026 12:00 PM</created>
-	<modified>11/12/2026 10:59 PM</modified>
-	<version>13</version>
+	<modified>11/12/2026 11:02 PM</modified>
+	<version>14</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
