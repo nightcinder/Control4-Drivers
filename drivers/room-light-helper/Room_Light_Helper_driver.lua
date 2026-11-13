@@ -1,7 +1,9 @@
 --[[
-  Room Light Helper v1.1.1 (Control4 DriverWorks, OS 3.x)
+  Room Light Helper v1.1.2 (Control4 DriverWorks, OS 3.x)
   One instance per room. Laundry is the first room.
   Changelog:
+    1.1.2  Packaging fix: XML now declares its script (driver.lua), combo and empty
+           proxies/capabilities so Composer lists the driver for import.
     1.1.1  Commands moved from Actions to programmable Commands (Request On, Release,
            Release All, Set Lux) so they accept parameters in Composer Programming. Set Lux
            Lux param is RANGED_INTEGER 0-100000 (NUMBER is not a DriverWorks param type).
@@ -28,7 +30,7 @@
   Not in v1: keypad holds, away mode, DLS integration. Max Level is a plain property.
 ]]
 
-local DRIVER_VERSION = "1.1.1"
+local DRIVER_VERSION = "1.1.2"
 local LIGHT_BINDING = 5001
 local CHECK_FAST_MS = 10000   -- check timer while the light listener is not registered
 local CHECK_SLOW_MS = 60000   -- check timer once the listener is registered
