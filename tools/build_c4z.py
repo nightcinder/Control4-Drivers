@@ -18,10 +18,12 @@ stored in this repo (see README). Point C4_COMMON_PUBLIC at a clone of that libr
 
 Usage:  python3 tools/build_c4z.py [--dry-run] [driver-folder ...]   (no arguments = build everything)
 --dry-run runs the bump plan and all checks and reports what would be bumped and built, writing nothing.
+After the checks, the c4sim smoke and any matching tools/c4sim/tests/<name>_test.lua run; C4SIM_SKIP=1 bypasses them.
 """
 import argparse
 import os
 import re
+import subprocess
 import sys
 import zipfile
 from datetime import datetime
@@ -102,6 +104,43 @@ def plan_bump(path):
     return (text.encode("utf-8"), cur_v, new_v, new_mod), None
 
 
+C4SIM = os.path.join(ROOT, "tools", "c4sim")
+TEST_SUMMARY = re.compile(r"c4sim \S+: (\d+) passed, (\d+) failed")
+
+
+def c4sim_check(name):
+    """Run the c4sim smoke for the driver, plus tools/c4sim/tests/<name>_test.lua when it exists.
+
+    Returns (ok, lines). The caller prints the lines. Skipped entirely with C4SIM_SKIP=1; skipped with a note
+    when no lua interpreter is found.
+    """
+    if os.environ.get("C4SIM_SKIP") == "1":
+        return True, []
+    sys.path.insert(0, C4SIM)
+    import run as c4run
+    try:
+        c4run.find_lua()
+    except SystemExit:
+        return True, ["c4sim skipped: lua not found"]
+    runner = os.path.join(C4SIM, "run.py")
+    sm = subprocess.run([sys.executable, runner, "smoke", name], cwd=ROOT, capture_output=True, text=True)
+    out = [l for l in sm.stdout.splitlines() if l.strip()]
+    if sm.returncode != 0 or not any(l.startswith("ok ") for l in out):
+        return False, ([l for l in out if l.startswith("ERR")] or [f"ERR c4sim smoke failed for {name}"])[:2]
+    warns = [l for l in out if l.startswith("warn ")]
+    lines = [f"c4sim smoke: ok {name}" + (f" ({len(warns)} warn)" if warns else "")]
+    key = name.replace("-", "_")
+    if os.path.isfile(os.path.join(C4SIM, "tests", key + "_test.lua")):
+        tr = subprocess.run([sys.executable, runner, "test", key], cwd=ROOT, capture_output=True, text=True)
+        tout = [l for l in tr.stdout.splitlines() if l.strip()]
+        summary = next((l for l in tout if TEST_SUMMARY.search(l)), None)
+        if tr.returncode != 0 or summary is None or TEST_SUMMARY.search(summary).group(2) != "0":
+            fails = [l for l in tout if l.startswith("FAIL")][:3]
+            return False, fails + ([summary] if summary else [f"ERR c4sim test failed for {name}"])
+        lines.append(f"c4sim test: {TEST_SUMMARY.search(summary).group(1)} passed")
+    return True, lines
+
+
 def build(folder, dry_run=False):
     path = folder if os.path.isdir(folder) else os.path.join(DRIVERS, folder)
     name = os.path.basename(os.path.normpath(path))
@@ -150,6 +189,12 @@ def build(folder, dry_run=False):
         for line in problems:
             print(line)
         print(f"REFUSED {name}: pre-flight check failed; nothing written, no c4z built")
+        return False
+    sim_ok, sim_lines = c4sim_check(name)
+    for line in sim_lines:
+        print(line)
+    if not sim_ok:
+        print(f"REFUSED {name}: c4sim check failed; nothing written, no c4z built")
         return False
     if to_write:
         new_bytes, old_v, new_v, new_mod = to_write
