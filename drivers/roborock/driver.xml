@@ -5,8 +5,8 @@
 	<name>roborock</name>
 	<model>Roborock Vacuum (LAN Bridge)</model>
 	<created>11/12/2026 12:00 PM</created>
-	<modified>11/12/2026 08:30 AM</modified>
-	<version>7</version>
+	<modified>11/12/2026 08:38 PM</modified>
+	<version>10</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -35,7 +35,7 @@
 		</connection>
 	</connections>
 	<capabilities>
-		<web_view_url proxybindingid="5001">controller://driver/roborock/vacuum1.html</web_view_url>
+		<web_view_url proxybindingid="5001">controller://driver/roborock/vacuum2.html</web_view_url>
 		<mobile_web_view_enabled>true</mobile_web_view_enabled>
 		<navigator_display_option proxybindingid="5001">
 			<display_icons>
@@ -78,8 +78,9 @@
 	<templatedescription>Roborock vacuum status and control through a LAN HTTP bridge, with a Navigator web view (state, battery, Start / Pause / Dock / Stop) and state-based tile icons. UNTESTED.</templatedescription>
 
 	<!--
+		v5 (0.5.0) - Active Room and Room Progress properties; web page vacuum2.html, build 3 (UNTESTED on hardware and in Composer)
 		v2 (0.2.0) - uibutton proxy and Navigator web view (UNTESTED on hardware and in Composer)
-		The uibutton proxy on binding 5001 opens www/vacuum1.html. The page reads the UI_STATE snapshot
+		The uibutton proxy on binding 5001 opens www/vacuum2.html. The page reads the UI_STATE snapshot
 		and sends UI_START / UI_PAUSE / UI_DOCK / UI_STOP through ExecuteCommand. The tile icon changes
 		with state: Default, Cleaning, Docked (docked or charging), Error.
 		Changing the proxy means the device must be deleted and re-added in Composer.
@@ -87,7 +88,45 @@
 		PAGE FILE IS RENAMED EVERY PAGE RELEASE (vacuum1, vacuum2, ...). web_view_url, PAGE_BUILD / UI_BUILD
 		in the Lua and the file in www/ must agree.
 		Commands, actions, events, variables and properties from v1 are unchanged.
+		v5.1 (0.5.1) - events moved to devicedata level so Composer lists them
 	-->
+	<events>
+		<event>
+			<id>1</id>
+			<name>Cleaning Started</name>
+			<description>Fires when the vacuum enters a cleaning state</description>
+		</event>
+		<event>
+			<id>2</id>
+			<name>Cleaning Finished</name>
+			<description>Fires when cleaning ends and the vacuum returns to docked or charging</description>
+		</event>
+		<event>
+			<id>3</id>
+			<name>Error Raised</name>
+			<description>Fires when the bridge reports a new vacuum error</description>
+		</event>
+		<event>
+			<id>4</id>
+			<name>Battery Low</name>
+			<description>Fires when battery is at or below Low Battery Threshold (once until it recovers)</description>
+		</event>
+		<event>
+			<id>5</id>
+			<name>Bridge Unreachable</name>
+			<description>Fires when the LAN bridge cannot be reached or returns an error</description>
+		</event>
+		<event>
+			<id>6</id>
+			<name>Laundry Room Entered</name>
+			<description>Fires when the robot is in the Laundry Room ID while cleaning (uses the bridge's current room). Falls back to cleaning start on a laundry-only run when the current room is unknown</description>
+		</event>
+		<event>
+			<id>7</id>
+			<name>Laundry Room Left</name>
+			<description>Fires when the robot leaves the Laundry Room ID while cleaning, or when cleaning ends (docked, charging or idle; not on pause)</description>
+		</event>
+	</events>
 	<config>
 		<power_management_method>AlwaysOn</power_management_method>
 		<power_command_delay>0</power_command_delay>
@@ -136,34 +175,6 @@
 			</action>
 		</actions>
 
-		<events>
-			<event>
-				<id>1</id>
-				<name>Cleaning Started</name>
-				<description>Fires when the vacuum enters a cleaning state</description>
-			</event>
-			<event>
-				<id>2</id>
-				<name>Cleaning Finished</name>
-				<description>Fires when cleaning ends and the vacuum returns to docked or charging</description>
-			</event>
-			<event>
-				<id>3</id>
-				<name>Error Raised</name>
-				<description>Fires when the bridge reports a new vacuum error</description>
-			</event>
-			<event>
-				<id>4</id>
-				<name>Battery Low</name>
-				<description>Fires when battery is at or below Low Battery Threshold (once until it recovers)</description>
-			</event>
-			<event>
-				<id>5</id>
-				<name>Bridge Unreachable</name>
-				<description>Fires when the LAN bridge cannot be reached or returns an error</description>
-			</event>
-		</events>
-
 		<properties>
 			<property>
 				<name>Bridge Host</name>
@@ -186,6 +197,14 @@
 				<maximum>3600</maximum>
 				<readonly>false</readonly>
 				<default>60</default>
+			</property>
+			<property>
+				<name>Laundry Room ID</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>0</minimum>
+				<maximum>9999</maximum>
+				<readonly>false</readonly>
+				<default>0</default>
 			</property>
 			<property>
 				<name>Low Battery Threshold</name>
@@ -235,7 +254,19 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>0.3.0</default>
+				<default>0.5.1</default>
+			</property>
+			<property>
+				<name>Active Room</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Unknown</default>
+			</property>
+			<property>
+				<name>Room Progress</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>n/a</default>
 			</property>
 					<property>
 				<name>Web Page Status</name>
