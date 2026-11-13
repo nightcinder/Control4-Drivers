@@ -4,3 +4,7 @@
 # bridge login data (tokens)
 tools/*-bridge/data/
 
+
+# local build scratch and Python caches
+dist/
+__pycache__/
