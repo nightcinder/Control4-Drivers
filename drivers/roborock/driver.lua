@@ -1,7 +1,11 @@
 --[[
   Roborock Vacuum via LAN HTTP bridge (Control4 DriverWorks, OS 3.4.x)
-  Version: 0.3.0  (UNTESTED on real Composer/Director; see docs/roborock.md)
-  v0.2.0 adds a uibutton proxy (binding 5001) and the Navigator web view www/vacuum1.html.
+  Version: 0.5.1  (UNTESTED on real Composer/Director; see docs/roborock.md)
+  v0.5.1 moves events to devicedata level so Composer lists them (driver.xml only; no Lua logic change).
+  v0.5.0 adds Active Room / Room Progress properties (ACTIVE_ROOM, ROOM_PROGRESS variables). Laundry
+  Room Entered / Left use the bridge's current_room while it is known; v0.4.0 run-target rule is the fallback.
+  v0.4.0 adds Laundry Room Entered / Laundry Room Left events (driver-side fallback, see below).
+  v0.2.0 adds a uibutton proxy (binding 5001) and the Navigator web view www/vacuum2.html (renamed in v0.5.0).
   v0.3.0 exposes the map's rooms in the UI_STATE snapshot and adds UI_CLEAN_ROOMS_<ids>.
   The page reads the UI_STATE snapshot and sends UI_* commands through ExecuteCommand.
 
@@ -12,9 +16,9 @@
   The state fields are read with simple key patterns (the bridge sends flat scalar fields).
 ]]
 
-local DRIVER_VERSION = "0.3.0"
+local DRIVER_VERSION = "0.5.1"
 local PROXY_BINDING = 5001          -- uibutton proxy (tile, icon and web view)
-local UI_BUILD = "2"                -- must match PAGE_BUILD in www/vacuum1.html
+local UI_BUILD = "3"                -- must match PAGE_BUILD in www/vacuum2.html
 local DEFAULT_HOST = "172.21.1.157"
 local DEFAULT_PORT = "8788"
 local DEFAULT_POLL = 60
@@ -28,11 +32,15 @@ local EVENT_CLEANING_FINISHED = 2
 local EVENT_ERROR_RAISED = 3
 local EVENT_BATTERY_LOW = 4
 local EVENT_BRIDGE_UNREACHABLE = 5
+local EVENT_LAUNDRY_ENTERED = 6
+local EVENT_LAUNDRY_LEFT = 7
 
 local VAR_STATE = "VACUUM_STATE"
 local VAR_BATTERY = "VACUUM_BATTERY"
 local VAR_ERROR = "VACUUM_ERROR"
 local VAR_UI = "UI_STATE"           -- JSON snapshot read by the web view page
+local VAR_ROOM = "ACTIVE_ROOM"      -- v0.5.0: name of the room under the robot (string)
+local VAR_ROOM_PROGRESS = "ROOM_PROGRESS" -- v0.5.0: 0-100 (0 when the bridge reports null)
 
 local state = {
   pollTimer = nil,
@@ -41,6 +49,8 @@ local state = {
   lastError = "none",   -- last error code seen (edge detection for Error Raised)
   lowFired = false,     -- Battery Low already fired; re-arms when battery rises above threshold
   unreachable = false,  -- Bridge Unreachable already fired for this outage
+  runRooms = nil,      -- room ids of the last clean_rooms command (list of strings), nil otherwise
+  laundryActive = false, -- Laundry Room Entered fired for the current run, Left not yet fired
   -- web view and tile icon snapshot (v0.2.0)
   uiSeq = 0,
   online = false,
@@ -50,6 +60,9 @@ local state = {
   lastErr = "",
   icon = nil,
   roomsJson = "[]",     -- v0.3.0: [{"id":16,"name":"Study"}, ...] as JSON text
+  curRoomId = nil,      -- v0.5.0: current_room.id from the bridge, nil when null
+  activeRoom = "",      -- v0.5.0: current_room name ("" when unknown)
+  roomProgress = nil,   -- v0.5.0: room_progress_pct from the bridge, nil when null
 }
 
 -- ============================================================================
@@ -167,11 +180,13 @@ local function publishUi()
   state.uiSeq = state.uiSeq + 1
   local batt = "null"
   if state.battery then batt = tostring(state.battery) end
+  local progress = "null"
+  if state.roomProgress then progress = string.format("%.0f", state.roomProgress) end
   local json = string.format(
-    '{"t":"rbrock","seq":%d,"build":"%s","version":"%s","online":%s,"state":"%s","battery":%s,"error":"%s","lastError":"%s","rooms":%s}',
+    '{"t":"rbrock","seq":%d,"build":"%s","version":"%s","online":%s,"state":"%s","battery":%s,"error":"%s","lastError":"%s","activeRoom":"%s","roomProgress":%s,"rooms":%s}',
     state.uiSeq, UI_BUILD, DRIVER_VERSION, state.online and "true" or "false",
     jsonEscape(state.st or ""), batt, jsonEscape(state.err or "none"), jsonEscape(state.lastErr or ""),
-    state.roomsJson)
+    jsonEscape(state.activeRoom or ""), progress, state.roomsJson)
   setVar(VAR_UI, json)
   pcall(C4.SendDataToUI, C4, json)
 end
@@ -206,11 +221,23 @@ local function setUnreachable(reason)
   end
 end
 
+local isLaundryOnlyRun -- defined below; forward-declared so applyState can call it
+
 local function applyState(body)
   local st = strField(body, "state") or ""
   local battery = numField(body, "battery")
   local err = strField(body, "error") or "none"
   local lastErr = strField(body, "last_error")
+
+  -- v0.5.0: current_room is {"id":N,"name":"..."} or null (from the bridge's parsed map).
+  -- The block is matched on its own so the room name is not confused with a room list name.
+  local crBlock = body:match('"current_room"%s*:%s*(%b{})')
+  local curId = crBlock and tonumber(crBlock:match('"id"%s*:%s*(%d+)')) or nil
+  local curName = ""
+  if curId then curName = strField(crBlock, "name") or ("Room " .. tostring(curId)) end
+  state.curRoomId = curId
+  state.activeRoom = curName
+  state.roomProgress = numField(body, "room_progress_pct")
 
   -- v0.3.0: rooms arrive as an array of {"id":N,"name":"..."} objects. The names are
   -- already JSON-escaped by the bridge, so they are copied through as they are.
@@ -234,6 +261,16 @@ local function applyState(body)
   setVar(VAR_ERROR, err)
   setProp("Last Error", lastErr or err)
 
+  -- v0.5.0 room properties and variables
+  setProp("Active Room", state.activeRoom ~= "" and state.activeRoom or "Unknown")
+  setVar(VAR_ROOM, state.activeRoom)
+  if state.roomProgress then
+    setProp("Room Progress", string.format("%.0f%%", state.roomProgress))
+  else
+    setProp("Room Progress", "n/a")
+  end
+  setVar(VAR_ROOM_PROGRESS, state.roomProgress or 0)
+
   -- Cleaning Started / Finished on state transitions
   if isCleaning(st) and not isCleaning(state.lastState) then
     fire(EVENT_CLEANING_STARTED)
@@ -242,6 +279,40 @@ local function applyState(body)
   if isCleaning(state.lastState) and isDocked(st) then
     fire(EVENT_CLEANING_FINISHED)
     logmsg("cleaning finished")
+  end
+
+  -- v0.5.0 laundry events. While cleaning, the bridge's current_room decides: Entered when it
+  -- is the Laundry Room ID, Left when it changes to another room. When current_room is null,
+  -- the v0.4.0 run-target rule applies (Entered on cleaning start for a laundry-only run).
+  local laundryId = tonumber(prop("Laundry Room ID"))
+  local cleaningNow = isCleaning(st)
+  if cleaningNow and state.curRoomId and laundryId and laundryId > 0 then
+    local inLaundry = (state.curRoomId == laundryId)
+    if inLaundry and not state.laundryActive then
+      state.laundryActive = true
+      fire(EVENT_LAUNDRY_ENTERED)
+      logmsg("laundry room entered (current room)")
+    elseif not inLaundry and state.laundryActive then
+      state.laundryActive = false
+      fire(EVENT_LAUNDRY_LEFT)
+      logmsg("laundry room left (current room)")
+    end
+  elseif cleaningNow and not isCleaning(state.lastState) then
+    if isLaundryOnlyRun(state.runRooms) then
+      state.laundryActive = true
+      fire(EVENT_LAUNDRY_ENTERED)
+      logmsg("laundry room entered (run target)")
+    end
+  end
+  -- Run ended (docked, charging or idle), not on pause or returning
+  if isCleaning(state.lastState) and not cleaningNow
+      and st ~= "paused" and st ~= "returning" then
+    state.runRooms = nil
+    if state.laundryActive then
+      state.laundryActive = false
+      fire(EVENT_LAUNDRY_LEFT)
+      logmsg("laundry room left")
+    end
   end
   state.lastState = st
 
@@ -329,6 +400,15 @@ local function parseRooms(s)
   return out
 end
 
+-- True when a clean_rooms run targets only the Laundry Room ID (v0.4.0 fallback).
+function isLaundryOnlyRun(rooms)
+  local laundry = tonumber(prop("Laundry Room ID"))
+  if not laundry or laundry <= 0 or not rooms or #rooms ~= 1 then
+    return false
+  end
+  return tonumber(rooms[1]) == laundry
+end
+
 local function sendCommand(action, rooms)
   local body = '{"action":"' .. action .. '"'
   if rooms and #rooms > 0 then
@@ -341,6 +421,7 @@ local function sendCommand(action, rooms)
     state.busy = false
     if ok then
       state.unreachable = false
+      state.runRooms = (action == "clean_rooms") and rooms or nil
       logmsg("command " .. action .. " accepted")
       setProp("Status", "Command sent: " .. action)
     else
@@ -420,6 +501,8 @@ local function ensureVariables()
     { VAR_BATTERY, "NUMBER" },
     { VAR_ERROR, "STRING" },
     { VAR_UI, "STRING" },
+    { VAR_ROOM, "STRING" },
+    { VAR_ROOM_PROGRESS, "NUMBER" },
   }
   for _, d in ipairs(defs) do
     pcall(function() C4:AddVariable(d[1], "", d[2], true, false) end)
