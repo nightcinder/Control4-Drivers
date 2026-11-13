@@ -29,7 +29,7 @@ Versions are the XML `<version>` (what Composer compares), with the Lua `DRIVER_
 | `smarthq` | SmartHQ Bridge (first single-driver version) | 4 (0.2.2) | `smarthq.c4z` | Replaced by the parent and child set above |
 | `jellyfin` | Media Server Now Playing (Jellyfin and Plex) | 5 (0.3.0) | `media_server.c4z` | Untested, Plex backend unverified |
 | `media-remote-bridge-untested` | Media Remote Bridge | 9 (0.4.4) | `MediaRemoteBridge.c4z` | For the phone and watch remote app, untested |
-| `unifi-controller` | UniFi PDU Controls (parent) | 15 (1.0.12) | `UniFi_Controller.c4z` | PDU Pro and Plug outlets, untested. Package keeps its old file name so Composer updates in place |
+| `unifi-controller` | UniFi PDU Controls (parent) | 16 (1.0.12) | `UniFi_PDU_Controls.c4z` | PDU Pro and Plug outlets, untested. Renamed from `UniFi_Controller.c4z`, so Composer treats it as a new driver: delete the old one and re-add |
 | `unifi-outlet` | UniFi Outlet (child relay) | 3 (1.0.2) | `UniFi_Outlet.c4z` | One per outlet, untested |
 | `lifx-bulb-legacy` | LIFX Bulb (earlier driver, kept for reference) | 107 (1.0.6) | not built | Replaced by LIFX LAN |
 

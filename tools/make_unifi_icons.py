@@ -34,7 +34,7 @@ for sz in (70, 90, 300, 512, 1024):
 
 def icon_lines(indent):
     return "\n".join(
-        '%s<Icon width="%d" height="%d">controller://driver/UniFi_Controller/icons/device/outlets/experience_%d.png</Icon>'
+        '%s<Icon width="%d" height="%d">controller://driver/UniFi_PDU_Controls/icons/device/outlets/experience_%d.png</Icon>'
         % (indent, s, s, s)
         for s in (70, 90, 300, 512, 1024)
     )
@@ -42,7 +42,7 @@ def icon_lines(indent):
 
 block = (
     "\t<capabilities>\n"
-    '\t\t<web_view_url proxybindingid="5001">controller://driver/UniFi_Controller/outlets1.html</web_view_url>\n'
+    '\t\t<web_view_url proxybindingid="5001">controller://driver/UniFi_PDU_Controls/outlets1.html</web_view_url>\n'
     "\t\t<mobile_web_view_enabled>true</mobile_web_view_enabled>\n"
     '\t\t<navigator_display_option proxybindingid="5001">\n'
     "\t\t\t<display_icons>\n" + icon_lines("\t\t\t\t") + "\n"
