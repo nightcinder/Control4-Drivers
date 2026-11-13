@@ -68,6 +68,8 @@ local function make_proxy()
       sim.props_direct[k] = true
       sim._store[k] = v
     end,
+    -- Lua 5.4 only (5.1 ignores __pairs): pairs(Properties) walks the store.
+    __pairs = function() return next, sim._store, nil end,
   })
 end
 
@@ -96,6 +98,17 @@ function sim.reset(deviceId)
   sim._store = {}
   sim.xml_names = {}
   sim.env = nil
+  sim.epoch = 1767225600          -- sim os.time() origin (2026-01-01 UTC)
+  sim.http = {}                   -- every url* request, in order
+  sim._http_queue = {}            -- responses queued by sim.queue_http
+  sim._http_pending = {}          -- requests waiting for the next advance
+  sim.http_timeouts = {}
+  sim.net = { sent = {}, connects = {}, disconnects = {}, connections = {}, servers = {} }
+  sim.ui = {}
+  sim.prop_lists = {}
+  -- Drop common-library stubs so the next driver gets fresh ones and their warnings.
+  for _, n in ipairs(sim._stub_loaded or {}) do package.loaded[n] = nil end
+  sim._stub_loaded = {}
   sim.Properties = make_proxy()
   _G.Properties = sim.Properties
 end
@@ -120,6 +133,7 @@ end
 function sim.advance(ms)
   local target = sim.now_ms + (tonumber(ms) or 0)
   local count = 0
+  sim._pump_http()
   while true do
     local live, best = {}, nil
     for _, t in ipairs(sim.timers) do
@@ -144,6 +158,7 @@ function sim.advance(ms)
       best.cancelled = true
     end
     xcall("timer", best.fn)
+    sim._pump_http()
   end
   sim.now_ms = target
 end
@@ -161,6 +176,12 @@ local function build_env()
   local env = setmetatable({}, { __index = _G })
   env.C4 = C4
   env.Properties = sim.Properties
+  -- os.time() follows the simulated clock, so timeouts and lux age work under advance().
+  local realos = os
+  env.os = setmetatable({ time = function(t)
+    if t then return realos.time(t) end
+    return sim.epoch + math.floor(sim.now_ms / 1000)
+  end }, { __index = realos })
   env.print = function(...)
     local parts = {}
     for i = 1, select("#", ...) do
@@ -243,6 +264,7 @@ end
 function sim.load_driver(path, opts)
   opts = opts or {}
   sim.reset(opts.deviceId)
+  if opts.before then opts.before(sim) end  -- runs after reset, before OnDriverInit (bind, set_var)
   local f = io.open(path, "rb")
   if not f then
     record_error("load", "cannot open " .. tostring(path))
@@ -423,5 +445,337 @@ sim.reset(1)
 
 -- Helper so tests can reach the sandbox globals.
 sim.first_line = first_line
+
+-- ---- JSON (pure Lua, written for the simulator) ----
+-- JsonEncode: arrays are tables with keys 1..n; other tables encode as objects with sorted keys.
+-- JsonDecode: errors with a message on bad input (no nil-return convention).
+local function json_str(s)
+  local map = { ['"'] = '\\"', ['\\'] = '\\\\', ['\b'] = '\\b', ['\f'] = '\\f',
+    ['\n'] = '\\n', ['\r'] = '\\r', ['\t'] = '\\t' }
+  return '"' .. (s:gsub('[%c"\\]', function(c)
+    return map[c] or string.format("\\u%04x", c:byte())
+  end)) .. '"'
+end
+
+local function json_is_array(t)
+  local n = 0
+  for k in pairs(t) do
+    if type(k) ~= "number" or k < 1 or k % 1 ~= 0 then return false end
+    if k > n then n = k end
+  end
+  for i = 1, n do
+    if t[i] == nil then return false end
+  end
+  return true, n
+end
+
+local function json_enc(v, out)
+  local tv = type(v)
+  if tv == "boolean" then out[#out + 1] = v and "true" or "false"
+  elseif tv == "number" then
+    if v ~= v or v == math.huge or v == -math.huge then out[#out + 1] = "null"
+    elseif v % 1 == 0 and math.abs(v) < 2 ^ 53 then out[#out + 1] = string.format("%d", v)
+    else out[#out + 1] = string.format("%.14g", v) end
+  elseif tv == "string" then out[#out + 1] = json_str(v)
+  elseif tv == "table" then
+    local arr, n = json_is_array(v)
+    if arr then
+      out[#out + 1] = "["
+      for i = 1, n do
+        if i > 1 then out[#out + 1] = "," end
+        json_enc(v[i], out)
+      end
+      out[#out + 1] = "]"
+    else
+      local keys = {}
+      for k, val in pairs(v) do keys[#keys + 1] = { k = k, s = tostring(k), v = val } end
+      table.sort(keys, function(a, b) return a.s < b.s end)
+      out[#out + 1] = "{"
+      for i, e in ipairs(keys) do
+        if i > 1 then out[#out + 1] = "," end
+        out[#out + 1] = json_str(e.s) .. ":"
+        json_enc(e.v, out)
+      end
+      out[#out + 1] = "}"
+    end
+  else
+    out[#out + 1] = "null"
+  end
+end
+
+function JsonEncode(v)
+  local out = {}
+  json_enc(v, out)
+  return table.concat(out)
+end
+
+local function utf8_char(cp)
+  if cp < 0x80 then return string.char(cp) end
+  if cp < 0x800 then return string.char(0xC0 + math.floor(cp / 64), 0x80 + cp % 64) end
+  return string.char(0xE0 + math.floor(cp / 4096), 0x80 + math.floor(cp / 64) % 64, 0x80 + cp % 64)
+end
+
+local JSON_ESC = { ['"'] = '"', ['\\'] = '\\', ['/'] = '/', b = '\b', f = '\f', n = '\n', r = '\r', t = '\t' }
+
+function JsonDecode(s)
+  s = tostring(s)
+  local pos = 1
+  local value
+  local function fail(msg) error("JsonDecode: " .. msg .. " at byte " .. pos, 0) end
+  local function ws() pos = s:find("[^ \t\r\n]", pos) or (#s + 1) end
+  local function str()
+    pos = pos + 1
+    local buf = {}
+    while true do
+      local j = s:find('["\\]', pos)
+      if not j then fail("unterminated string") end
+      buf[#buf + 1] = s:sub(pos, j - 1)
+      pos = j
+      if s:sub(pos, pos) == '"' then
+        pos = pos + 1
+        break
+      end
+      local e = s:sub(pos + 1, pos + 1)
+      if e == "u" then
+        local cp = tonumber(s:sub(pos + 2, pos + 5), 16)
+        if not cp then fail("bad \\u escape") end
+        buf[#buf + 1] = utf8_char(cp)  -- surrogate pairs are not joined
+        pos = pos + 6
+      elseif JSON_ESC[e] then
+        buf[#buf + 1] = JSON_ESC[e]
+        pos = pos + 2
+      else
+        fail("bad escape")
+      end
+    end
+    return table.concat(buf)
+  end
+  local function arr()
+    pos = pos + 1
+    local t, n = {}, 0
+    ws()
+    if s:sub(pos, pos) == "]" then pos = pos + 1; return t end
+    while true do
+      n = n + 1
+      t[n] = value()
+      ws()
+      local c = s:sub(pos, pos)
+      pos = pos + 1
+      if c == "]" then return t end
+      if c ~= "," then fail("expected , or ]") end
+    end
+  end
+  local function obj()
+    pos = pos + 1
+    local t = {}
+    ws()
+    if s:sub(pos, pos) == "}" then pos = pos + 1; return t end
+    while true do
+      ws()
+      if s:sub(pos, pos) ~= '"' then fail("expected key") end
+      local k = str()
+      ws()
+      if s:sub(pos, pos) ~= ":" then fail("expected :") end
+      pos = pos + 1
+      t[k] = value()
+      ws()
+      local c = s:sub(pos, pos)
+      pos = pos + 1
+      if c == "}" then return t end
+      if c ~= "," then fail("expected , or }") end
+    end
+  end
+  value = function()
+    ws()
+    local c = s:sub(pos, pos)
+    if c == "{" then return obj() end
+    if c == "[" then return arr() end
+    if c == '"' then return str() end
+    if s:sub(pos, pos + 3) == "true" then pos = pos + 4; return true end
+    if s:sub(pos, pos + 4) == "false" then pos = pos + 5; return false end
+    if s:sub(pos, pos + 3) == "null" then pos = pos + 4; return nil end
+    local tok = s:match("^-?%d+%.?%d*[eE][-+]?%d+", pos) or s:match("^-?%d+%.?%d*", pos)
+    if not tok then fail("unexpected character") end
+    pos = pos + #tok
+    return tonumber(tok)
+  end
+  local v = value()
+  ws()
+  if pos <= #s then fail("trailing data") end
+  return v
+end
+
+-- ---- Base64 (arithmetic only: no bitwise ops in 5.1) ----
+local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local B64_INDEX = {}
+for i = 1, #B64 do B64_INDEX[B64:sub(i, i)] = i - 1 end
+
+function Base64Encode(s)
+  local out = {}
+  for i = 1, #s, 3 do
+    local a, b, c = s:byte(i, i + 2)
+    local n = (a or 0) * 65536 + (b or 0) * 256 + (c or 0)
+    local c1 = math.floor(n / 262144) % 64
+    local c2 = math.floor(n / 4096) % 64
+    local c3 = math.floor(n / 64) % 64
+    local c4 = n % 64
+    out[#out + 1] = B64:sub(c1 + 1, c1 + 1) .. B64:sub(c2 + 1, c2 + 1)
+      .. (b and B64:sub(c3 + 1, c3 + 1) or "=") .. (c and B64:sub(c4 + 1, c4 + 1) or "=")
+  end
+  return table.concat(out)
+end
+
+function Base64Decode(s)
+  local out, bits, nbits = {}, 0, 0
+  for ch in tostring(s):gmatch(".") do
+    local v = B64_INDEX[ch]
+    if v then
+      bits = bits * 64 + v
+      nbits = nbits + 6
+      if nbits >= 8 then
+        nbits = nbits - 8
+        out[#out + 1] = string.char(math.floor(bits / 2 ^ nbits) % 256)
+        bits = bits % 2 ^ nbits
+      end
+    end
+  end
+  return table.concat(out)
+end
+
+-- ---- HTTP: url* calls are recorded in sim.http and answered on advance() ----
+-- Callback shape: callback(context, data, code, headers, err). Argument order for urlDo
+-- and urlPost follows the usual DriverWorks layout; check the SDK before relying on it.
+local function http_request(method, url, headers, body, callback, context)
+  local req = { method = method, url = tostring(url), headers = headers, body = body, t = sim.now_ms }
+  sim.http[#sim.http + 1] = req
+  sim._http_pending[#sim._http_pending + 1] = { req = req, callback = callback, context = context }
+  return #sim.http
+end
+
+-- queue_http(pattern, body, code, headers): the next request whose URL matches the Lua pattern gets this reply.
+function sim.queue_http(pattern, body, code, headers)
+  sim._http_queue[#sim._http_queue + 1] = { pattern = pattern, body = body, code = code or 200, headers = headers }
+end
+
+function sim._pump_http()
+  while #sim._http_pending > 0 do
+    local job = table.remove(sim._http_pending, 1)
+    local resp
+    for i, q in ipairs(sim._http_queue) do
+      if job.req.url:find(q.pattern) then
+        resp = table.remove(sim._http_queue, i)
+        break
+      end
+    end
+    local data, code, headers, err = nil, 0, nil, nil
+    if resp then
+      data, code, headers = resp.body, resp.code, resp.headers
+    else
+      add_warn("no queued http response for " .. job.req.method .. " " .. job.req.url)
+      err = "no sim response queued"
+    end
+    if job.callback then xcall("http callback", job.callback, job.context, data, code, headers or {}, err) end
+  end
+end
+
+function urlGet(url, headers, callback, context)
+  return http_request("GET", url, headers, nil, callback, context)
+end
+
+function urlPost(url, body, headers, callback, context)
+  return http_request("POST", url, headers, body, callback, context)
+end
+
+function urlDo(method, url, headers, callback, context, body)
+  return http_request(string.upper(tostring(method)), url, headers, body, callback, context)
+end
+
+function urlSetTimeout(ticket, seconds)
+  sim.http_timeouts[#sim.http_timeouts + 1] = { ticket = ticket, seconds = seconds }
+end
+
+-- ---- Network: recorded in sim.net; sim.net_receive feeds ReceivedFromNetwork ----
+local function net_connect(binding, address, protocol)
+  sim.net.connections[binding] = { address = address, protocol = protocol }
+  return true
+end
+function CreateNetworkConnection(binding, address, protocol)
+  return net_connect(binding, address, protocol)
+end
+function NetConnect(binding, port, protocol)
+  sim.net.connects[#sim.net.connects + 1] = { binding = binding, port = port, protocol = protocol }
+  return true
+end
+function SendToNetwork(binding, port, data)
+  sim.net.sent[#sim.net.sent + 1] = { binding = binding, port = port, data = data, t = sim.now_ms }
+end
+function NetDisconnect(binding, port)
+  sim.net.disconnects[#sim.net.disconnects + 1] = { binding = binding, port = port }
+end
+function CreateServer(port, protocol)
+  sim.net.servers[port] = protocol or "tcp"
+  return true
+end
+function DestroyServer(port)
+  sim.net.servers[port] = nil
+end
+
+-- sim.net_receive(bindingId, data): calls ReceivedFromNetwork(binding, port, data) with the last port used by NetConnect.
+function sim.net_receive(bindingId, data)
+  local port = 0
+  for _, c in ipairs(sim.net.connects) do
+    if c.binding == bindingId then port = c.port end
+  end
+  local f = (sim.env and sim.env.ReceivedFromNetwork) or _G.ReceivedFromNetwork
+  if type(f) == "function" then xcall("ReceivedFromNetwork", f, bindingId, port, data) end
+end
+
+-- ---- Misc UI and system ----
+function SendDataToUI(...)
+  sim.ui[#sim.ui + 1] = { ... }
+end
+
+function UpdatePropertyList(name, list)
+  sim.prop_lists[name] = list
+end
+
+function GetControllerNetworkAddress()
+  return "127.0.0.1"
+end
+
+-- ---- Common-library fallbacks: drivers-common-public.* modules that are not on the path ----
+-- Real files on package.path win (this searcher is appended last). Stub calls return nil and warn.
+local function stub_common(name)
+  add_warn("stubbed common-library module " .. name)
+  sim._stub_loaded[#sim._stub_loaded + 1] = name
+  return setmetatable({}, {
+    __index = function()
+      return function()
+        add_warn("stubbed common-library module " .. name)
+        return nil
+      end
+    end,
+  })
+end
+do
+  local searchers = package.searchers or package.loaders
+  table.insert(searchers, function(name)
+    if type(name) == "string" and name:find("^drivers%-common%-public") then
+      return function(n) return stub_common(n) end, name
+    end
+    return nil
+  end)
+end
+
+-- Drivers call most of these as C4:Name(...) and some as globals. Both forms reach the same stub.
+do
+  local names = { "JsonEncode", "JsonDecode", "Base64Encode", "Base64Decode", "urlGet", "urlPost", "urlDo",
+    "urlSetTimeout", "CreateNetworkConnection", "NetConnect", "SendToNetwork", "NetDisconnect", "CreateServer",
+    "DestroyServer", "SendDataToUI", "UpdatePropertyList", "GetControllerNetworkAddress" }
+  for _, n in ipairs(names) do
+    local fn = _G[n]
+    C4[n] = function(_, ...) return fn(...) end
+  end
+end
 
 return sim

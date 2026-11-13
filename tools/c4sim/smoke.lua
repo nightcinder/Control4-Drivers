@@ -20,6 +20,8 @@ for i = 1, #arg do
 
     local unstubbed = {}
     for _, w in ipairs(sim.warnings) do
+      local mod = w:match("^stubbed common%-library module (.+)$")
+      if mod then out("warn " .. name .. ": stubbed common-library module " .. mod) end
       if w:match("^unstubbed ") then unstubbed[#unstubbed + 1] = w:gsub("^unstubbed ", "") end
     end
     if #unstubbed > 0 then
