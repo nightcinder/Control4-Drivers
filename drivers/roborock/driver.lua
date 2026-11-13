@@ -1,6 +1,10 @@
 --[[
   Roborock Vacuum via LAN HTTP bridge (Control4 DriverWorks, OS 3.4.x)
-  Version: 0.6.1  (UNTESTED on real Composer/Director; see docs/roborock.md)
+  Version: 0.6.2  (UNTESTED on real Composer/Director; see docs/roborock.md)
+  v0.6.2 fires Laundry Room Clean Started as soon as the bridge accepts a clean_rooms command that includes
+  the Laundry Room ID (no state edge needed, so a job sent while the robot is already cleaning fires). The
+  poll-based start is a backup only. Adaptive polling: 5 s while cleaning or returning, otherwise the
+  Poll Interval property (default 15, minimum 5).
   v0.5.1 moves events to devicedata level so Composer lists them (driver.xml only; no Lua logic change).
   v0.5.0 adds Active Room / Room Progress properties (ACTIVE_ROOM, ROOM_PROGRESS variables). Laundry
   Room Entered / Left use the bridge's current_room while it is known; v0.4.0 run-target rule is the fallback.
@@ -12,17 +16,18 @@
   Bridge endpoints (plain HTTP on the LAN):
     GET  /state    -> {"state":"charging","battery":100,"error":"none","rooms":[{"id":16,"name":"Study"}],"last_error":null,...}
     POST /command  -> {"action":"start|stop|pause|dock|clean_rooms","rooms":[ids]}
-  Polls /state every Poll Interval seconds (minimum 30).
+  Polls /state every Poll Interval seconds (minimum 5); every 5 s while cleaning or returning (v0.6.2).
   The state fields are read with simple key patterns (the bridge sends flat scalar fields).
 ]]
 
-local DRIVER_VERSION = "0.6.1"
+local DRIVER_VERSION = "0.6.2"
 local PROXY_BINDING = 5001          -- uibutton proxy (tile, icon and web view)
 local UI_BUILD = "3"                -- must match PAGE_BUILD in www/vacuum2.html
 local DEFAULT_HOST = "172.21.1.157"
 local DEFAULT_PORT = "8788"
-local DEFAULT_POLL = 60
-local MIN_POLL = 30
+local DEFAULT_POLL = 15
+local MIN_POLL = 5
+local FAST_POLL = 5             -- v0.6.2: while cleaning or returning
 local RETRY_SECONDS = 30
 local COMMAND_RECHECK_SECONDS = 3
 local HTTP_TIMEOUT_SECONDS = 15
@@ -112,12 +117,6 @@ local function bridgeBase()
   return "http://" .. host .. ":" .. port
 end
 
-local function pollSeconds()
-  local n = tonumber(prop("Poll Interval")) or DEFAULT_POLL
-  if n < MIN_POLL then n = MIN_POLL end
-  return n
-end
-
 local function lowThreshold()
   return tonumber(prop("Low Battery Threshold")) or 20
 end
@@ -142,6 +141,15 @@ end
 
 local function isDocked(s)
   return s == "docked" or s == "charging"
+end
+
+-- v0.6.2: adaptive poll. Fast while the robot is cleaning or returning, Poll Interval otherwise.
+local function pollSeconds()
+  local s = state.st or ""
+  if isCleaning(s) or s == "returning" then return FAST_POLL end
+  local n = tonumber(prop("Poll Interval")) or DEFAULT_POLL
+  if n < MIN_POLL then n = MIN_POLL end
+  return n
 end
 
 -- v0.6.0: true when a clean_rooms run list contains the Laundry Room ID.
@@ -336,7 +344,7 @@ local function applyState(body)
       fire(EVENT_LAUNDRY_LEFT)
       logmsg("laundry room left (current room)")
     end
-  elseif cleaningNow and not isCleaning(state.lastState) then
+  elseif cleaningNow and not state.laundryActive then
     if isLaundryOnlyRun(state.runRooms) then
       state.laundryActive = true
       fire(EVENT_LAUNDRY_ENTERED)
@@ -345,10 +353,11 @@ local function applyState(body)
   end
   -- v0.6.0 laundry clean job events. These do not depend on the bridge's current room, so they
   -- fire while the robot is still travelling to the Laundry Room ID.
-  if cleaningNow and not isCleaning(state.lastState) and targetsLaundry(state.runRooms) then
+  -- Poll backup: fires only if sendCommand did not already fire it for this run (laundryJob).
+  if cleaningNow and not state.laundryJob and targetsLaundry(state.runRooms) then
     state.laundryJob = true
     fire(EVENT_LAUNDRY_CLEAN_STARTED)
-    logmsg("laundry clean job started")
+    logmsg("laundry clean job started (poll)")
   end
   -- Run ended (docked, charging or idle), not on pause or returning
   if isCleaning(state.lastState) and not cleaningNow
@@ -475,6 +484,13 @@ local function sendCommand(action, rooms)
       state.runRooms = (action == "clean_rooms") and rooms or nil
       logmsg("command " .. action .. " accepted")
       setProp("Status", "Command sent: " .. action)
+      -- v0.6.2: fire the laundry clean start now, not on the next poll
+      if action == "clean_rooms" and targetsLaundry(rooms) then
+        state.laundryJob = true
+        fire(EVENT_LAUNDRY_CLEAN_STARTED)
+        logmsg("laundry clean job started (command accepted)")
+      end
+      publishUi()
     else
       local reason = err
       if reason == nil or reason == "" then reason = "HTTP " .. tostring(code) end

@@ -1,4 +1,4 @@
-# roborock-bridge (0.2.0, UNTESTED against a real vacuum)
+# roborock-bridge (0.2.1, UNTESTED against a real vacuum)
 
 Small LAN HTTP bridge around python-roborock (pinned 7.22.0). Polls the vacuum at most every 60 s.
 
@@ -9,7 +9,7 @@ Small LAN HTTP bridge around python-roborock (pinned 7.22.0). Polls the vacuum a
 - data/: volume for roborock.json (mode 600). Holds login tokens. Never commit it.
 
 ## Build
-    docker build -t roborock-bridge:0.2.0 /home/liesa/automation-pollers/roborock-bridge
+    docker build -t roborock-bridge:0.2.1 /home/liesa/automation-pollers/roborock-bridge
 
 The build path is the one used for 0.1.0 (from the stack notes). Confirm it on liesa before building.
 

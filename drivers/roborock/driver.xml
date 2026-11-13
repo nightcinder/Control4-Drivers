@@ -5,8 +5,8 @@
 	<name>roborock</name>
 	<model>Roborock Vacuum (LAN Bridge)</model>
 	<created>11/12/2026 12:00 PM</created>
-	<modified>11/12/2026 11:05 PM</modified>
-	<version>15</version>
+	<modified>11/13/2026 07:33 PM</modified>
+	<version>17</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -90,6 +90,7 @@
 		Commands, actions, events, variables and properties from v1 are unchanged.
 		v5.1 (0.5.1) - events moved to devicedata level so Composer lists them
 		v5.2 (0.6.0) - Room field shows Docked when docked or charging and the target room (e.g. "Laundry (target)") while a room job runs; events 8 Laundry Room Clean Started and 9 Laundry Room Clean Finished (UNTESTED on hardware and in Composer)
+		v5.3 (0.6.2) - Laundry Room Clean Started fires as soon as the bridge accepts a clean job that includes the Laundry Room ID; adaptive polling (5 s while cleaning, Poll Interval otherwise; default 15, minimum 5) (UNTESTED on hardware and in Composer)
 	-->
 	<events>
 		<event>
@@ -204,10 +205,10 @@
 			<property>
 				<name>Poll Interval</name>
 				<type>RANGED_INTEGER</type>
-				<minimum>30</minimum>
+				<minimum>5</minimum>
 				<maximum>3600</maximum>
 				<readonly>false</readonly>
-				<default>60</default>
+				<default>15</default>
 			</property>
 			<property>
 				<name>Laundry Room ID</name>
@@ -265,7 +266,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>0.6.1</default>
+				<default>0.6.2</default>
 			</property>
 			<property>
 				<name>Active Room</name>

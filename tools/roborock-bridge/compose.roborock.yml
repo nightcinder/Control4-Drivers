@@ -1,5 +1,5 @@
   roborock-bridge:
-    image: roborock-bridge:0.2.0
+    image: roborock-bridge:0.2.1
     container_name: roborock-bridge
     profiles: ["roborock"]
     restart: unless-stopped
