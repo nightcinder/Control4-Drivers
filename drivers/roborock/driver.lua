@@ -1,6 +1,6 @@
 --[[
   Roborock Vacuum via LAN HTTP bridge (Control4 DriverWorks, OS 3.4.x)
-  Version: 0.5.1  (UNTESTED on real Composer/Director; see docs/roborock.md)
+  Version: 0.6.1  (UNTESTED on real Composer/Director; see docs/roborock.md)
   v0.5.1 moves events to devicedata level so Composer lists them (driver.xml only; no Lua logic change).
   v0.5.0 adds Active Room / Room Progress properties (ACTIVE_ROOM, ROOM_PROGRESS variables). Laundry
   Room Entered / Left use the bridge's current_room while it is known; v0.4.0 run-target rule is the fallback.
@@ -16,7 +16,7 @@
   The state fields are read with simple key patterns (the bridge sends flat scalar fields).
 ]]
 
-local DRIVER_VERSION = "0.6.0"
+local DRIVER_VERSION = "0.6.1"
 local PROXY_BINDING = 5001          -- uibutton proxy (tile, icon and web view)
 local UI_BUILD = "3"                -- must match PAGE_BUILD in www/vacuum2.html
 local DEFAULT_HOST = "172.21.1.157"
