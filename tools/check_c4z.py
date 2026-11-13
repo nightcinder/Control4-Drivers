@@ -515,6 +515,10 @@ def check_property_xml(root, xml_rel, fail, warn):
             multi = (_child_text(p, "multiselect") or "").lower()
             if multi not in ("true", "false"):
                 fail("P002", f"{where} needs <multiselect> true or false, found '{multi or 'none'}'")
+        elif ptype in NUMERIC_TYPES and (_child_text(p, "minimum") is None or _child_text(p, "maximum") is None):
+            fail("P003", f"{where} is a plain {ptype} with no <minimum>/<maximum>; Composer can fail with "
+                         "'Error creating property'. Use RANGED_INTEGER (integers) or RANGED_FLOAT (decimals) "
+                         "with <minimum> and <maximum>")
         elif ptype in ("RANGED_INTEGER", "RANGED_FLOAT"):
             lo = _num(_child_text(p, "minimum"))
             hi = _num(_child_text(p, "maximum"))
