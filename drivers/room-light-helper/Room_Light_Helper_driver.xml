@@ -3,10 +3,10 @@
 	<creator>Custom Driver Project</creator>
 	<manufacturer>Custom Driver Project</manufacturer>
 	<name>Room Light Helper</name>
-	<model>Room Light Helper v1.1.0 (one instance per room)</model>
+	<model>Room Light Helper v1.1.1 (one instance per room)</model>
 	<created>11/12/2026 10:00 PM</created>
-	<modified>11/12/2026 11:39 PM</modified>
-	<version>2</version>
+	<modified>11/12/2026 11:45 PM</modified>
+	<version>3</version>
 	<control>lua_gen</control>
 	<controlmethod>none</controlmethod>
 	<driver>DriverWorks</driver>
@@ -31,43 +31,6 @@
 	</connections>
 
 	<config>
-		<actions>
-			<action>
-				<name>Request On</name>
-				<command>REQUEST_ON</command>
-				<params>
-					<param>
-						<name>Source</name>
-						<type>STRING</type>
-					</param>
-				</params>
-			</action>
-			<action>
-				<name>Release</name>
-				<command>RELEASE</command>
-				<params>
-					<param>
-						<name>Source</name>
-						<type>STRING</type>
-					</param>
-				</params>
-			</action>
-			<action>
-				<name>Release All</name>
-				<command>RELEASE_ALL</command>
-			</action>
-			<action>
-				<name>Set Lux</name>
-				<command>SET_LUX</command>
-				<params>
-					<param>
-						<name>Lux</name>
-						<type>NUMBER</type>
-					</param>
-				</params>
-			</action>
-		</actions>
-
 		<properties>
 			<property>
 				<name>Room Name</name>
@@ -79,7 +42,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>1.1.0</default>
+				<default>1.1.1</default>
 			</property>
 			<property>
 				<name>Status</name>
@@ -188,6 +151,45 @@
 				</items>
 			</property>
 		</properties>
+
+		<commands>
+			<command>
+				<name>REQUEST_ON</name>
+				<description>Request On: turn the room light on for Source</description>
+				<params>
+					<param>
+						<name>Source</name>
+						<type>STRING</type>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>RELEASE</name>
+				<description>Release: release Source from the room light</description>
+				<params>
+					<param>
+						<name>Source</name>
+						<type>STRING</type>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>RELEASE_ALL</name>
+				<description>Release All: release every source from the room light</description>
+			</command>
+			<command>
+				<name>SET_LUX</name>
+				<description>Set Lux: report the current lux reading for the room</description>
+				<params>
+					<param>
+						<name>Lux</name>
+						<type>RANGED_INTEGER</type>
+						<minimum>0</minimum>
+						<maximum>100000</maximum>
+					</param>
+				</params>
+			</command>
+		</commands>
 	</config>
 
 	<events>
