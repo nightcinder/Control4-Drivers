@@ -30,7 +30,7 @@ DRIVER_SET_RE = re.compile(r'(?:UpdateProperty|setProp)\s*\(\s*["\']Driver Versi
 ONINIT_RE = re.compile(r'function\s+OnDriverInit\s*\(|OnDriverInit\s*=\s*function')
 EXEC_RE = re.compile(r'function\s+ExecuteCommand\s*\(')
 SCRIPT_RE = re.compile(r'<script\s+file="([^"]+)"')
-PROPERTIES_WRITE_RE = re.compile(r'Properties\[[^\]]+\]\s*=[^=]')
+PROPERTIES_WRITE_RE = re.compile(r'\bProperties\s*\[[^\]]*\]\s*=(?!=)')
 
 
 def package_names():
@@ -46,6 +46,37 @@ def strip_bom(data):
 def script_name(xml_bytes):
     m = SCRIPT_RE.search(xml_bytes.decode("utf-8", "replace"))
     return m.group(1) if m else "driver.lua"
+
+
+def lua_code_lines(text):
+    """Lua source split into lines, with comments and string contents blanked out (line numbers kept)."""
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if text.startswith("--", i):
+            m = re.match(r"--\[(=*)\[", text[i:])
+            if m:
+                close = "]" + m.group(1) + "]"
+                end = text.find(close, i)
+                end = n if end < 0 else end + len(close)
+            else:
+                end = text.find("\n", i)
+                end = n if end < 0 else end
+            out.append(re.sub(r"[^\n]", " ", text[i:end]))
+            i = end
+        elif ch in "\"'":
+            j = i + 1
+            while j < n and text[j] not in (ch, "\n"):
+                j += 2 if text[j] == "\\" else 1
+            j = min(j, n)
+            closed = j < n and text[j] == ch
+            out.append(ch + re.sub(r"[^\n]", " ", text[i + 1:j]) + (ch if closed else ""))
+            i = j + 1 if closed else j
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out).splitlines()
 
 
 def is_excluded(rel):
@@ -365,7 +396,7 @@ def check_folder(path, xml_override=None, version_check=True):
             fail("f", "Lua never sets the Driver Version property (no UpdateProperty/setProp call for it)")
 
     # j. Writes to the Properties table do not update the property shown in Composer
-    for lineno, line in enumerate(lua_text.splitlines(), 1):
+    for lineno, line in enumerate(lua_code_lines(lua_text), 1):
         if PROPERTIES_WRITE_RE.search(line):
             fail("j", f"{lua_rel}:{lineno} assigns to Properties[...]; use C4:UpdateProperty(name, value) instead")
             break
