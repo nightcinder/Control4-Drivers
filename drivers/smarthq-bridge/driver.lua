@@ -1,6 +1,6 @@
 --[[
   SmartHQ Bridge (parent) for Control4 DriverWorks, OS 3.4.x
-  Version: 0.3.4  (UNTESTED in Composer/Director; see docs/smarthq.md)
+  Version: 0.3.5  (UNTESTED in Composer/Director; see docs/smarthq.md)
 
   Polls the LAN HTTP bridge on liesa (read-only, except the hood light write):
     GET  {base}/inventory                     every Poll Interval seconds, all appliances
@@ -18,7 +18,7 @@
                 SH_HELLO {}  (sent at startup so children register again after a parent restart)
 ]]
 
-local DRIVER_VERSION = "0.3.4"
+local DRIVER_VERSION = "0.3.5"
 local DEFAULT_HOST = "172.21.1.157"
 local DEFAULT_PORT = "8789"
 local DEFAULT_POLL_SECONDS = 60
@@ -58,7 +58,7 @@ local function prop(name)
 end
 
 local function setProp(name, value)
-  pcall(function() Properties[name] = tostring(value or "") end)
+  pcall(function() C4:UpdateProperty(name, tostring(value or "")) end)
 end
 
 local function stamp()
