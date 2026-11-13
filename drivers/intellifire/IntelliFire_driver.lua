@@ -242,7 +242,7 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "207"
+DRIVER_VERSION = "208"
 PAGE_FILE  = 'fireplace3.html'   -- renamed every page release (Navigator caches controller:// pages)
 PAGE_BUILD = '3'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 
@@ -417,18 +417,14 @@ function BindTo(sIP)
 		return
 	end
 	g_boundIP = sIP
-	if (g_netBound) then
-		pcall(function() C4:NetConnect(NET_BINDING, HTTP_PORT, "TCP") end)
-	end
+	-- v208: no NetConnect here. An idle raw socket would occupy the module's single connection slot.
 end
 
 function OnNetworkBindingChanged(idBinding, bIsBound)
 	if (idBinding ~= NET_BINDING) then return end
 	LOG("OnNetworkBindingChanged: bound=" .. tostring(bIsBound))
 	g_netBound = bIsBound
-	if (bIsBound) then
-		pcall(function() C4:NetConnect(NET_BINDING, HTTP_PORT, "TCP") end)
-	end
+	-- v208: no NetConnect (requests use C4:url()).
 end
 
 g_offlineNotifyTimerId = nil
@@ -544,6 +540,49 @@ function DrainQueue()
 		return
 	end
 
+	-- v208: requests go through C4:url() instead of a raw socket. The raw socket
+	-- connected (ONLINE) but never received the module's reply on the EA-1 (the
+	-- module sat on the connection ~5 s, then dropped it), while the same
+	-- request answers in 50 ms from a PC.
+	local req = table.remove(g_reqQueue, 1)
+	g_pendingReq = req
+	do
+		local url = "http://" .. g_ip .. req.path
+		local headers = { ["Connection"] = "close" }
+		if (req.method ~= "GET") then
+			headers["Content-Type"] = "application/x-www-form-urlencoded"
+		end
+		LOG("HTTP TX (url) -> " .. req.method .. " " .. req.path)
+		local myReq = req
+		local okU, errU = pcall(function()
+			local t = C4:url()
+			t:SetOptions({ ["fail_on_error"] = false, ["timeout"] = 15, ["connect_timeout"] = 8 })
+			t:OnDone(function(transfer, responses, errCode, errMsg)
+				if (g_pendingReq ~= myReq) then return end -- already timed out / replaced
+				if (errCode ~= 0 or responses == nil or #responses == 0) then
+					LOG("url error: code=" .. tostring(errCode) .. " msg=" .. tostring(errMsg))
+					FinishPendingRequest(nil, nil)
+					return
+				end
+				local r = responses[#responses]
+				FinishPendingRequest(tostring(r.code), r.body or "")
+			end)
+			if (req.method == "GET") then
+				t:Get(url, headers)
+			else
+				t:Post(url, req.body or "", headers)
+			end
+		end)
+		if (not okU) then
+			LOG("url request failed: " .. tostring(errU))
+			FinishPendingRequest(nil, nil)
+			return
+		end
+		if (req.callback == OnPollResponse) then StartPollCooldown() end
+		ArmRequestTimer()
+		return
+	end
+
 	if (not g_netOnline) then
 		LOG("Not connected, reconnecting before draining queue")
 		local ok, err = pcall(function() C4:NetConnect(NET_BINDING, HTTP_PORT, "TCP") end)
@@ -552,9 +591,6 @@ function DrainQueue()
 		end
 		return -- OnConnectionStatusChanged("ONLINE") will call DrainQueue() again
 	end
-
-	local req = table.remove(g_reqQueue, 1)
-	g_pendingReq = req
 
 	local sReq
 	if (req.method == "GET") then
