@@ -1,7 +1,9 @@
 --[[
-  Room Light Helper v1.1.2 (Control4 DriverWorks, OS 3.x)
+  Room Light Helper v1.2.0 (Control4 DriverWorks, OS 3.x)
   One instance per room. Laundry is the first room.
   Changelog:
+    1.2.0  The room light is now chosen with a device selector (Room Light property) instead
+           of a binding. Light Connection 5001 removed; the property holds the light's device ID.
     1.1.2  Packaging fix: XML now declares its script (driver.lua), combo and empty
            proxies/capabilities so Composer lists the driver for import.
     1.1.1  Commands moved from Actions to programmable Commands (Request On, Release,
@@ -24,14 +26,13 @@
   after Off Delay, but only if the helper turned it on. A new request cancels a pending off.
   Each source auto-releases after Source Timeout (min), with a log line.
 
-  Connection: consumer binding 5001 (LIGHT_V2) to the room light.
+  Room Light: device selector property (Composer) holding the room light's device ID. No binding.
   State is in memory. A driver reload forgets the sources and leaves the light as it is.
 
   Not in v1: keypad holds, away mode, DLS integration. Max Level is a plain property.
 ]]
 
-local DRIVER_VERSION = "1.1.2"
-local LIGHT_BINDING = 5001
+local DRIVER_VERSION = "1.2.0"
 local CHECK_FAST_MS = 10000   -- check timer while the light listener is not registered
 local CHECK_SLOW_MS = 60000   -- check timer once the listener is registered
 local LIGHT_LEVEL_VAR = 1001          -- light proxy LIGHT_LEVEL variable id
@@ -76,8 +77,11 @@ local function trim(s)
   return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
+-- Light device ID from the Room Light device selector property; nil when none is selected.
 local function getLightId()
-  return C4:GetBoundProviderDevice(C4:GetDeviceID(), LIGHT_BINDING)
+  local id = tonumber(Properties["Room Light"])
+  if id == nil or id == 0 then return nil end
+  return id
 end
 
 local function getLightLevel()
@@ -114,7 +118,7 @@ end
 local function rampTo(level)
   local id = getLightId()
   if not id or id == 0 then
-    logf("No light bound to the Room Light connection")
+    logf("No light selected in the Room Light property")
     return false
   end
   C4:SendToDevice(id, "RAMP_TO_LEVEL", { LEVEL = level, TIME = RAMP_MS })
@@ -290,7 +294,8 @@ local function checkTimeouts()
   if sourceCount == 0 then scheduleOff(num("Off Delay (sec)", 180)) else refreshAll() end
 end
 
--- Listen for light level changes once the binding is bound (and again if the light changes).
+-- Listen for light level changes once a light is selected (re-run from OnPropertyChanged and at startup;
+-- switching lights unregisters the old device's listener first).
 local function ensureLightListener()
   local id = getLightId()
   if not id or id == 0 then
