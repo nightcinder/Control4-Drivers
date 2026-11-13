@@ -124,7 +124,7 @@ textarea { width: 100%; font-family: var(--font-mono); font-size: 12.5px; line-h
 <main>
   <header>
     <h1>Rooms JSON Editor</h1>
-    <p class="sub">Daylight Lighting Scheduler v1.7.0 (editor 1.1.0). Change settings below, then press Copy at the bottom and paste into the Rooms JSON property in Composer. Click Set there to save.</p>
+    <p class="sub">Daylight Lighting Scheduler v1.10.1 (editor 1.2.0). Change settings below, then press Copy at the bottom and paste into the Rooms JSON property in Composer. Click Set there to save.</p>
   </header>
 
   <div id="rooms"></div>
@@ -242,6 +242,10 @@ textarea { width: 100%; font-family: var(--font-mono); font-size: 12.5px; line-h
     if (l.kind === 'lutron') {
       rows.appendChild(row('Brightness scale', 'Share of the room level this light gets. Blank means the full room level.', numControl(l, 'scale', { pct: true, blank: true, unit: '%' })));
     }
+    if (l.kind === 'lifx') {
+      rows.appendChild(row('Min color temp', 'Lowest color temperature the driver sends. Blank = 1500 K.', numControl(l, 'cct_min', { min: 1000, max: 10000, blank: true, ph: '1500', unit: 'K' })));
+      rows.appendChild(row('Max color temp', 'Highest color temperature the driver sends. Blank = 4000 K.', numControl(l, 'cct_max', { min: 1000, max: 10000, blank: true, ph: '4000', unit: 'K' })));
+    }
     c.appendChild(rows);
     var w = el('div', 'wins');
     w.appendChild(el('div', 'lbl', 'Windows that light this spot'));
@@ -314,6 +318,96 @@ textarea { width: 100%; font-family: var(--font-mono); font-size: 12.5px; line-h
     f.appendChild(nm); f.appendChild(tp); f.appendChild(btn); f.appendChild(msg); box.appendChild(f);
     box.appendChild(el('p', 'note', 'A room needs at least one light before the driver uses it.'));
     return box;
+  }
+
+  function flagControl(obj, key) {
+    var f = el('span', 'field'); var i = document.createElement('input');
+    i.type = 'checkbox'; i.id = 'f' + (uid++); i.checked = !!obj[key];
+    i.addEventListener('change', function () { if (i.checked) { obj[key] = true; } else { delete obj[key]; } sync(); });
+    f.appendChild(i); return f;
+  }
+
+  function toggleBtn(label, fn) {
+    var b = el('button', 'small', label); b.type = 'button';
+    b.addEventListener('click', function () { fn(); sync(); build(); });
+    return b;
+  }
+
+  function roomWindowsBlock(room) {
+    var g = el('div', 'group'); g.appendChild(el('h2', '', 'Room windows'));
+    var w = el('div', 'wins'); var arr = room.windows || [];
+    if (!arr.length) { w.appendChild(el('div', 'none', 'None set. Lights with no windows of their own use the default strength above.')); }
+    arr.forEach(function (win, wi) {
+      var line = el('div', 'win');
+      line.appendChild(selectControl(COMPASS, win.facing, function (v) { win.facing = v; }));
+      line.appendChild(el('span', 'w-label', 'strength'));
+      line.appendChild(numControl(win, 'gain', { pct: true, unit: '%' }));
+      var rm = el('button', 'small', 'Remove'); rm.type = 'button';
+      rm.addEventListener('click', function () { arr.splice(wi, 1); if (!arr.length) { delete room.windows; } sync(); build(); });
+      line.appendChild(rm); w.appendChild(line);
+    });
+    var add = el('button', 'small', 'Add window'); add.type = 'button'; add.style.justifySelf = 'start';
+    add.addEventListener('click', function () { if (!room.windows) { room.windows = []; } room.windows.push({ facing: 180, gain: 0.5 }); sync(); build(); });
+    w.appendChild(add); g.appendChild(w); return g;
+  }
+
+  function curtainCard(room, c, ci) {
+    var box = el('div', 'light'); var h = el('div', 'light-head');
+    h.appendChild(textControl(c, 'name', { blank: true, placeholder: room.name }));
+    h.appendChild(el('span', 'lid', 'proxy ' + c.id));
+    var rm = el('button', 'small', 'Remove curtain'); rm.type = 'button'; rm.style.marginLeft = 'auto';
+    rm.addEventListener('click', function () { room.curtains.splice(ci, 1); if (!room.curtains.length) { delete room.curtains; } sync(); build(); });
+    h.appendChild(rm); box.appendChild(h);
+    var rows = el('div', 'rows');
+    rows.appendChild(row('Proxy ID', 'SwitchBot Curtain child device', numControl(c, 'id', { min: 1, max: 999999, unit: '' })));
+    rows.appendChild(row('Window faces', 'Blank uses the room’s facing', numControl(c, 'facing_deg', { min: 0, max: 359, blank: true, ph: room.facing_deg !== undefined ? String(room.facing_deg) : 'room', unit: '°' })));
+    rows.appendChild(row('Open level', 'Control4 level for fully open. Blank = 100.', numControl(c, 'open_level', { blank: true, ph: '100', unit: '%' })));
+    rows.appendChild(row('Closed level', 'Control4 level for fully closed. Blank = 0.', numControl(c, 'closed_level', { blank: true, ph: '0', unit: '%' })));
+    rows.appendChild(row('Opens at', 'HH:MM or sunrise±min. Blank = sunrise+15.', textControl(c, 'open_at', { blank: true, placeholder: 'sunrise+15' })));
+    rows.appendChild(row('Closes at', 'HH:MM or sunset±min. Blank = sunset+30.', textControl(c, 'close_at', { blank: true, placeholder: 'sunset+30' })));
+    rows.appendChild(row('Glare threshold', 'Direct-sun index shown as a percent. Blank = 35%.', numControl(c, 'glare_threshold', { pct: true, blank: true, ph: '35', unit: '%' })));
+    rows.appendChild(row('Glare position', 'Openness while glare is above the threshold. Blank = 25%.', numControl(c, 'glare_position', { blank: true, ph: '25', unit: '%' })));
+    box.appendChild(rows); return box;
+  }
+
+  function curtainsBlock(room) {
+    var g = el('div', 'group'); g.appendChild(el('h2', '', 'Curtains (SwitchBot)'));
+    (room.curtains || []).forEach(function (c, ci) { g.appendChild(curtainCard(room, c, ci)); });
+    if (!(room.curtains || []).length) { g.appendChild(el('div', 'none', 'No curtains in this room.')); }
+    var f = el('div', 'add-form');
+    var id = document.createElement('input'); id.type = 'number'; id.min = '1'; id.placeholder = 'Proxy ID'; id.setAttribute('aria-label', 'Curtain proxy ID'); id.style.width = '100px';
+    var nm = document.createElement('input'); nm.type = 'text'; nm.placeholder = 'Name (optional)'; nm.setAttribute('aria-label', 'Curtain name');
+    var btn = el('button', 'small', 'Add curtain'); btn.type = 'button'; var msg = el('span', 'msg');
+    btn.addEventListener('click', function () {
+      var n = Math.round(Number(id.value));
+      if (!(n > 0)) { msg.textContent = 'Enter the curtain’s proxy ID.'; msg.className = 'msg bad'; return; }
+      var dup = null; data.forEach(function (r) { (r.curtains || []).forEach(function (x) { if (x.id === n) { dup = r.name; } }); });
+      if (dup) { msg.textContent = 'Curtain ' + n + ' is already in ' + dup + '.'; msg.className = 'msg bad'; return; }
+      var item = { id: n }; if (nm.value.trim()) { item.name = nm.value.trim(); }
+      room.curtains = room.curtains || []; room.curtains.push(item); sync(); build();
+    });
+    f.appendChild(id); f.appendChild(nm); f.appendChild(btn); f.appendChild(msg);
+    var wrap = el('div', 'add-wrap'); wrap.appendChild(el('div', 'note', 'SwitchBot Curtain child proxies. They move only when Curtain Automation is On in Composer.')); wrap.appendChild(f);
+    g.appendChild(wrap); return g;
+  }
+
+  function sensorsBlock(room) {
+    var g = el('div', 'group'); g.appendChild(el('h2', '', 'Sensors'));
+    var rows = el('div', 'rows'); var acts = el('div', 'bar');
+    if (room.occ) {
+      rows.appendChild(row('Presence device ID', '0 turns this sensor off. Used when Presence Lighting is On.', numControl(room.occ, 'dev', { min: 0, max: 999999, unit: '' })));
+      rows.appendChild(row('Presence variable', 'Variable ID. Blank = 1000.', numControl(room.occ, 'var', { min: 1, max: 999999, blank: true, ph: '1000', unit: '' })));
+      rows.appendChild(row('Vacancy delay', 'Seconds the sensor must read empty. Blank = Vacancy Delay property (min 10 s).', numControl(room.occ, 'vacancyDelaySec', { min: 0, max: 86400, blank: true, ph: 'default', unit: 's' })));
+      rows.appendChild(row('Invert sensor', 'Tick if the sensor’s on/off meaning is reversed.', flagControl(room.occ, 'invert')));
+      acts.appendChild(toggleBtn('Remove presence sensor', function () { delete room.occ; }));
+    } else { acts.appendChild(toggleBtn('Add presence sensor', function () { room.occ = { dev: 0 }; })); }
+    if (room.lux) {
+      rows.appendChild(row('Light sensor device ID', '0 turns this sensor off.', numControl(room.lux, 'dev', { min: 0, max: 999999, unit: '' })));
+      rows.appendChild(row('Light sensor variable', 'Variable ID. Blank = 1000.', numControl(room.lux, 'var', { min: 1, max: 999999, blank: true, ph: '1000', unit: '' })));
+      rows.appendChild(row('Target lux', 'Room level is nudged toward this. Blank = 200 lx.', numControl(room.lux, 'target', { min: 1, max: 100000, blank: true, ph: '200', unit: 'lx' })));
+      acts.appendChild(toggleBtn('Remove light sensor', function () { delete room.lux; }));
+    } else { acts.appendChild(toggleBtn('Add light sensor', function () { room.lux = { dev: 0 }; })); }
+    g.appendChild(rows); g.appendChild(acts); return g;
   }
 
   function awayBlock(room) {
@@ -390,11 +484,15 @@ textarea { width: 100%; font-family: var(--font-mono); font-size: 12.5px; line-h
 
     var br = [];
     br.push(row('Max brightness', 'Caps every light in this room. Blank means no cap.', numControl(room, 'max_level', { blank: true, unit: '%' })));
+    br.push(row('Minimum brightness', 'Lowest level the driver sets in this room. Blank = 5%.', numControl(room, 'min_level', { blank: true, ph: '5', unit: '%' })));
     br.push(row('Default window strength', 'Used by lights with no windows listed', numControl(room, 'window_gain', { pct: true, blank: true, unit: '%' })));
     if (room.facing_deg !== undefined) { br.push(row('Room faces', null, selectControl(COMPASS, room.facing_deg, function (v) { room.facing_deg = v; }))); }
     card.appendChild(group('Brightness', br));
 
     card.appendChild(lightsBlock(room));
+    card.appendChild(roomWindowsBlock(room));
+    card.appendChild(sensorsBlock(room));
+    card.appendChild(curtainsBlock(room));
     if (room.away) { card.appendChild(awayBlock(room)); }
     if (room.scenes) { card.appendChild(scenesBlock(room)); }
     if (room.wake) { card.appendChild(wakeBlock(room)); }
