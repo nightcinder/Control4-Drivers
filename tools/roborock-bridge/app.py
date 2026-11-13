@@ -21,6 +21,9 @@ PORT = int(os.environ.get("PORT", "8788"))
 POLL_INTERVAL = max(60, int(os.environ.get("POLL_INTERVAL", "60")))
 MAX_AGE = 300
 ROOMS_REFRESH_SECONDS = 600
+MAP_REFRESH_ACTIVE = 15     # seconds between map fetches while the robot is cleaning
+MAP_REFRESH_IDLE = 300      # seconds between map fetches otherwise
+MAP_MAX_AGE = 120           # current_room is null when the cached map is older than this
 ACTIONS = {"start", "stop", "pause", "dock", "clean_rooms"}
 MAX_BODY = 4096
 
@@ -31,6 +34,7 @@ state_lock = threading.Lock()
 STATE = {"state": None, "battery": None, "error": None, "rooms": [],
          "last_success": None, "last_error": None}
 RUNTIME = {"loop": None, "props": None}
+MAP = {"segment": None, "at": None}  # latest vacuum_room from the parsed map and its fetch time
 
 
 def load_saved():
@@ -100,9 +104,44 @@ async def load_rooms(props):
             for seg, room in sorted(props.rooms.room_map.items())]
 
 
+def _is_cleaning(state):
+    return bool(state) and "clean" in str(state).lower()
+
+
+async def map_loop():
+    """Refresh the parsed map so current_room tracks the robot.
+
+    python-roborock sets MapData.vacuum_room (the segment id under the robot)
+    when it parses the map. The map is fetched every MAP_REFRESH_ACTIVE seconds
+    while cleaning and every MAP_REFRESH_IDLE seconds otherwise.
+    """
+    while True:
+        wait = MAP_REFRESH_IDLE
+        props = RUNTIME["props"]
+        if props is None:
+            wait = 5
+        else:
+            try:
+                await props.map_content.refresh()
+                map_data = props.map_content.map_data
+                segment = getattr(map_data, "vacuum_room", None) if map_data is not None else None
+                with state_lock:
+                    MAP["segment"] = segment
+                    MAP["at"] = time.time()
+                    cleaning = _is_cleaning(STATE["state"])
+                if cleaning:
+                    wait = MAP_REFRESH_ACTIVE
+            except Exception as exc:  # map is optional; status keeps working
+                log.warning("map refresh failed: %s", type(exc).__name__)
+                with state_lock:
+                    MAP["segment"] = None
+        await asyncio.sleep(wait)
+
+
 async def poller(saved):
     manager = None
     rooms_at = 0.0  # time of the last room refresh (0 = never)
+    asyncio.ensure_future(map_loop())
     while True:
         try:
             if manager is None:
@@ -170,6 +209,20 @@ def health_payload():
     return (200 if ok else 503), body
 
 
+def _current_room():
+    """{"id": segment, "name": str|None} for the robot's room, or None if unknown."""
+    try:
+        with state_lock:
+            segment, at = MAP["segment"], MAP["at"]
+            rooms = list(STATE["rooms"] or [])
+        if segment is None or at is None or time.time() - at > MAP_MAX_AGE:
+            return None
+        name = next((r["name"] for r in rooms if r["id"] == segment), None)
+        return {"id": segment, "name": name}
+    except Exception:  # never let the room lookup break /state
+        return None
+
+
 def state_payload():
     if load_saved() is None:
         return 503, {"error": "not logged in: run 'python app.py login' first"}
@@ -177,6 +230,12 @@ def state_payload():
         body = dict(STATE)
     last = body.pop("last_success")
     body["last_success_age_s"] = None if last is None else round(time.time() - last, 1)
+    body["current_room"] = _current_room()
+    # Not derivable from python-roborock 7.22.0 for v1 vacuums: the v1 map parser
+    # gives only room bounding boxes (no pixel counts) and never fills
+    # MapData.cleaned_rooms. Left as null rather than estimated.
+    body["room_progress_pct"] = None
+    body["run_progress_pct"] = None
     return 200, body
 
 
@@ -194,7 +253,7 @@ def parse_command(raw):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "roborock-bridge/0.1.0"
+    server_version = "roborock-bridge/0.2.0"
 
     def log_message(self, fmt, *args):  # no per-request logs
         return
