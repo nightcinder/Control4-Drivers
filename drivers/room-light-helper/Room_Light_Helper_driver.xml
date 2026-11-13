@@ -1,0 +1,196 @@
+<devicedata>
+	<copyright>Copyright (c) 2026 - Custom Driver - Free / self-built</copyright>
+	<creator>Custom Driver Project</creator>
+	<manufacturer>Custom Driver Project</manufacturer>
+	<name>Room Light Helper</name>
+	<model>Room Light Helper v1.0.0 (one instance per room)</model>
+	<created>11/12/2026 10:00 PM</created>
+	<modified>11/12/2026 10:00 PM</modified>
+	<version>1</version>
+	<control>lua_gen</control>
+	<controlmethod>none</controlmethod>
+	<driver>DriverWorks</driver>
+	<templatedescription>Room Light Helper - requests a room light on and releases it, with a lux-based level and an off delay</templatedescription>
+
+	<connections>
+		<connection>
+			<id>5001</id>
+			<facing>6</facing>
+			<connectionname>Room Light</connectionname>
+			<type>1</type>
+			<consumer>True</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>LIGHT_V2</classname>
+				</class>
+			</classes>
+		</connection>
+	</connections>
+
+	<config>
+		<actions>
+			<action>
+				<name>Request On</name>
+				<command>REQUEST_ON</command>
+				<params>
+					<param>
+						<name>Source</name>
+						<type>STRING</type>
+					</param>
+				</params>
+			</action>
+			<action>
+				<name>Release</name>
+				<command>RELEASE</command>
+				<params>
+					<param>
+						<name>Source</name>
+						<type>STRING</type>
+					</param>
+				</params>
+			</action>
+			<action>
+				<name>Release All</name>
+				<command>RELEASE_ALL</command>
+			</action>
+			<action>
+				<name>Set Lux</name>
+				<command>SET_LUX</command>
+				<params>
+					<param>
+						<name>Lux</name>
+						<type>NUMBER</type>
+					</param>
+				</params>
+			</action>
+		</actions>
+
+		<properties>
+			<property>
+				<name>Room Name</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>Laundry</default>
+			</property>
+			<property>
+				<name>Driver Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>1.0.0</default>
+			</property>
+			<property>
+				<name>Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Idle</default>
+			</property>
+			<property>
+				<name>Light State</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Idle</default>
+			</property>
+			<property>
+				<name>Active Sources</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>None</default>
+			</property>
+			<property>
+				<name>Min Level</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>0</minimum>
+				<maximum>100</maximum>
+				<readonly>false</readonly>
+				<default>20</default>
+			</property>
+			<property>
+				<name>Max Level</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>0</minimum>
+				<maximum>100</maximum>
+				<readonly>false</readonly>
+				<default>100</default>
+			</property>
+			<property>
+				<name>Fallback Level</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>0</minimum>
+				<maximum>100</maximum>
+				<readonly>false</readonly>
+				<default>60</default>
+			</property>
+			<property>
+				<name>Lux Low</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>0</minimum>
+				<maximum>100000</maximum>
+				<readonly>false</readonly>
+				<default>20</default>
+			</property>
+			<property>
+				<name>Lux High</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>0</minimum>
+				<maximum>100000</maximum>
+				<readonly>false</readonly>
+				<default>300</default>
+			</property>
+			<property>
+				<name>Lux Max Age (min)</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>1</minimum>
+				<maximum>1440</maximum>
+				<readonly>false</readonly>
+				<default>30</default>
+			</property>
+			<property>
+				<name>Off Delay (sec)</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>0</minimum>
+				<maximum>3600</maximum>
+				<readonly>false</readonly>
+				<default>30</default>
+			</property>
+			<property>
+				<name>Source Timeout (min)</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>1</minimum>
+				<maximum>1440</maximum>
+				<readonly>false</readonly>
+				<default>120</default>
+			</property>
+			<property>
+				<name>Debug</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Off</default>
+				<items>
+					<item>Off</item>
+					<item>On</item>
+				</items>
+			</property>
+		</properties>
+	</config>
+
+	<events>
+		<event>
+			<id>1</id>
+			<name>Light Turned On By Helper</name>
+			<description>The helper turned the room light on</description>
+		</event>
+		<event>
+			<id>2</id>
+			<name>Light Turned Off By Helper</name>
+			<description>The helper turned the room light off after the last source released</description>
+		</event>
+		<event>
+			<id>3</id>
+			<name>Source Timeout</name>
+			<description>A source was auto-released after Source Timeout (min)</description>
+		</event>
+	</events>
+</devicedata>
