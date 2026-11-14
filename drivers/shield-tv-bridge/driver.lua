@@ -1,10 +1,10 @@
 -- Shield TV Bridge - Control4 DriverWorks driver (Lua 5.1)
--- Version 1.2.0
+-- Version 1.2.1
 -- Controls an NVIDIA Shield TV through an HTTP/JSON bridge on a Linux host.
 -- Presents one media_service primary proxy (5001: keys, power, HDMI output, Navigator
 -- Now Playing) and an avswitch proxy (5002) with 25 app slots.
 
-local DRIVER_VERSION = "1.2.0"
+local DRIVER_VERSION = "1.2.1"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -320,11 +320,11 @@ end
 local npCurrent = nil        -- { title, artist, album, state, art } or nil when nothing to show
 
 -- Cover art is served by the bridge at <Bridge URL>/art/<id>; mode picks plain or base64 URL.
-local function artUrl(path)
+local function artUrl(path, plain)
   if not path or path == "" then return "" end
   local base = string.gsub(trim(prop("Bridge URL")), "/+$", "")
   local url = base .. path
-  if prop("Cover Art Mode") == "Base64 URL" then
+  if not plain and prop("Cover Art Mode") ~= "Plain URL" then
     return C4:Base64Encode(url)
   end
   return url
@@ -369,7 +369,7 @@ local function npSendQueue()
     local sub = npCurrent.artist or ""
     if sub == "" then sub = npCurrent.album or "" end
     local item = npItemXml(npCurrent.title or "", sub, false)
-    local img = artUrl(npCurrent.art)
+    local img = artUrl(npCurrent.art, true)
     if img ~= "" then
       local tag = '<image_list width="512" height="512">' .. xmlEsc(img) .. "</image_list></item>"
       item = string.gsub(item, "</item>$", function() return tag end)
