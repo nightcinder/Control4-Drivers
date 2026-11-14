@@ -140,7 +140,20 @@ async def map_loop():
                 log.warning("map refresh failed: %s", type(exc).__name__)
                 with state_lock:
                     MAP["segment"] = None
-        await asyncio.sleep(wait)
+                    if _is_cleaning(STATE["state"]):
+                        wait = MAP_REFRESH_ACTIVE
+        # Sleep in 2 s slices so a clean that starts during an idle sleep
+        # triggers an immediate map refresh instead of waiting out the idle wait.
+        slept = 0.0
+        while slept < wait:
+            step = min(2.0, wait - slept)
+            await asyncio.sleep(step)
+            slept += step
+            if wait > MAP_REFRESH_ACTIVE:
+                with state_lock:
+                    busy = _is_cleaning(STATE["state"]) or str(STATE["state"]).lower() == "returning"
+                if busy:
+                    break
 
 
 async def poller(saved):
@@ -262,7 +275,7 @@ def parse_command(raw):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "roborock-bridge/0.2.1"
+    server_version = "roborock-bridge/0.2.2"
 
     def log_message(self, fmt, *args):  # no per-request logs
         return
