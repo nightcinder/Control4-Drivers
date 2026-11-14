@@ -6,9 +6,9 @@
   <control>lua_gen</control>
   <controlmethod>ip</controlmethod>
   <driver>DriverWorks</driver>
-  <version>5</version>
+  <version>6</version>
   <created>11/13/2026 08:00 PM</created>
-  <modified>11/13/2026 09:25 PM</modified>
+  <modified>11/13/2026 09:34 PM</modified>
   <proxies qty="2">
     <proxy proxybindingid="5001" name="SHIELD TV" primary="True" large_image="icons/device_lg.png" small_image="icons/device_sm.png">media_service</proxy>
     <proxy proxybindingid="5002" name="SHIELD App Switcher">avswitch</proxy>
@@ -38,6 +38,10 @@
     <navigator_display_option proxybindingid="5001">
       <display_icons>
         <Icon width="70" height="70">controller://driver/shield-tv-bridge/icons/device/experience_70.png</Icon>
+        <Icon width="90" height="90">controller://driver/shield-tv-bridge/icons/device/experience_90.png</Icon>
+        <Icon width="300" height="300">controller://driver/shield-tv-bridge/icons/device/experience_300.png</Icon>
+        <Icon width="512" height="512">controller://driver/shield-tv-bridge/icons/device/experience_512.png</Icon>
+        <Icon width="1024" height="1024">controller://driver/shield-tv-bridge/icons/device/experience_1024.png</Icon>
       </display_icons>
     </navigator_display_option>
     <UI xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" proxybindingid="5001">
@@ -603,7 +607,7 @@
       <property>
         <name>Driver Version</name>
         <type>STRING</type>
-        <default>1.2.0</default>
+        <default>1.2.1</default>
         <readonly>true</readonly>
       </property>
       <property>
@@ -637,7 +641,7 @@
           <item>Plain URL</item>
           <item>Base64 URL</item>
         </items>
-        <default>Plain URL</default>
+        <default>Base64 URL</default>
       </property>
       <property>
         <name>Bridge URL</name>
