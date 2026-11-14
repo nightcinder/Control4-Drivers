@@ -6,9 +6,9 @@
   <control>lua_gen</control>
   <controlmethod>ip</controlmethod>
   <driver>DriverWorks</driver>
-  <version>7</version>
+  <version>8</version>
   <created>11/13/2026 08:00 PM</created>
-  <modified>11/13/2026 09:35 PM</modified>
+  <modified>11/13/2026 09:42 PM</modified>
   <proxies qty="2">
     <proxy proxybindingid="5001" name="SHIELD TV" primary="True" large_image="icons/device_lg.png" small_image="icons/device_sm.png">media_service</proxy>
     <proxy proxybindingid="5002" name="SHIELD App Switcher">avswitch</proxy>
@@ -615,7 +615,7 @@
       <property>
         <name>Driver Version</name>
         <type>STRING</type>
-        <default>1.2.2</default>
+        <default>1.2.3</default>
         <readonly>true</readonly>
       </property>
       <property>

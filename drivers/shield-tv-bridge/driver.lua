@@ -1,10 +1,10 @@
 -- Shield TV Bridge - Control4 DriverWorks driver (Lua 5.1)
--- Version 1.2.2
+-- Version 1.2.3
 -- Controls an NVIDIA Shield TV through an HTTP/JSON bridge on a Linux host.
 -- Presents one media_service primary proxy (5001: keys, power, HDMI output, Navigator
 -- Now Playing) and an avswitch proxy (5002) with 25 app slots.
 
-local DRIVER_VERSION = "1.2.2"
+local DRIVER_VERSION = "1.2.3"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -644,6 +644,12 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
         httpPost("/v1/key", "name=" .. scanKey[cmd] .. "&dir=" .. (string.find(cmd, "Press") and "start" or "end"), nil)
         return
       end
+    end
+
+    -- Press-and-hold OK (Shield needs a long press on OK to move favorites)
+    if cmd == "START_ENTER" or cmd == "STOP_ENTER" then
+      httpPost("/v1/key", "name=DPAD_CENTER&dir=" .. (cmd == "START_ENTER" and "start" or "end"), nil)
+      return
     end
 
     if idBinding == PROXY_SWITCH then
