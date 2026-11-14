@@ -1,0 +1,18 @@
+{
+  "rooms": {
+    "Kitchen": {
+      "sources": ["esp", "robot"],
+      "stuckOnMin": 240,
+      "esp": [
+        { "host": "ep-kitchen.lan", "key": "<api encryption key>", "entity": "occupancy", "pir": "pir" }
+      ],
+      "robot": ["Kitchen"]
+    },
+    "Laundry": {
+      "sources": ["esp"],
+      "esp": [
+        { "host": "ep-laundry.lan", "key": "<api encryption key>", "entity": "occupancy" }
+      ]
+    }
+  }
+}

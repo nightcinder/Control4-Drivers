@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""DLS presence bridge v1.3.0 - tells the Daylight Lighting Scheduler (Control4 EA-1) when you are Home/Away.
+"""DLS presence bridge v1.4.0 - feeds the Daylight Lighting Scheduler (Control4 EA-1) Home/Away and per-room occupancy.
 
-Sources (each returns True=here, False=not here, None=unknown/unavailable):
+Household (PRESENCE, v1.3.0 behaviour):
   unifi   - phone present in UniFi Poller metrics in Prometheus (stdlib only)
   life360 - member's Life360 place/location says home (needs the `life360` + `aiohttp` packages, e.g. in a venv;
             used as published, unmodified; the API is unofficial and may stop working at any time)
 Household is HOME if ANY person is home; a person is home if ANY of their known sources says so.
-Unavailable sources (None) are ignored, so an outage in one source never forces AWAY on its own.
+
+Per-room occupancy (v1.4.0, spec docs/room-presence-dls-interface.md sections 3-9), only when ROOMS_FILE exists:
+  esp    - ESPHome binary_sensor via the native API (aioesphomeapi, imported lazily)
+  robot  - tools/roborock-bridge status (GET ROBOT_URL, JSON with state and current_room.name)
+  Sends `OCC <roomKey> 1|0 <src> <token>` lines, HELLO snapshots every OCC_REPEAT_SEC, resync and backoff.
 
   python3 dls_presence.py --discover                # list matching UniFi series
   python3 dls_presence.py --status                  # print each person/source once, no push
@@ -25,14 +29,17 @@ Env:  PROM_URL (default http://localhost:9090)  EA1_HOST  EA1_PORT (8730)  DLS_T
       NOTIFY_TO (e.g. idrac@mailrise.xyz; empty = no alerts)  NOTIFY_SMTP (default localhost:8025)  NOTIFY_FROM
       LIFE360_ALERT_AFTER_MIN (default 30: alert once Life360 has failed this long; repeats every 6 h, plus a recovery notice)
       FRESH_PORT (default 8731, 0 = off)  FRESH_BIND (default 127.0.0.1)
+      ROOMS_FILE (default /etc/dls-presence.rooms.json; missing = no OCC lines, v1.3.0 behaviour)
+      OCC_REPEAT_SEC (60)  STUCK_ON_MIN (240)  SRC_UNKNOWN_SEC (180)  ESPHOME_PORT (6053)
+      ROBOT_URL (empty = no robot source)  ROBOT_POLL_SEC (15)
   GET /health  -> JSON per source: seconds since last successful poll, poll interval, stale flag.
                   HTTP 200 when all sources are fresh, 503 if any is stale (older than 3x its poll interval).
 """
-import json, math, os, smtplib, socket, sys, threading, time, urllib.parse, urllib.request
+import json, math, os, re, smtplib, socket, sys, threading, time, urllib.parse, urllib.request
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 PROM = os.environ.get("PROM_URL", "http://localhost:9090").rstrip("/")
 HOST = os.environ.get("EA1_HOST", "")
 PORT = int(os.environ.get("EA1_PORT", "8730"))
@@ -56,12 +63,29 @@ NOTIFY_SMTP = os.environ.get("NOTIFY_SMTP", "localhost:8025").strip()
 NOTIFY_FROM = os.environ.get("NOTIFY_FROM", "dls-presence@liesa").strip()
 L360_ALERT_AFTER = float(os.environ.get("LIFE360_ALERT_AFTER_MIN", "30")) * 60
 
+# v1.4.0 per-room occupancy
+ROOMS_FILE = os.environ.get("ROOMS_FILE", "/etc/dls-presence.rooms.json")
+OCC_REPEAT_SEC = float(os.environ.get("OCC_REPEAT_SEC", "60"))
+STUCK_ON_MIN = float(os.environ.get("STUCK_ON_MIN", "240"))
+SRC_UNKNOWN_SEC = float(os.environ.get("SRC_UNKNOWN_SEC", "180"))
+ESPHOME_PORT = int(os.environ.get("ESPHOME_PORT", "6053"))
+ROBOT_URL = os.environ.get("ROBOT_URL", "").strip()
+ROBOT_POLL = float(os.environ.get("ROBOT_POLL_SEC", "15"))
+TICK_SEC = 0.5
+ROBOT_STALE = 180.0
+AUTH_RETRY_SEC = 60.0
+AUTH_ALERT_AFTER = 30 * 60.0
+BACKOFF = (5, 10, 20, 60)
+ALL_SOURCES = ("esp", "robot")
+KEY_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+
 _warned = set()
 
 FRESH_PORT = int(os.environ.get("FRESH_PORT", "8731"))
 FRESH_BIND = os.environ.get("FRESH_BIND", "127.0.0.1")
 _started = time.time()
 _last_ok = {"unifi": None, "life360": None}  # time of last successful poll per source
+_extra_health = {}  # name -> {"last_ok", "ok", "poll_s"}: ESPHome devices and the robot bridge
 
 
 def warn_once(key, msg):
@@ -278,6 +302,13 @@ def household():
 
 
 # ---------------------------------------------------------------- freshness
+def set_health(name, ok, poll_s):
+    h = _extra_health.setdefault(name, {"last_ok": None, "ok": False, "poll_s": poll_s})
+    h["ok"], h["poll_s"] = ok, poll_s
+    if ok:
+        h["last_ok"] = time.time()
+
+
 def freshness():
     """Per configured source: seconds since its last successful poll; stale if older than 3x its poll interval."""
     now = time.time()
@@ -292,6 +323,11 @@ def freshness():
         last = _last_ok[name]
         age = now - (last if last else _started)  # never polled yet: age counts from startup
         out[name] = {"last_ok_age_s": round(age), "poll_s": poll, "ever_ok": last is not None, "stale": age > 3 * poll}
+    for name, h in list(_extra_health.items()):
+        last = h["last_ok"]
+        age = now - (last if last else _started)
+        out[name] = {"last_ok_age_s": round(age), "poll_s": h["poll_s"], "ever_ok": last is not None,
+                     "stale": (not h["ok"]) or age > 3 * h["poll_s"]}
     return out
 
 
@@ -330,6 +366,464 @@ def send(state):
             return s.recv(64).decode().strip()
         except socket.timeout:
             return "(no reply)"
+
+
+def ea1_batch(lines):
+    """Write all lines in one sendall, then read replies until DLS closes. Raises OSError on connection failure."""
+    payload = "".join(line + "\r\n" for line in lines).encode()
+    buf = b""
+    with socket.create_connection((HOST, PORT), timeout=10) as s:
+        s.sendall(payload)
+        s.settimeout(5)
+        try:
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                buf += chunk
+        except socket.timeout:
+            pass
+    return [x.strip() for x in buf.decode(errors="replace").split("\n") if x.strip()]
+
+
+# ---------------------------------------------------------------- per-room config
+class RoomCfg:
+    def __init__(self, key, sources, stuck_min, esp, robot):
+        self.key = key
+        self.sources = list(sources)       # priority order, allow-list
+        self.stuck_min = float(stuck_min)  # 0 = never time out
+        self.esp = list(esp)               # [{"host", "key", "entity", "pir"}]
+        self.robot = list(robot)           # robot room names mapped to this room
+
+
+def load_rooms(path, log=print):
+    """Rooms JSON -> {key: RoomCfg}. Missing file or no rooms = {} (no OCC lines). Bad rooms are skipped with a log line."""
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        doc = json.load(f)
+    out = {}
+    for key, c in (doc.get("rooms") or {}).items():
+        if not KEY_RE.match(key):
+            log(f"rooms: skipped key {key!r} (1-32 chars of A-Z a-z 0-9 _ -)")
+            continue
+        if key.lower() in {k.lower() for k in out}:
+            log(f"rooms: skipped duplicate key {key!r}")
+            continue
+        src = c.get("sources", list(ALL_SOURCES))
+        if not isinstance(src, list) or any(s not in ALL_SOURCES for s in src) or len(set(src)) != len(src):
+            log(f"rooms: {key}.sources invalid, using default")
+            src = list(ALL_SOURCES)
+        stuck = c.get("stuckOnMin", STUCK_ON_MIN)
+        if not isinstance(stuck, (int, float)) or isinstance(stuck, bool) or stuck < 0:
+            log(f"rooms: {key}.stuckOnMin invalid, using default")
+            stuck = STUCK_ON_MIN
+        esp = [d for d in (c.get("esp") or []) if isinstance(d, dict) and d.get("host") and d.get("entity")]
+        out[key] = RoomCfg(key, src, stuck, esp, c.get("robot") or [])
+    return out
+
+
+# ---------------------------------------------------------------- room state
+class RoomTracker:
+    """Combines one room's sources into (state, src). Section 3 (src names), 9.1 (stuck), 9.2 (unknown), 9 (dock)."""
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.on_since = None
+        self.evidence = None
+        self.tripped = False
+        self.last_esp = None
+        self.last_pir = None
+        self.last_robot = None
+        self.unknown_since = None
+        self.last_out = None
+
+    def evaluate(self, now, esp, pir, robot, docked):
+        """esp, pir, robot: True/False/None. robot is None when the room does not use it. Returns a dict."""
+        stuck_event = False
+        if esp is True and self.last_esp is not True:
+            self.on_since = now
+        if esp is not True:
+            self.on_since = None
+        if esp is False:
+            self.tripped = False
+        # other evidence (PIR rising edge, any robot edge in this room) restores a stuck sensor and resets the stuck timer
+        if pir is True and self.last_pir is not True:
+            self.evidence, self.tripped = now, False
+        if robot is not None and self.last_robot is not None and robot != self.last_robot:
+            self.evidence, self.tripped = now, False
+        self.last_esp = esp
+        if pir is not None:
+            self.last_pir = pir
+        if robot is not None:
+            self.last_robot = robot
+
+        if self.cfg.stuck_min > 0 and esp is True and not self.tripped and self.on_since is not None:
+            base = max(self.on_since, self.evidence or 0.0)
+            if now - base >= self.cfg.stuck_min * 60:
+                self.tripped = True
+                stuck_event = True
+        esp_eff = None if self.tripped else esp
+        rob_eff = robot if "robot" in self.cfg.sources else None
+        values = {"esp": esp_eff, "robot": rob_eff}
+        active = [s for s in self.cfg.sources if values.get(s) is True]
+
+        if active:
+            out = (1, ",".join(active))
+            self.unknown_since = None
+        else:
+            none_all = esp_eff is None and rob_eff is None and not self.tripped
+            if none_all:
+                if self.unknown_since is None:
+                    self.unknown_since = now
+            else:
+                self.unknown_since = None
+            if none_all and now - self.unknown_since < SRC_UNKNOWN_SEC:
+                out = self.last_out or (0, "clear")  # sources unknown but not yet 3 min: hold last state
+            elif self.tripped:
+                out = (0, "stuck")
+            elif docked and "robot" in self.cfg.sources:
+                out = (0, "dock")
+            elif none_all:
+                out = (0, "unknown")
+            else:
+                out = (0, "clear")
+        self.last_out = out
+        return {"state": out[0], "src": out[1], "stuck": stuck_event}
+
+
+class RobotSource:
+    """Robot as seen by the poller. Docked, charging, or no good poll for ROBOT_STALE = docked (section 9 rule 2)."""
+
+    def __init__(self, started=None):
+        self.started = time.time() if started is None else started
+        self.last_ok = None
+        self.state = ""
+        self.room = None
+        self.lock = threading.Lock()
+
+    def observe(self, now, state, room):
+        with self.lock:
+            self.last_ok, self.state, self.room = now, str(state or ""), room
+
+    def docked(self, now):
+        with self.lock:
+            last, st = self.last_ok, self.state.lower()
+        if last is None:
+            return now - self.started >= ROBOT_STALE
+        if now - last >= ROBOT_STALE:
+            return True
+        return "dock" in st or "charg" in st
+
+    def room_value(self, now, names):
+        """True if the robot is in one of `names`; False if docked or elsewhere; None only before the first poll."""
+        with self.lock:
+            last, room = self.last_ok, self.room
+        if last is None and now - self.started < ROBOT_STALE:
+            return None
+        if self.docked(now):
+            return False
+        return bool(room) and str(room).lower() in {str(n).lower() for n in names}
+
+
+class RobotWatcher:
+    def __init__(self, url, poll, robot, log=print):
+        self.url, self.poll, self.robot, self.log = url, poll, robot, log
+
+    def start(self):
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def _loop(self):
+        warned = False
+        while True:
+            try:
+                with urllib.request.urlopen(self.url, timeout=10) as r:
+                    body = json.load(r)
+                cr = body.get("current_room") or {}
+                self.robot.observe(time.time(), body.get("state"), cr.get("name") if isinstance(cr, dict) else None)
+                set_health("robot", True, self.poll)
+                warned = False
+            except Exception as e:
+                set_health("robot", False, self.poll)
+                if not warned:
+                    self.log(f"robot bridge: {type(e).__name__}; robot treated as docked until it answers")
+                    warned = True
+            time.sleep(self.poll)
+
+
+class EsphomeWatcher:
+    """One asyncio thread per ESPHome device (native API, push). Lost connection = None (unknown)."""
+
+    def __init__(self, room_esp, port=ESPHOME_PORT, log=print):
+        self.port, self.log = port, log
+        self.lock = threading.Lock()
+        self.state = {}      # (host, object_id) -> True / False / None
+        self.room_devs = {}  # roomKey -> [(host, entity, pir)]
+        self.devs = {}       # host -> {"key": str, "objs": set}
+        for key, devs in room_esp.items():
+            self.room_devs[key] = []
+            for d in devs:
+                host = d["host"]
+                self.room_devs[key].append((host, d["entity"], d.get("pir")))
+                dev = self.devs.setdefault(host, {"key": d.get("key") or "", "objs": set()})
+                dev["objs"].add(d["entity"])
+                if d.get("pir"):
+                    dev["objs"].add(d["pir"])
+
+    def start(self):
+        import asyncio
+        for host, dev in self.devs.items():
+            threading.Thread(target=lambda h=host, d=dev: asyncio.run(self._device_loop(h, d)), daemon=True).start()
+
+    def _set_all(self, host, value):
+        with self.lock:
+            for (h, oid) in list(self.state):
+                if h == host:
+                    self.state[(h, oid)] = value
+
+    async def _device_loop(self, host, dev):
+        import asyncio
+        try:
+            import aioesphomeapi  # lazy: only needed when a room has esp devices
+        except ImportError:
+            self.log(f"esp {host}: aioesphomeapi not installed; this device stays unknown")
+            set_health(f"esp:{host}", False, 60)
+            return
+        delay = 5
+        while True:
+            cli = aioesphomeapi.APIClient(host, self.port, "", noise_psk=dev["key"] or None)
+            try:
+                await cli.connect(login=True)
+                entities, _services = await cli.list_entities_services()
+                keys = {e.key: e.object_id for e in entities
+                        if type(e).__name__ == "BinarySensorInfo" and e.object_id in dev["objs"]}
+
+                def on_state(st, keys=keys):
+                    oid = keys.get(getattr(st, "key", None))
+                    if oid is None:
+                        return
+                    val = None if getattr(st, "missing_state", False) else bool(getattr(st, "state", False))
+                    with self.lock:
+                        self.state[(host, oid)] = val
+
+                with self.lock:
+                    for oid in dev["objs"]:
+                        self.state.setdefault((host, oid), None)
+                await cli.subscribe_states(on_state)
+                delay = 5
+                while cli.is_connected:
+                    set_health(f"esp:{host}", True, 60)
+                    await asyncio.sleep(1)
+                raise ConnectionError("disconnected")
+            except Exception as e:
+                self._set_all(host, None)
+                set_health(f"esp:{host}", False, 60)
+                self.log(f"esp {host}: {type(e).__name__}; retry in {delay} s")
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 60)
+            finally:
+                try:
+                    await cli.disconnect()
+                except Exception:
+                    pass
+
+    def readings(self):
+        """{roomKey: (esp, pir)}: any device True = True; all unknown = None; else False."""
+        def combine(vals):
+            if any(v is True for v in vals):
+                return True
+            if all(v is None for v in vals):
+                return None
+            return False
+
+        out = {}
+        with self.lock:
+            for key, devs in self.room_devs.items():
+                esp = combine([self.state.get((h, e)) for h, e, _p in devs])
+                pir_vals = [self.state.get((h, p)) for h, _e, p in devs if p]
+                out[key] = (esp, combine(pir_vals))
+        return out
+
+
+# ---------------------------------------------------------------- OCC poller
+class Poller:
+    """Per-room OCC lines to DLS. Pure logic: sources, transport, notify, clock and log are injected."""
+
+    def __init__(self, rooms, *, token, transport, notify, log=print, clock=time.time,
+                 esp=None, robot=None, occ_repeat=None):
+        self.rooms = rooms
+        self.trackers = {k: RoomTracker(c) for k, c in rooms.items()}
+        self.token, self.transport, self.notify, self.log, self.clock = token, transport, notify, log, clock
+        self.esp, self.robot = esp, robot
+        self.occ_repeat = OCC_REPEAT_SEC if occ_repeat is None else occ_repeat
+        self.boot_id = int(clock())
+        self.presence = None
+        self.presence_pending = False
+        self.sent = {}  # roomKey -> (state, src) last accepted by DLS
+        self.need_snapshot = True
+        self.last_snapshot = None
+        self.next_try = 0.0
+        self.fail_idx = 0
+        self.auth_since = None
+        self.auth_alerted = False
+        self._logged = set()
+
+    def set_presence(self, state):
+        if state != self.presence:
+            self.presence, self.presence_pending = state, True
+
+    def _once(self, key, msg):
+        if key not in self._logged:
+            self._logged.add(key)
+            self.log(msg)
+
+    def _pline(self):
+        return f"PRESENCE {self.presence} {self.token}"
+
+    def _occ(self, key, out):
+        return f"OCC {key} {out[0]} {out[1]} {self.token}"
+
+    def _snapshot_lines(self, cur):
+        lines = [self._pline()] if self.presence is not None else []
+        lines.append(f"HELLO {self.boot_id} {len(cur)} {self.token}")
+        lines += [self._occ(k, cur[k]) for k in self.trackers]
+        return lines
+
+    def _evaluate(self, now):
+        readings = self.esp.readings() if self.esp is not None else {}
+        cur = {}
+        for key, tr in self.trackers.items():
+            cfg = tr.cfg
+            esp, pir = readings.get(key, (None, None))
+            if "esp" not in cfg.sources:
+                esp = pir = None
+            rob, docked = None, False
+            if "robot" in cfg.sources and self.robot is not None:
+                rob = self.robot.room_value(now, cfg.robot)
+                docked = self.robot.docked(now)
+            r = tr.evaluate(now, esp, pir, rob, docked)
+            if r["stuck"]:
+                self.log(f"{key}: esp read 1 for {cfg.stuck_min:g} min with no motion; sending 0 stuck")
+                self.notify("DLS presence: sensor stuck on",
+                            f"{key}: occupancy sensor read 1 for {cfg.stuck_min:g} min with no PIR motion or other "
+                            "activity. Treated as vacant until it reads 0 again or motion is seen.")
+            cur[key] = (r["state"], r["src"])
+        return cur
+
+    def tick(self, now=None):
+        now = self.clock() if now is None else now
+        if not self.trackers:  # no rooms: presence only, same as v1.3.0
+            if self.presence_pending and now >= self.next_try:
+                self._send(now, [self._pline()], {}, False, [])
+            return
+        cur = self._evaluate(now)
+        if now < self.next_try:
+            return
+        snapshot = self.need_snapshot or self.last_snapshot is None or now - self.last_snapshot >= self.occ_repeat
+        if snapshot:
+            self._send(now, self._snapshot_lines(cur), cur, True, list(cur))
+            return
+        changed = [k for k in cur if cur[k] != self.sent.get(k)]
+        lines = [self._pline()] if self.presence_pending else []
+        lines += [self._occ(k, cur[k]) for k in changed]
+        if lines:
+            self._send(now, lines, cur, False, changed)
+
+    def _fail(self, now, why):
+        self.need_snapshot = True
+        wait = BACKOFF[min(self.fail_idx, len(BACKOFF) - 1)]
+        self.fail_idx += 1
+        self.next_try = now + wait
+        self.log(f"DLS send {why}; retry in {wait} s with a full snapshot")
+
+    def _send(self, now, lines, cur, snapshot, changed):
+        try:
+            replies = self.transport(lines)
+        except Exception as e:
+            return self._fail(now, f"failed ({type(e).__name__})")
+        if len(replies) < len(lines):
+            return self._fail(now, f"short reply ({len(replies)} of {len(lines)})")
+        self.fail_idx = 0
+        auth = resync = False
+        for line, rep in zip(lines, replies):
+            head = line.split(" ", 1)[0]
+            rep = rep.strip()
+            key = line.split()[1] if head == "OCC" else None
+            if rep == "OK":
+                continue
+            if rep == "OK RESYNC":
+                resync = True
+            elif rep == "ERR AUTH":
+                auth = True
+            elif rep == "ERR ROOM":
+                self._once(f"room:{key}", f"DLS: room key {key} is not in Rooms JSON or has no presence")
+            elif head == "OCC" and rep == "ERR":
+                self._once("old", "DLS driver too old: plain ERR to OCC (needs DLS v1.11.0+); PRESENCE only")
+            else:
+                self._once(f"err:{head}:{rep}", f"DLS replied {rep!r} to {head}")
+        if auth:
+            self.need_snapshot = True
+            self.next_try = now + AUTH_RETRY_SEC
+            self._once("auth", "DLS rejected the Presence Token (ERR AUTH); retrying every 60 s")
+            self.auth_since = self.auth_since or now
+            if now - self.auth_since >= AUTH_ALERT_AFTER and not self.auth_alerted:
+                self.auth_alerted = True
+                self.notify("DLS presence: token rejected",
+                            "DLS has rejected the Presence Token for 30 min. Check DLS_TOKEN against the driver's "
+                            "Presence Token property. Room occupancy is not reaching DLS.")
+            return
+        self.auth_since, self.auth_alerted = None, False
+        if any(line.startswith("PRESENCE ") for line in lines):
+            self.presence_pending = False
+        if snapshot:
+            self.need_snapshot = False
+            self.last_snapshot = now
+            self.sent.update(cur)
+        else:
+            for k in changed:
+                self.sent[k] = cur[k]
+        if resync and not snapshot and self.trackers:
+            self.need_snapshot = True
+            self._send(now, self._snapshot_lines(cur), cur, True, list(cur))
+
+
+# ---------------------------------------------------------------- main
+def presence_loop(poller):
+    """Household presence (v1.3.0 rules) on its own thread, so a slow Prometheus or Life360 call never delays OCC lines."""
+    last, away_since = None, None
+    while True:
+        here, detail = household()
+        if here is None:
+            print("no presence source reachable:", detail, flush=True)
+        else:
+            now = time.time()
+            if here:
+                away_since = None
+                want = "HOME"
+            else:
+                away_since = away_since or now
+                want = "AWAY" if now - away_since >= AWAY_AFTER else last
+            if want and want != last:
+                poller.set_presence(want)
+                print(time.strftime("%F %T"), "->", want, detail, flush=True)
+                last = want
+        time.sleep(POLL)
+
+
+def run_rooms(rooms):
+    esp_rooms = {k: c.esp for k, c in rooms.items() if c.esp}
+    esp = EsphomeWatcher(esp_rooms, log=print) if esp_rooms else None
+    if esp is not None:
+        esp.start()
+    robot = None
+    if ROBOT_URL and any("robot" in c.sources and c.robot for c in rooms.values()):
+        robot = RobotSource()
+        RobotWatcher(ROBOT_URL, ROBOT_POLL, robot).start()
+    poller = Poller(rooms, token=TOKEN, transport=ea1_batch, notify=notify, log=print, esp=esp, robot=robot)
+    threading.Thread(target=presence_loop, args=(poller,), daemon=True).start()
+    while True:
+        poller.tick()
+        time.sleep(TICK_SEC)
 
 
 def discover():
@@ -373,6 +867,11 @@ def main():
         sys.exit("set EA1_HOST to the EA-1 IP address")
     start_freshness()
     print(f"dls_presence v{VERSION} starting", flush=True)
+    rooms = load_rooms(ROOMS_FILE)
+    if rooms:
+        print(f"per-room occupancy: {len(rooms)} room(s) from {ROOMS_FILE}", flush=True)
+        return run_rooms(rooms)
+    print("no rooms file: household PRESENCE only (v1.3.0 behaviour)", flush=True)
     last_sent, away_since = None, None
     while True:
         here, detail = household()
