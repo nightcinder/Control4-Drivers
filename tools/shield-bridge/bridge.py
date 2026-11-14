@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """NVIDIA Shield TV HTTP bridge for Control4 drivers.
 
 Run:      python3 bridge.py [config.json]
@@ -10,19 +10,20 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hmac
+import io
 import json
 import logging
 import re
 import sys
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from aiohttp import web
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 CLIENT_NAME = "shield-bridge"
 HEALTH_INTERVAL = 2.0
 BACKOFF_MIN = 1.0
@@ -138,6 +139,7 @@ class Config:
     key: str
     adbkey: str
     poll_seconds: float
+    art: dict[str, Any] = field(default_factory=dict)
 
 
 def load_config(path: Path) -> Config:
@@ -159,6 +161,7 @@ def load_config(path: Path) -> Config:
         key=str(base / raw.get("key", "key.pem")),
         adbkey=str(base / raw.get("adbkey", "adbkey")),
         poll_seconds=float(raw.get("poll_seconds", 2)),
+        art=dict(raw.get("art", {})),
     )
 
 
@@ -236,6 +239,10 @@ class Shield:
         self.awake: bool | None = None
         self.app: str | None = None
         self.now_playing: dict[str, Any] = parse_media_session("")
+        self.art_path = ""
+        self._art_key: tuple[Any, ...] | None = None
+        self._art_task: asyncio.Task[None] | None = None
+        self.art = self._make_art(bridge)
         self._tasks: list[asyncio.Task[None]] = []
 
     def start(self) -> None:
@@ -252,7 +259,7 @@ class Shield:
     def status(self) -> dict[str, Any]:
         return {"shield": self.cfg.name, "v2_connected": self.v2.up, "adb_connected": self.adb.up,
                 "awake": self.awake, "app": self.app, "now_playing": self.now_playing,
-                "version": VERSION}
+                "art": self.art_path, "version": VERSION}
 
     # -- Remote v2 (key presses)
     async def _v2_connect(self) -> None:
@@ -333,6 +340,52 @@ class Shield:
         return await self.adb_shell(
             f"monkey -p {package} -c android.intent.category.LEANBACK_LAUNCHER 1")
 
+    # -- cover art
+    def _make_art(self, bridge: Config) -> Any:
+        try:
+            from art import ArtResolver
+        except Exception as exc:  # art is optional; the bridge works without Pillow
+            log.warning("cover art disabled: %s", exc)
+            return None
+        return ArtResolver(bridge.art, Path(bridge.adbkey).resolve().parent / "art-cache", self._pull_apk)
+
+    async def _pull_apk(self, package: str) -> bytes | None:
+        listing = await self.adb_shell(f"pm path {package}")
+        paths = re.findall(r"package:(\S+\.apk)", listing)
+        if not paths:
+            return None
+        remote = next((p for p in paths if p.endswith("base.apk")), paths[0])
+        if not self.adb.up or self._dev is None:
+            raise LinkDown("adb not connected")
+        buf = io.BytesIO()
+        async with self._adb_lock:
+            try:
+                await asyncio.wait_for(self._dev.pull(remote, buf), 180.0)
+            except Exception as exc:
+                self.adb.fail(exc)
+                raise LinkDown(f"adb pull failed: {exc}") from exc
+        return buf.getvalue()
+
+    async def _resolve_art(self, key: tuple[Any, ...]) -> None:
+        app, title, artist, album = key
+        art_id = await self.art.resolve(app, title, artist, album)
+        if key == self._art_key:
+            self.art_path = f"/art/{art_id}" if art_id else ""
+
+    def _update_art(self) -> None:
+        np = self.now_playing
+        if self.art is None or np.get("state") not in ("playing", "paused") or not np.get("title"):
+            self._art_key, self.art_path = None, ""
+            return
+        key = (np.get("app") or self.app or "", np.get("title") or "", np.get("artist") or "",
+               np.get("album") or "")
+        if key == self._art_key:
+            return
+        self._art_key, self.art_path = key, ""
+        if self._art_task is not None and not self._art_task.done():
+            self._art_task.cancel()
+        self._art_task = asyncio.create_task(self._resolve_art(key))
+
     # -- polling
     async def _poll_loop(self) -> None:
         while True:
@@ -356,6 +409,7 @@ class Shield:
             self.awake = awake
         self.app = parse_focus(focus_text)
         self.now_playing = parse_media_session(media_text)
+        self._update_art()
 
 
 # ---------------------------------------------------------------- HTTP
@@ -377,7 +431,7 @@ def make_app(bridge: Config, shields: dict[str, Shield]) -> web.Application:
 
     @web.middleware
     async def guard(request: web.Request, handler: Any) -> web.StreamResponse:
-        if request.path == "/healthz":
+        if request.path == "/healthz" or request.path.startswith("/art/"):
             return await handler(request)
         if not token_ok(request.headers.get("Authorization", ""), bridge.token):
             return error(401, "unauthorized")
@@ -427,6 +481,15 @@ def make_app(bridge: Config, shields: dict[str, Shield]) -> web.Application:
                 {"ok": False, "error": "launch failed", "output": output[-300:]}, status=502)
         return web.json_response({"ok": True})
 
+    async def art_image(request: web.Request) -> web.Response:
+        art_id = request.match_info["art_id"]
+        for shield in shields.values():
+            found = shield.art.get(art_id) if shield.art is not None else None
+            if found:
+                return web.Response(body=found[0], content_type=found[1],
+                                    headers={"Cache-Control": "max-age=3600"})
+        return web.Response(status=404)
+
     async def healthz(_request: web.Request) -> web.Response:
         return web.json_response({"ok": True})
 
@@ -445,6 +508,7 @@ def make_app(bridge: Config, shields: dict[str, Shield]) -> web.Application:
     app.router.add_post("/v1/sleep", sleep)
     app.router.add_post("/v1/launch", launch)
     app.router.add_get("/healthz", healthz)
+    app.router.add_get("/art/{art_id}", art_image)
     app.on_startup.append(start_shields)
     app.on_cleanup.append(stop_shields)
     return app

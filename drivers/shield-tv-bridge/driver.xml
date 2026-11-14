@@ -6,13 +6,12 @@
   <control>lua_gen</control>
   <controlmethod>ip</controlmethod>
   <driver>DriverWorks</driver>
-  <version>3</version>
+  <version>5</version>
   <created>11/13/2026 08:00 PM</created>
-  <modified>11/13/2026 09:13 PM</modified>
-  <proxies qty="3">
-    <proxy proxybindingid="5001" name="SHIELD Now Playing" primary="True" large_image="icons/device_lg.png" small_image="icons/device_sm.png">media_service</proxy>
+  <modified>11/13/2026 09:25 PM</modified>
+  <proxies qty="2">
+    <proxy proxybindingid="5001" name="SHIELD TV" primary="True" large_image="icons/device_lg.png" small_image="icons/device_sm.png">media_service</proxy>
     <proxy proxybindingid="5002" name="SHIELD App Switcher">avswitch</proxy>
-    <proxy proxybindingid="5003" name="SHIELD TV">media_player</proxy>
   </proxies>
   <capabilities>
     <has_play>True</has_play>
@@ -31,6 +30,11 @@
     <shuffle_modes>Off</shuffle_modes>
     <has_discrete_input_select>True</has_discrete_input_select>
     <allow_audio_pathing>True</allow_audio_pathing>
+    <hide_in_media>True</hide_in_media>
+    <ui_selects_device>True</ui_selects_device>
+    <video_provider_count>1</video_provider_count>
+    <digital_audio_support>False</digital_audio_support>
+    <list_nowplaying_non_c4>True</list_nowplaying_non_c4>
     <navigator_display_option proxybindingid="5001">
       <display_icons>
         <Icon width="70" height="70">controller://driver/shield-tv-bridge/icons/device/experience_70.png</Icon>
@@ -172,7 +176,7 @@
     <connection proxybindingid="5001">
       <id>5001</id>
       <facing>6</facing>
-      <connectionname>SHIELD Now Playing Proxy</connectionname>
+      <connectionname>SHIELD TV Proxy</connectionname>
       <type>2</type>
       <consumer>False</consumer>
       <classes>
@@ -181,22 +185,7 @@
         </class>
       </classes>
     </connection>
-    <connection>
-      <id>5003</id>
-      <facing>6</facing>
-      <connectionname>SHIELD TV</connectionname>
-      <type>2</type>
-      <consumer>false</consumer>
-      <audiosource>false</audiosource>
-      <videosource>false</videosource>
-      <linelevel>false</linelevel>
-      <classes>
-        <class>
-          <classname>MEDIA_PLAYER</classname>
-        </class>
-      </classes>
-    </connection>
-    <connection proxybindingid="5003">
+    <connection proxybindingid="5001">
       <id>2000</id>
       <facing>6</facing>
       <connectionname>Output Main</connectionname>
@@ -223,7 +212,7 @@
         </class>
       </classes>
     </connection>
-    <connection proxybindingid="5003">
+    <connection proxybindingid="5001">
       <id>1101</id>
       <type>5</type>
       <connectionname>Video in from SHIELD App Switch</connectionname>
@@ -242,7 +231,7 @@
         </class>
       </classes>
     </connection>
-    <connection proxybindingid="5003">
+    <connection proxybindingid="5001">
       <id>3101</id>
       <type>6</type>
       <connectionname>Audio In from SHIELD App Switch</connectionname>
@@ -614,7 +603,7 @@
       <property>
         <name>Driver Version</name>
         <type>STRING</type>
-        <default>1.1.0</default>
+        <default>1.2.0</default>
         <readonly>true</readonly>
       </property>
       <property>
@@ -640,6 +629,15 @@
           <item>Print and Log</item>
         </items>
         <default>Off</default>
+      </property>
+      <property>
+        <name>Cover Art Mode</name>
+        <type>LIST</type>
+        <items>
+          <item>Plain URL</item>
+          <item>Base64 URL</item>
+        </items>
+        <default>Plain URL</default>
       </property>
       <property>
         <name>Bridge URL</name>
