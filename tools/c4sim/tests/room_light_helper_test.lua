@@ -204,4 +204,84 @@ t.test("lux change of 10+ target points re-ramps while active; smaller change do
   t.eq(ramps(), 2, "no re-ramp for 1 point")
 end)
 
+-- Reload: a new driver instance on the same persisted data. extra_ms moves the clock forward first
+-- (the driver was down for that long). Light stays on at level 60, as it would after a reload.
+local function reload(extra_ms)
+  local saved, now = sim.persist, sim.now_ms + (extra_ms or 0)
+  local ok = sim.load_driver(LUA, {
+    xml = XML,
+    properties = { ["Room Light ID"] = tostring(LIGHT) },
+    persist = saved,
+    start_ms = now,
+    before = function(s) s.set_var(LIGHT, LEVEL_VAR, "60") end,
+  })
+  t.ok(ok, "reload: " .. tostring(sim.errors[1]))
+end
+
+t.test("repeated Request On from the same Source keeps the first start time (120 min timeout)", function()
+  start({ ["Source Timeout (min)"] = "120" })
+  on("Alpha")
+  sim.advance(100 * MIN)
+  on("Alpha")                    -- repeat must not restart the timeout clock
+  t.eq(Properties.Status, "Active: 1 source(s)", "still one source")
+  sim.advance(19 * MIN)          -- 119 min after the first request
+  t.eq(Properties["Active Sources"], "Alpha", "not yet timed out at 119 min")
+  sim.advance(2 * MIN)           -- 121 min after the first request
+  t.eq(Properties["Active Sources"], "None", "timed out 120 min after the first request")
+  t.eq(Properties.Status, "Off pending", "off pending after timeout")
+  sim.advance(180 * SEC)
+  t.eq(offs(), 1, "off after Off Delay")
+end)
+
+t.test("reload keeps active sources and their start time", function()
+  start()
+  on("Alpha")
+  sim.advance(10 * MIN)
+  reload()
+  t.eq(Properties["Active Sources"], "Alpha", "source restored")
+  t.eq(Properties.Status, "Active: 1 source(s)", "status restored")
+  t.eq(ramps(), 0, "no re-ramp on restore")
+  sim.advance(109 * MIN)         -- 119 min after the original request
+  t.eq(Properties["Active Sources"], "Alpha", "still active at 119 min")
+  sim.advance(2 * MIN)           -- 121 min: timeout counted from the original request
+  t.eq(Properties["Active Sources"], "None", "timed out from the original request")
+  sim.advance(180 * SEC)
+  t.eq(offs(), 1, "off after Off Delay following timeout")
+end)
+
+t.test("reload during a pending off re-arms the remaining delay", function()
+  start()
+  on("Alpha")
+  off("Alpha")                   -- off due in 180 s
+  sim.advance(60 * SEC)
+  reload()
+  t.eq(Properties.Status, "Off pending", "pending off restored")
+  sim.advance(119 * SEC)
+  t.eq(offs(), 0, "no off before the remaining 120 s")
+  sim.advance(2 * SEC)
+  t.eq(offs(), 1, "off at the original 180 s mark")
+end)
+
+t.test("reload after a source has expired while down drops it and turns off after Off Delay", function()
+  start({ ["Source Timeout (min)"] = "120" })
+  on("Alpha")
+  reload(121 * MIN)
+  t.eq(Properties["Active Sources"], "None", "expired source dropped")
+  t.eq(Properties.Status, "Off pending", "off pending with Off Delay")
+  sim.advance(179 * SEC)
+  t.eq(offs(), 0, "no off at 179 s")
+  sim.advance(2 * SEC)
+  t.eq(offs(), 1, "off at 180 s")
+end)
+
+t.test("reload with nothing saved starts idle and sends nothing", function()
+  start()
+  reload()
+  t.eq(Properties.Status, "Idle", "idle")
+  t.eq(Properties["Active Sources"], "None", "no sources")
+  sim.advance(300 * SEC)
+  t.eq(offs(), 0, "no off")
+  t.eq(ramps(), 0, "no ramp")
+end)
+
 t.finish("room-light-helper")
