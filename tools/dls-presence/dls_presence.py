@@ -479,7 +479,7 @@ class RoomTracker:
             else:
                 self.unknown_since = None
             if none_all and now - self.unknown_since < SRC_UNKNOWN_SEC:
-                out = self.last_out or (0, "clear")  # sources unknown but not yet 3 min: hold last state
+                out = self.last_out or (0, "unknown")  # sources unknown but not yet 3 min: hold last state
             elif self.tripped:
                 out = (0, "stuck")
             elif docked and "robot" in self.cfg.sources:

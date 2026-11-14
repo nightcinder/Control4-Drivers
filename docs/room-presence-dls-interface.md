@@ -280,7 +280,7 @@ Config (`/etc/dls-presence.env` plus one JSON file, mode 0600):
 | `STUCK_ON_MIN` | 240 | Section 9.1. |
 | `SRC_UNKNOWN_SEC` | 180 | All sources unknown this long = `0 unknown`. |
 | `ESPHOME_PORT` | 6053 | Default API port. |
-| `ROBOT_URL` | empty | Status URL of `tools/roborock-bridge` (state + current room). May be the bridge base URL (`http://liesa:8788`) or the full `/state` URL. Empty = no robot source. Stale bridge data (`last_success_age_s` of 120 s or more, or `state` null) counts as no status. The exact fields are NOT checked in this spec: confirm against the bridge in package A. |
+| `ROBOT_URL` | empty | Status URL of `tools/roborock-bridge` (state + current room). May be the bridge base URL (`http://liesa:8788`) or the full `/state` URL. Empty = no robot source. Stale bridge data (`last_success_age_s` of 180 s or more, or `state` null) counts as no status. The exact fields are NOT checked in this spec: confirm against the bridge in package A. |
 | `ROBOT_POLL_SEC` | 15 | Robot poll interval. |
 
 ```json
