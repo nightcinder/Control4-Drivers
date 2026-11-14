@@ -1,7 +1,10 @@
 --[[
-  Room Light Helper v1.2.3 (Control4 DriverWorks, OS 3.x)
+  Room Light Helper v1.3.0 (Control4 DriverWorks, OS 3.x)
   One instance per room. Laundry is the first room.
   Changelog:
+    1.3.0 - Active sources, helper-on flag and pending off time are saved with PersistSetValue
+           and restored in OnDriverLateInit. Sources past Source Timeout are dropped on reload.
+           Repeated Request On from the same Source keeps its first start time (tested, no change).
     1.2.3 - Room Light ID is a RANGED_INTEGER (plain INTEGER made Composer throw 'Error creating property')
     1.2.2 - light is chosen by typing its device ID (Room Light ID); the Composer device selector was unusable
     1.2.1  Room Light device selector now lists light proxies (fixes 'Error creating property').
@@ -32,12 +35,13 @@
   Each source auto-releases after Source Timeout (min), with a log line.
 
   Room Light ID: plain integer property (typed in Composer) holding the room light's device ID. No binding.
-  State is in memory. A driver reload forgets the sources and leaves the light as it is.
+  State survives a driver reload: active sources, the helper-on flag and the pending off time are
+  saved with PersistSetValue and restored on OnDriverLateInit.
 
   Not in v1: keypad holds, away mode, DLS integration. Max Level is a plain property.
 ]]
 
-local DRIVER_VERSION = "1.2.3"
+local DRIVER_VERSION = "1.3.0"
 local CHECK_FAST_MS = 10000   -- check timer while the light listener is not registered
 local CHECK_SLOW_MS = 60000   -- check timer once the listener is registered
 local LIGHT_LEVEL_VAR = 1001          -- light proxy LIGHT_LEVEL variable id
@@ -57,6 +61,11 @@ local offTimer = nil
 local checkTimer = nil
 local checkInterval = nil   -- ms the current checkTimer was created with
 local listenedId = nil
+local offDueAt = nil        -- os.time() when the pending off fires
+local restored = false      -- nothing is persisted until OnDriverLateInit has restored state
+local PERSIST_SOURCES = "active_sources"
+local PERSIST_HELPER = "helper_on"
+local PERSIST_OFF_AT = "off_due_at"
 
 local function dbg(msg)
   if Properties["Debug"] == "On" then print("[RoomLight] " .. tostring(msg)) end
@@ -147,6 +156,26 @@ local function refreshLightState()
   C4:UpdateProperty("Light State", state)
 end
 
+local function persistGet(key)
+  local ok, v = pcall(function() return C4:PersistGetValue(key) end)
+  if ok then return v end
+  return nil
+end
+
+-- Save sources, helper-on flag and pending off time. Writes only after restore, so an early
+-- callback cannot overwrite the saved state with an empty one.
+local function persistState()
+  if not restored then return end
+  local lines = {}
+  for name, since in pairs(sources) do lines[#lines + 1] = string.format("%d\t%s", since, name) end
+  table.sort(lines)
+  pcall(function()
+    C4:PersistSetValue(PERSIST_SOURCES, table.concat(lines, "\n"))
+    C4:PersistSetValue(PERSIST_HELPER, helperOn and "1" or "0")
+    C4:PersistSetValue(PERSIST_OFF_AT, offDueAt and tostring(offDueAt) or "")
+  end)
+end
+
 local function refreshAll()
   local names = {}
   for name in pairs(sources) do names[#names + 1] = name end
@@ -162,6 +191,7 @@ local function refreshAll()
   end
   C4:UpdateProperty("Status", status)
   refreshLightState()
+  persistState()
 end
 
 local function cancelOffTimer()
@@ -169,6 +199,7 @@ local function cancelOffTimer()
     offTimer:Cancel()
     offTimer = nil
   end
+  offDueAt = nil
 end
 
 -- True when the source name is in the comma-separated Quick-Release Sources list (case-insensitive).
@@ -193,8 +224,10 @@ local function scheduleOff(delaySec)
     return
   end
   local delay = math.max(0, delaySec)
+  offDueAt = os.time() + delay
   offTimer = C4:SetTimer(delay * 1000, function()
     offTimer = nil
+    offDueAt = nil
     if sourceCount == 0 and helperOn then
       helperOn = false
       lightOff()
@@ -340,6 +373,7 @@ function OnWatchedVariableChanged(idDevice, idVariable, strValue)
     dbg("Light turned off externally")
   end
   refreshLightState()
+  persistState()
 end
 
 function ExecuteCommand(strCommand, tParams)
@@ -357,6 +391,37 @@ function ExecuteCommand(strCommand, tParams)
   end
 end
 
+-- Restore sources, helper-on flag and pending off from persistent data. Sources already past
+-- Source Timeout are dropped. The check timer enforces timeouts for the rest.
+local function restoreState()
+  local limit = num("Source Timeout (min)", 120) * 60
+  local now = os.time()
+  local raw = persistGet(PERSIST_SOURCES)
+  if type(raw) == "string" then
+    for line in string.gmatch(raw, "[^\n]+") do
+      local since, name = string.match(line, "^(%d+)\t(.+)$")
+      if since and name and not sources[name] then
+        since = tonumber(since)
+        if now - since >= limit then
+          logf("Restore: dropped expired source '" .. name .. "'")
+        else
+          sources[name] = since
+          sourceCount = sourceCount + 1
+        end
+      end
+    end
+  end
+  helperOn = persistGet(PERSIST_HELPER) == "1"
+  if sourceCount == 0 and helperOn then
+    -- The off timer was pending at reload: re-arm it for the time left (Off Delay if unknown).
+    local offAt = tonumber(persistGet(PERSIST_OFF_AT) or "")
+    local delay = offAt and (offAt - now) or num("Off Delay (sec)", 180)
+    scheduleOff(math.max(0, delay))
+  end
+  restored = true
+  refreshAll()
+end
+
 function OnDriverInit()
   C4:UpdateProperty("Driver Version", DRIVER_VERSION)
 end
@@ -364,6 +429,7 @@ end
 function OnDriverLateInit()
   C4:UpdateProperty("Driver Version", DRIVER_VERSION)
   ensureLightListener()
+  restoreState()
   setCheckInterval(listenedId and CHECK_SLOW_MS or CHECK_FAST_MS)
   refreshAll()
 end

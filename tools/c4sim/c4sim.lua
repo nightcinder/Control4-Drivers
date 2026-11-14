@@ -264,6 +264,9 @@ end
 function sim.load_driver(path, opts)
   opts = opts or {}
   sim.reset(opts.deviceId)
+  -- Reload support: keep PersistData from an earlier load and continue the simulated clock from start_ms.
+  if opts.persist then sim.persist = opts.persist end
+  if opts.start_ms then sim.now_ms = opts.start_ms end
   if opts.before then opts.before(sim) end  -- runs after reset, before OnDriverInit (bind, set_var)
   local f = io.open(path, "rb")
   if not f then
