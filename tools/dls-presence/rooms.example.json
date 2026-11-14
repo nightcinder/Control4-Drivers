@@ -13,6 +13,13 @@
       "esp": [
         { "host": "ep-laundry.lan", "key": "<api encryption key>", "entity": "occupancy" }
       ]
+    },
+    "LivingRoom": {
+      "sources": ["esp", "robot"],
+      "esp": [
+        { "host": "ep-living.lan", "key": "<api encryption key>", "entity": "occupancy" }
+      ],
+      "robot": ["Living room"]
     }
   }
 }

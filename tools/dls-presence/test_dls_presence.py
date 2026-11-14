@@ -40,7 +40,7 @@ class FakeRobot:
     def room_value(self, now, names):
         if self.dock:
             return False
-        return bool(self.room) and self.room in names
+        return bool(self.room) and self.room.lower() in {n.lower() for n in names}
 
     def docked(self, now):
         return self.dock
@@ -300,6 +300,82 @@ class ExtraCases(unittest.TestCase):
         self.assertEqual(rooms["Office"].stuck_min, dp.STUCK_ON_MIN)
         self.assertEqual(len(rooms["Kitchen"].esp), 1)
         self.assertEqual(dp.load_rooms(os.path.join(tempfile.gettempdir(), "no-such-file.json")), {})
+
+
+class EspWatcherCases(unittest.TestCase):
+    def test_device_loop_with_real_api_shape(self):
+        import asyncio
+        import types
+        from unittest import mock
+        seen = {}
+
+        class BinarySensorInfo:
+            def __init__(self, key, object_id):
+                self.key, self.object_id, self.name = key, object_id, object_id
+
+        class BinarySensorState:
+            def __init__(self, key, state, missing_state=False):
+                self.key, self.state, self.missing_state = key, state, missing_state
+
+        class APIClient:  # signatures copied from the aioesphomeapi docs
+            def __init__(self, address, port, password=None, *, noise_psk=None, **kw):
+                seen["init"] = (address, port, password, noise_psk)
+                self.is_connected = False
+
+            async def connect(self, on_stop=None, login=False, log_errors=True):
+                self.is_connected = True
+
+            async def list_entities_services(self):
+                return [BinarySensorInfo(11, "occupancy"), BinarySensorInfo(12, "pir")], []
+
+            def subscribe_states(self, on_state):  # sync, returns None
+                on_state(BinarySensorState(11, True))
+                on_state(BinarySensorState(12, False, missing_state=True))
+
+            async def disconnect(self, force=False):
+                self.is_connected = False
+
+        fake = types.ModuleType("aioesphomeapi")
+        fake.APIClient = APIClient
+        logs = []
+        w = dp.EsphomeWatcher({"Kitchen": [{"host": "h", "key": "", "entity": "occupancy", "pir": "pir"}]},
+                              log=logs.append)
+
+        async def run():
+            try:
+                await asyncio.wait_for(w._device_loop("h", w.devs["h"]), 0.3)
+            except asyncio.TimeoutError:
+                pass
+
+        with mock.patch.dict(sys.modules, {"aioesphomeapi": fake}):
+            asyncio.run(run())
+        dp._extra_health.pop("esp:h", None)
+        self.assertEqual(seen["init"], ("h", dp.ESPHOME_PORT, "", None))
+        self.assertEqual(w.readings(), {"Kitchen": (True, None)})
+        self.assertEqual(logs, [])
+
+
+class RobotCases(unittest.TestCase):
+    def test_robot_bridge_payload(self):
+        body = {"state": "segment_cleaning", "battery": 80, "error": "none", "last_error": None,
+                "rooms": [{"id": 16, "name": "Living room"}], "last_success_age_s": 4.2,
+                "current_room": {"id": 16, "name": "Living room"},
+                "room_progress_pct": None, "run_progress_pct": None}
+        self.assertEqual(dp.parse_robot_state(body), ("segment_cleaning", "Living room"))
+        self.assertEqual(dp.parse_robot_state(dict(body, current_room=None))[1], None)
+        for bad in (dict(body, last_success_age_s=None), dict(body, last_success_age_s=400.0), dict(body, state=None)):
+            self.assertRaises(ValueError, dp.parse_robot_state, bad)
+        for u in ("http://liesa:8788", "http://liesa:8788/", "http://liesa:8788/state", "http://liesa:8788/state/"):
+            self.assertEqual(dp.robot_state_url(u), "http://liesa:8788/state")
+        r = dp.RobotSource(started=0.0)
+        r.observe(10.0, "charger_disconnected", "Kitchen")
+        self.assertTrue(r.docked(11.0))
+        r.observe(12.0, "emptying_the_bin", "Kitchen")
+        self.assertTrue(r.docked(13.0))
+        r.observe(14.0, "segment_cleaning", "Kitchen")
+        self.assertFalse(r.docked(15.0))
+        r.observe(16.0, "paused", "Kitchen")  # deliberately not an occupant
+        self.assertTrue(r.docked(17.0))
 
 
 if __name__ == "__main__":

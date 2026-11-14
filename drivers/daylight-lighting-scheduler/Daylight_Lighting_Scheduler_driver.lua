@@ -1,7 +1,8 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.11.0
+  DRIVER_VERSION: 1.11.1
 
+  1.11.1: Fable review fixes: manual off just after an auto-on now holds; a light turned on during/after a DLS fade is adopted instead of faded again; feed silence/unknown/stuck no longer end a manual-off hold; Enabled=Off and scene hold block presence ramps; HELLO count tolerates rooms DLS lacks; Presence Lighting/Vacancy Delay change no longer fades occupied rooms; persisted presence data type-guarded.
   1.11.0 (UNTESTED): follow-me presence. Rooms JSON "presence" object per room; OCC lines from the poller
   (Presence Port, same TCP port as PRESENCE) drive a per-room state machine VACANT / OCCUPIED / FADING / HOLD.
   Silence (Property "Occupancy Silence (sec)", default 180) = vacant. Night level per room, manual off in an
@@ -30,7 +31,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.11.0"
+DRIVER_VERSION = "1.11.1"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -294,6 +295,8 @@ local function sendLevel(light, level, ms)
   light.rampTo = lvl
   light.lastLevel = level
   light.lastCmd = os.time()
+  light.rampEnd = os.time() + math.ceil(ms / 1000)
+  light.fbLast = light.rampFrom
   light.ignoreUntil = os.time() + math.ceil(ms / 1000) + 10
   dbg("level", tostring(light.id), tostring(math.floor(level + 0.5)), "ms", tostring(ms))
 end
@@ -348,6 +351,7 @@ local function anyHeld(room)
   for _, l in ipairs(room.lights) do if l.overrideUntil or l.offHold then return true end end
   return false
 end
+local function prUnconfirmed(src) return src == "unknown" or src == "stuck" end
 local function presenceStatusPrefix()
   local s = ""
   if silenceTripped and next(presenceByKey) then s = s .. "Presence feed lost | " end
@@ -387,7 +391,8 @@ end
 local function presenceDrive(room, now, inWindow)
   local pr = room.pr
   local lat, lon = latlon()
-  if not (lat and lon and gateOpen and pr.follow and pr.state == PR_OCCUPIED) then return end
+  if not (lat and lon and gateOpen and pr.follow and pr.state == PR_OCCUPIED and Properties["Enabled"] == "On") then return end
+  if room.overrideUntil and now < room.overrideUntil then return end   -- scene hold blocks presence ramps
   if inWindow == nil then inWindow = prInWindow(room, now, lat, lon) end
   local lvl, cct
   if inWindow then lvl, cct = ComputeRoomTarget(room, now, lat, lon) else lvl = pr.nightLevel end
@@ -464,9 +469,11 @@ local function prSetOcc(room, now, newOcc, src, immediate)
     end
   elseif immediate and (pr.state == PR_OCCUPIED or pr.state == PR_HOLD) then
     prStartFade(room, now)                                          -- T13
-  elseif was and (pr.state == PR_OCCUPIED or pr.state == PR_HOLD) then
+  elseif (pr.state == PR_OCCUPIED or pr.state == PR_HOLD)
+     and (was or (pr.state == PR_HOLD and not pr.offAt and not prUnconfirmed(src))) then
     local delay = (pr.lastOnSrc == "robot") and pr.robotOffDelaySec or pr.offDelaySec
     pr.offAt = now + delay                                          -- T3 / T10
+    pr.offConfirmed = not prUnconfirmed(src)
   end
   prSave()
 end
@@ -561,7 +568,13 @@ local function presenceTick()
     local pr = room.pr
     if pr then
       if pr.offAt and now >= pr.offAt and (pr.state == PR_OCCUPIED or pr.state == PR_HOLD) then
-        prStartFade(room, now)
+        if Properties["Enabled"] ~= "On" then
+          pr.offAt = pr.offAt or now        -- retried by presenceTick
+        elseif pr.state == PR_HOLD and not pr.offConfirmed and not anyOn(room) then
+          pr.offAt = nil          -- not a confirmed vacancy: the manual-off hold stays (lights are off)
+        else
+          prStartFade(room, now)
+        end
       end
       if pr.state == PR_FADING and pr.fadeAt and now >= pr.fadeAt then
         pr.state, pr.fadeAt = PR_VACANT, nil
@@ -571,7 +584,19 @@ local function presenceTick()
       if pr.state == PR_VACANT and pr.follow and not pr.occIn and not presenceAway
          and not room.overrideUntil and not (room.wake and room.wake.enabled)
          and anyOn(room) and not anyHeld(room) then
-        prStartFade(room, now)
+        local wait, adopt = false, false
+        for _, l in ipairs(room.lights) do
+          local cur = curLevel(l)
+          if l.lastCmd and l.lastLevel == 0 and cur > OWN_BAND then   -- DLS faded it and it is on again
+            if now <= (l.ignoreUntil or 0) then wait = true            -- let late feedback arrive first
+            else
+              l.lastLevel = cur
+              l.overrideUntil = now + (tonumber(Properties["Override Hold (min)"]) or 120) * 60
+              adopt = true
+            end
+          end
+        end
+        if adopt then prSave() elseif not wait then prStartFade(room, now) end
       end
     end
   end
@@ -947,7 +972,7 @@ function Update()
           if l.windows or l.window_gain or l.facing_deg or l.max_level then lv = ComputeRoomTarget(room, now, lat, lon, l) end
           local v = clamp(lv * l.scale, 1, 100)
           local isOn = curLevel(l) > 0
-          if (scheduled or isOn) and not l.overrideUntil then       -- follow mode only touches lights that are already on
+          if (scheduled or isOn) and not l.overrideUntil and not l.offHold then       -- follow mode only touches lights that are already on
             if not l.lastLevel or math.abs(v - l.lastLevel) >= 2 or not isOn then
               sendLevel(l, v, rampMs)
             end
@@ -1002,9 +1027,21 @@ function OnWatchedVariableChanged(idDevice, idVariable, strValue)
   local v = tonumber(strValue) or 0
   -- section 7: inside the ignore window, feedback inside the range between start and target is our own ramp
   if light.ignoreUntil and now <= light.ignoreUntil then
-    local lo = math.min(light.rampFrom or 0, light.rampTo or 0) - OWN_BAND
-    local hi = math.max(light.rampFrom or 0, light.rampTo or 0) + OWN_BAND
-    if v >= lo and v <= hi then return end
+    local from, to = light.rampFrom or 0, light.rampTo or 0
+    if not room.pr then
+      -- rooms without "presence": old 1.10.1 rule
+      if v >= math.min(from, to) - OWN_BAND and v <= math.max(from, to) + OWN_BAND then return end
+    else
+      local own = v >= math.min(from, to) - OWN_BAND and v <= math.max(from, to) + OWN_BAND
+      -- once the ramp is over (2 s settle) only the target level is ours
+      if own and light.rampEnd and now > light.rampEnd + 2 and math.abs(v - to) > OWN_BAND then own = false end
+      -- feedback moving against the ramp direction is a hand on the dimmer
+      if own and light.fbLast then
+        if to < from and v > light.fbLast + OWN_BAND then own = false end
+        if to > from and v < light.fbLast - OWN_BAND then own = false end
+      end
+      if own then light.fbLast = v return end
+    end
   elseif light.lastLevel then
     if math.abs(v - light.lastLevel) <= OWN_BAND then return end
   elseif not room.pr or math.abs(v) <= OWN_BAND then
@@ -1103,10 +1140,10 @@ local function loadRooms(closeGate)
         if room.occ then warns[#warns + 1] = room.name .. ".occ (ignored, presence in use)" end
         room.occ = nil
         presenceByKey[key:lower()] = room
-        local saved = PersistData and PersistData.presence and PersistData.presence[key]
+        local saved = PersistData and type(PersistData.presence) == "table" and PersistData.presence[key]
         if type(saved) == "table" then                       -- T14: restore HOLD and its per-light off holds
           if saved.state == PR_HOLD then room.pr.state = PR_HOLD end
-          for _, id in ipairs(saved.offHold or {}) do
+          for _, id in ipairs(type(saved.offHold) == "table" and saved.offHold or {}) do
             for _, l in ipairs(room.lights) do if l.id == id then l.offHold = true end end
           end
         end
@@ -1307,7 +1344,13 @@ local function replyFor(line, now)
       return "ERR SYNTAX"
     end
     local room = presenceByKey[t[2]:lower()]
-    if not room then return "ERR ROOM" end
+    if not room then
+      if snapshot and snapshot.left > 0 then
+        snapshot.left = snapshot.left - 1
+        if snapshot.left == 0 then finishSnapshot(now) end
+      end
+      return "ERR ROOM"
+    end
     room.pr.rawOcc, room.pr.rawSrc = (t[3] == "1"), t[4]
     lastAcceptedAt = now
     silenceTripped = false

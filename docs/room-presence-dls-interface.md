@@ -112,6 +112,7 @@ Timing rules:
 - Silence: DLS records the time of the last accepted `HELLO` or `OCC`. After 180 s without one
   (`Occupancy Silence (sec)`, default 180), every follow room is treated as `OCC <room> 0 unknown`.
   Lights then go off by the normal off delay and fade, not instantly. Status shows `Presence feed lost`.
+  A HOLD with all lights off is kept when the vacancy reason is silence, `unknown` or `stuck`; only a confirmed `0 clear` or `0 dock` plus the off delay, a manual on, or AWAY ends it.
 - A `HELLO` with `count` N: rooms not named in the next N lines are set vacant.
 - Order inside a batch is the order of effect. `PRESENCE` comes first so the AWAY filter is current.
 
@@ -145,6 +146,7 @@ Validation (in `loadRooms`): a wrong type or out-of-range number uses the defaul
 with illegal characters, disables `presence` for the later room and warns. A room with both
 `presence` and the legacy `occ` object uses `presence`; `occ` is ignored with a warning.
 `presence` requires at least one light. Unknown keys inside `presence` are ignored.
+Robot entries (section 9.2) must equal the roborock-bridge `rooms[].name` (any letter case), e.g. `"Living room"`.
 
 ## 5. Room state machine (DLS, one per room with `presence`)
 
@@ -178,6 +180,7 @@ Notes:
 - In OCCUPIED, `Update()` keeps the lights on the moving DLS target as today (holds excepted).
 - T10 means a manual-off hold has NO time limit. It ends only when the room is confirmed vacant
   (off delay passed) or the user turns a light on. Reason: "off for a film" must stay off.
+  A HOLD with all lights off is kept when the vacancy reason is silence, `unknown` or `stuck`; only a confirmed `0 clear` or `0 dock` plus the off delay, a manual on, or AWAY ends it.
 - A manual level change (not to 0) in OCCUPIED is the existing per-light hold: DLS stops
   adjusting that light for `Override Hold (min)`. It does NOT block T5 (vacancy always wins).
 - A manual ON in VACANT is the existing per-light hold. When it expires and `occIn` is still 0,
@@ -277,7 +280,7 @@ Config (`/etc/dls-presence.env` plus one JSON file, mode 0600):
 | `STUCK_ON_MIN` | 240 | Section 9.1. |
 | `SRC_UNKNOWN_SEC` | 180 | All sources unknown this long = `0 unknown`. |
 | `ESPHOME_PORT` | 6053 | Default API port. |
-| `ROBOT_URL` | empty | Status URL of `tools/roborock-bridge` (state + current room). Empty = no robot source. The exact fields are NOT checked in this spec: confirm against the bridge in package A. |
+| `ROBOT_URL` | empty | Status URL of `tools/roborock-bridge` (state + current room). May be the bridge base URL (`http://liesa:8788`) or the full `/state` URL. Empty = no robot source. Stale bridge data (`last_success_age_s` of 120 s or more, or `state` null) counts as no status. The exact fields are NOT checked in this spec: confirm against the bridge in package A. |
 | `ROBOT_POLL_SEC` | 15 | Robot poll interval. |
 
 ```json
@@ -311,7 +314,7 @@ lights look". RLH keeps its own lux scaling unchanged until it is retired.
 | DLS reload / controller reboot | T14. First line gets `OK RESYNC`; snapshot arrives within seconds. |
 | One ESPHome device offline | Source `None`; other sources still count. Alone for 180 s: `0 unknown`. |
 | Sensor stuck at 1 | Section 9.1. |
-| Robot stops mid-room, error state | Not docked, so still an occupant. Robot state unknown for 3 min = docked. |
+| Robot stopped, paused or in error | Not a moving robot, so not an occupant (a stranded robot must not keep a room lit). Only states containing `clean`, `return`, `going`, `mopping` or `segment` count as occupant. `Charger-disconnected`, `dock`, `charging`, `emptying`, `washing` and `drying` count as docked. Robot state unknown for 3 min = docked. |
 | Wrong token | `ERR AUTH`, feed lost after 180 s, alert after 30 min. |
 | Room key mismatch | `ERR ROOM` logged by the poller; that room never becomes occupied. |
 | Old driver, new poller | Plain `ERR` to `OCC`. Poller logs once; `PRESENCE` keeps working. |
@@ -359,10 +362,9 @@ DLS (c4sim):
     the same line again. Expect `OK`.
 12. After 1: advance 181 s with no lines. Expect Status `Presence feed lost`; at 361 s
     ramp(101, 0, 30000). With a snapshot every 60 s for 10 min instead: expect no ramp to 0.
-13. After 1 (wait 15 s): feed light 101 level 0. Expect state HOLD, no ramp. Send `OCC Kitchen 1 esp tok`
-    and advance 3 h (heartbeats on). Expect no ramp. Send `0 clear`, advance 181 s: VACANT.
-    Send `1 esp`: ramp(101, 60, 2000).
-14. In HOLD (case 13): feed light 101 level 40. Expect OCCUPIED, per-light hold, no ramp.
+13. After 1 (wait 15 s): feed light 101 level 0. Expect state HOLD, no ramp. Send a snapshot with `OCC Kitchen 1 esp tok` every 60 s for 3 h. Expect state HOLD throughout and no ramp. Send `OCC Kitchen 0 clear tok`, advance 181 s. Expect state VACANT and no ramp (nothing was on). Send `OCC Kitchen 1 esp tok`. Expect ramp(101, 60, 2000), state OCCUPIED.
+13b. As 13 up to HOLD, then send nothing for 400 s. Expect Status `Presence feed lost` and state HOLD. Send a snapshot with `OCC Kitchen 1 esp tok`. Expect no ramp, state HOLD. Then `0 clear`, advance 181 s: VACANT. (Silence, `unknown` and `stuck` are not a confirmed vacancy for T10.)
+14. Fresh start. After 1 (wait 15 s): feed light 101 level 0 (state HOLD), then feed light 101 level 40. Expect state OCCUPIED, per-light hold on 101, no ramp. Send `OCC Kitchen 0 clear tok`, advance 181 s. Expect ramp(101, 0, 30000), state FADING; 32 s later VACANT.
 15. After 1 (wait 15 s): feed light 101 level 90. Expect per-light hold, no ramp when the target
     changes. Send `0 clear`, advance 181 s. Expect ramp(101, 0, 30000) (vacancy beats the hold).
 16. After 1: feed light 101 levels 20, 40, 60 within 2 s. Expect no hold (own ramp, section 7 rule 2).

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DLS presence bridge v1.4.0 - feeds the Daylight Lighting Scheduler (Control4 EA-1) Home/Away and per-room occupancy.
+"""DLS presence bridge v1.4.1 - feeds the Daylight Lighting Scheduler (Control4 EA-1) Home/Away and per-room occupancy.
 
 Household (PRESENCE, v1.3.0 behaviour):
   unifi   - phone present in UniFi Poller metrics in Prometheus (stdlib only)
@@ -31,7 +31,7 @@ Env:  PROM_URL (default http://localhost:9090)  EA1_HOST  EA1_PORT (8730)  DLS_T
       FRESH_PORT (default 8731, 0 = off)  FRESH_BIND (default 127.0.0.1)
       ROOMS_FILE (default /etc/dls-presence.rooms.json; missing = no OCC lines, v1.3.0 behaviour)
       OCC_REPEAT_SEC (60)  STUCK_ON_MIN (240)  SRC_UNKNOWN_SEC (180)  ESPHOME_PORT (6053)
-      ROBOT_URL (empty = no robot source)  ROBOT_POLL_SEC (15)
+      ROBOT_URL (roborock-bridge, e.g. http://liesa:8788 or .../state; empty = no robot source)  ROBOT_POLL_SEC (15)
   GET /health  -> JSON per source: seconds since last successful poll, poll interval, stale flag.
                   HTTP 200 when all sources are fresh, 503 if any is stale (older than 3x its poll interval).
 """
@@ -39,7 +39,7 @@ import json, math, os, re, smtplib, socket, sys, threading, time, urllib.parse, 
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 PROM = os.environ.get("PROM_URL", "http://localhost:9090").rstrip("/")
 HOST = os.environ.get("EA1_HOST", "")
 PORT = int(os.environ.get("EA1_PORT", "8730"))
@@ -492,8 +492,27 @@ class RoomTracker:
         return {"state": out[0], "src": out[1], "stuck": stuck_event}
 
 
+def robot_state_url(url):
+    """ROBOT_URL may be the bridge base URL or the full /state URL. The bridge serves exactly GET /state."""
+    u = urllib.parse.urlsplit(url.strip())
+    path = u.path.rstrip("/")
+    if not path.endswith("/state"):
+        path += "/state"
+    return urllib.parse.urlunsplit((u.scheme, u.netloc, path, "", ""))
+
+
+def parse_robot_state(body):
+    """Bridge /state JSON -> (state, room name or None). ValueError when the bridge has no fresh device poll."""
+    age = body.get("last_success_age_s")
+    if body.get("state") is None or not isinstance(age, (int, float)) or age >= ROBOT_STALE:
+        raise ValueError("bridge has no fresh robot status")
+    cr = body.get("current_room")
+    name = cr.get("name") if isinstance(cr, dict) else None
+    return str(body["state"]), (name.strip() if isinstance(name, str) and name.strip() else None)
+
+
 class RobotSource:
-    """Robot as seen by the poller. Docked, charging, or no good poll for ROBOT_STALE = docked (section 9 rule 2)."""
+    """Robot as seen by the poller. Only a moving robot counts as an occupant: docked, charging, paused, error, idle or no good poll for ROBOT_STALE counts as docked (section 9 rule 2)."""
 
     def __init__(self, started=None):
         self.started = time.time() if started is None else started
@@ -513,7 +532,12 @@ class RobotSource:
             return now - self.started >= ROBOT_STALE
         if now - last >= ROBOT_STALE:
             return True
-        return "dock" in st or "charg" in st
+        if st == "charger_disconnected":
+            return True            # off the dock and not moving: not an occupant
+        if any(w in st for w in ("dock", "charg", "emptying", "wash", "drying")):
+            return True
+        # only a moving robot is an occupant (paused, error, idle and stranded robots must not latch a room on)
+        return not any(w in st for w in ("clean", "return", "going", "mopping", "segment"))
 
     def room_value(self, now, names):
         """True if the robot is in one of `names`; False if docked or elsewhere; None only before the first poll."""
@@ -539,8 +563,8 @@ class RobotWatcher:
             try:
                 with urllib.request.urlopen(self.url, timeout=10) as r:
                     body = json.load(r)
-                cr = body.get("current_room") or {}
-                self.robot.observe(time.time(), body.get("state"), cr.get("name") if isinstance(cr, dict) else None)
+                state, room = parse_robot_state(body)
+                self.robot.observe(time.time(), state, room)
                 set_health("robot", True, self.poll)
                 warned = False
             except Exception as e:
@@ -597,6 +621,10 @@ class EsphomeWatcher:
                 entities, _services = await cli.list_entities_services()
                 keys = {e.key: e.object_id for e in entities
                         if type(e).__name__ == "BinarySensorInfo" and e.object_id in dev["objs"]}
+                missing = dev["objs"] - set(keys.values())
+                if missing:
+                    have = sorted(e.object_id for e in entities if type(e).__name__ == "BinarySensorInfo")
+                    self.log(f"esp {host}: no binary_sensor {sorted(missing)}; device has {have}")
 
                 def on_state(st, keys=keys):
                     oid = keys.get(getattr(st, "key", None))
@@ -609,7 +637,9 @@ class EsphomeWatcher:
                 with self.lock:
                     for oid in dev["objs"]:
                         self.state.setdefault((host, oid), None)
-                await cli.subscribe_states(on_state)
+                res = cli.subscribe_states(on_state)
+                if asyncio.iscoroutine(res):
+                    await res
                 delay = 5
                 while cli.is_connected:
                     set_health(f"esp:{host}", True, 60)
@@ -792,21 +822,24 @@ def presence_loop(poller):
     """Household presence (v1.3.0 rules) on its own thread, so a slow Prometheus or Life360 call never delays OCC lines."""
     last, away_since = None, None
     while True:
-        here, detail = household()
-        if here is None:
-            print("no presence source reachable:", detail, flush=True)
-        else:
-            now = time.time()
-            if here:
-                away_since = None
-                want = "HOME"
+        try:
+            here, detail = household()
+            if here is None:
+                print("no presence source reachable:", detail, flush=True)
             else:
-                away_since = away_since or now
-                want = "AWAY" if now - away_since >= AWAY_AFTER else last
-            if want and want != last:
-                poller.set_presence(want)
-                print(time.strftime("%F %T"), "->", want, detail, flush=True)
-                last = want
+                now = time.time()
+                if here:
+                    away_since = None
+                    want = "HOME"
+                else:
+                    away_since = away_since or now
+                    want = "AWAY" if now - away_since >= AWAY_AFTER else last
+                if want and want != last:
+                    poller.set_presence(want)
+                    print(time.strftime("%F %T"), "->", want, detail, flush=True)
+                    last = want
+        except Exception as e:
+            print(f"presence loop: {type(e).__name__}: {e}", flush=True)
         time.sleep(POLL)
 
 
@@ -818,7 +851,7 @@ def run_rooms(rooms):
     robot = None
     if ROBOT_URL and any("robot" in c.sources and c.robot for c in rooms.values()):
         robot = RobotSource()
-        RobotWatcher(ROBOT_URL, ROBOT_POLL, robot).start()
+        RobotWatcher(robot_state_url(ROBOT_URL), ROBOT_POLL, robot).start()
     poller = Poller(rooms, token=TOKEN, transport=ea1_batch, notify=notify, log=print, esp=esp, robot=robot)
     threading.Thread(target=presence_loop, args=(poller,), daemon=True).start()
     while True:
