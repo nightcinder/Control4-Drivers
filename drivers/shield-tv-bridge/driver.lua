@@ -1,13 +1,16 @@
 -- Shield TV Bridge - Control4 DriverWorks driver (Lua 5.1)
--- Version 1.0.0
+-- Version 1.1.0
 -- Controls an NVIDIA Shield TV through an HTTP/JSON bridge on a Linux host.
--- Presents a media_player proxy (5001) and an avswitch proxy (5002) with
--- 25 app slots, and publishes Now Playing metadata.
+-- Presents a media_service proxy (5001, Navigator Now Playing), an avswitch proxy
+-- (5002) with 25 app slots, and a media_player proxy (5003, remote keys and power).
 
-local DRIVER_VERSION = "1.0.0"
+local DRIVER_VERSION = "1.1.0"
 
-local PROXY_MEDIA = 5001
-local PROXY_SWITCH = 5002
+local PROXY_NOWPLAYING = 5001   -- media_service (primary): Navigator Now Playing
+local PROXY_SWITCH = 5002       -- avswitch: app slots
+local PROXY_MEDIA = 5003        -- media_player: remote keys, power
+local VAR_CURRENT_SELECTED_DEVICE = 1000
+local NP_REPUBLISH_MS = 10000
 local INPUT_MIN = 3051
 local INPUT_MAX = 3075
 local FAIL_LIMIT = 3
@@ -308,6 +311,142 @@ local function nowPlayingFor(st)
   }
 end
 
+-- ---------------------------------------------------------------- Navigator Now Playing (media_service 5001)
+-- Data comes from the bridge (ADB media session). No length or position is available,
+-- so no progress is published. Queue, dashboard and media info follow the v8 test driver
+-- that showed correctly in Navigator.
+
+local npCurrent = nil        -- { title, artist, album, state } or nil when nothing to show
+local npTimer = nil
+local npSelected = false
+
+local function xmlEsc(s)
+  s = tostring(s or "")
+  s = string.gsub(s, "&", "&amp;")
+  s = string.gsub(s, "<", "&lt;")
+  s = string.gsub(s, ">", "&gt;")
+  return s
+end
+
+local function npEvent(name, evtargs)
+  C4:SendToProxy(PROXY_NOWPLAYING, "SEND_EVENT", {
+    NAVID = nil, ROOMS = nil, NAME = name, EVTARGS = evtargs, QUEUEID = 10100,
+  }, "COMMAND")
+end
+
+local function npItemXml(title, subtitle, isHeader)
+  return "<item><title>" .. xmlEsc(title) .. "</title><subtitle>" .. xmlEsc(subtitle)
+    .. "</subtitle><duration></duration><isHeader>" .. (isHeader and "true" or "false")
+    .. "</isHeader></item>"
+end
+
+local function npSendMediaInfo()
+  local it = npCurrent or {}
+  C4:SendToProxy(PROXY_NOWPLAYING, "UPDATE_MEDIA_INFO", {
+    TITLE = it.title or "",
+    ALBUM = it.album or "",
+    ARTIST = it.artist or "",
+    GENRE = "",
+    IMAGEURL = "",
+  }, "COMMAND", true)
+end
+
+local function npSendQueue()
+  local list = npItemXml("Now Playing", "", true)
+  if npCurrent then
+    local sub = npCurrent.artist or ""
+    if sub == "" then sub = npCurrent.album or "" end
+    list = list .. npItemXml(npCurrent.title or "", sub, false)
+  end
+  list = list .. npItemXml("Service", "", true)
+  local tags = "<can_shuffle>false</can_shuffle><can_repeat>false</can_repeat>"
+    .. "<shufflemode>false</shufflemode><repeatmode>false</repeatmode>"
+  npEvent("QueueChanged", "<List>" .. list .. "</List><NowPlayingIndex>" .. (npCurrent and "1" or "0")
+    .. "</NowPlayingIndex><NowPlaying>" .. tags .. "</NowPlaying>")
+end
+
+local function npSendDashboard()
+  local playing = npCurrent and npCurrent.state == "playing"
+  npEvent("DashboardChanged", "<Items>" .. (playing and "SkipRev Rew Pause Ff SkipFwd"
+    or "SkipRev Rew Play Ff SkipFwd") .. "</Items>")
+end
+
+local function npSetVars()
+  local state = "Not Playing"
+  if npCurrent then
+    state = (npCurrent.state == "playing") and "Playing" or "Paused"
+  end
+  pcall(function()
+    C4:SetVariable("Play State", state)
+    C4:SetVariable("Media Type", "")
+    C4:SetVariable("Service", "")
+  end)
+end
+
+local function npPublishAll()
+  npSetVars()
+  npSendMediaInfo()
+  npSendQueue()
+  npSendDashboard()
+end
+
+local function npStopTimer()
+  if npTimer then
+    pcall(function() npTimer:Cancel() end)
+    npTimer = nil
+  end
+end
+
+local function npStartTimer()
+  npStopTimer()
+  npTimer = C4:SetTimer(NP_REPUBLISH_MS, function()
+    if npSelected then npPublishAll() end
+  end, true)
+end
+
+local function npRoomSelectsMe(roomId)
+  local ok, v = pcall(function()
+    return C4:GetDeviceVariable(roomId, VAR_CURRENT_SELECTED_DEVICE)
+  end)
+  return ok and tonumber(v) ~= nil and tonumber(v) == tonumber(C4:GetDeviceID())
+end
+
+local npRoomIds = {}
+
+local function npRefreshSelection()
+  local any = false
+  for _, id in ipairs(npRoomIds) do
+    if npRoomSelectsMe(id) then any = true end
+  end
+  if any and not npSelected then
+    npSelected = true
+    npPublishAll()
+    npStartTimer()
+  elseif (not any) and npSelected then
+    npSelected = false
+    npStopTimer()
+  end
+end
+
+local function npRegisterRooms()
+  npRoomIds = {}
+  local rooms = C4:GetDevicesByC4iName("roomdevice.c4i") or {}
+  for k, v in pairs(rooms) do
+    local id = tonumber(k) or tonumber(v)
+    if id then table.insert(npRoomIds, id) end
+  end
+  for _, id in ipairs(npRoomIds) do
+    C4:RegisterVariableListener(id, VAR_CURRENT_SELECTED_DEVICE)
+  end
+  npRefreshSelection()
+end
+
+function OnVariableChanged(idDevice, idVariable, strValue)
+  if tonumber(idVariable) == VAR_CURRENT_SELECTED_DEVICE then
+    npRefreshSelection()
+  end
+end
+
 local function handleStatus(st)
   local app = st.app or ""
   if app ~= lastApp then
@@ -336,13 +475,12 @@ local function handleStatus(st)
     display = artist
   end
   C4:UpdateProperty("Now Playing", display)
-  C4:SendToProxy(PROXY_MEDIA, "UPDATE_MEDIA_INFO", {
-    TITLE = title,
-    ARTIST = artist,
-    ALBUM = album,
-    GENRE = "",
-    IMAGEURL = "",
-  }, "NOTIFY")
+  if item then
+    npCurrent = { title = title, artist = artist, album = album, state = item.state }
+  else
+    npCurrent = nil
+  end
+  npPublishAll()
   logMsg(LOG_DEBUG, "Now playing: %s", display)
 end
 
@@ -461,6 +599,27 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
       return
     end
 
+    -- Navigator Now Playing proxy (media_service, 5001)
+    if idBinding == PROXY_NOWPLAYING then
+      if cmd == "DEVICE_SELECTED" or cmd == "GetDashboard" or cmd == "GetQueue" then
+        npPublishAll()
+        if cmd == "DEVICE_SELECTED" then
+          npSelected = true
+          npStartTimer()
+        end
+        return ""
+      elseif cmd == "DEVICE_DESELECTED" or cmd == "OFF" then
+        npSelected = false
+        npStopTimer()
+        return
+      elseif cmd == "ToggleShuffle" or cmd == "ToggleRepeat" or cmd == "NowPlayingCommand" then
+        return
+      end
+      -- Dashboard buttons: ScanRev / ScanFwd use the Shield's rewind / fast-forward keys.
+      if cmd == "ScanRev" then cmd = "SCAN_REV"
+      elseif cmd == "ScanFwd" then cmd = "SCAN_FWD" end
+    end
+
     if idBinding == PROXY_SWITCH then
       logMsg(LOG_DEBUG, "Switcher command %s not handled", cmd)
       return
@@ -515,6 +674,8 @@ function OnDriverLateInit()
   local ok, err = pcall(function()
     applyLogSettings()
     C4:UpdateProperty("Connected To Bridge", "false")
+    npSetVars()
+    npRegisterRooms()
     startPolling()
     pollStatus()
   end)
@@ -535,6 +696,7 @@ end
 
 function OnDriverDestroyed()
   stopPolling()
+  npStopTimer()
   if keyTimer then
     pcall(function() keyTimer:Cancel() end)
     keyTimer = nil

@@ -6,12 +6,13 @@
   <control>lua_gen</control>
   <controlmethod>ip</controlmethod>
   <driver>DriverWorks</driver>
-  <version>1</version>
+  <version>3</version>
   <created>11/13/2026 08:00 PM</created>
-  <modified>11/13/2026 08:00 PM</modified>
-  <proxies qty="2">
-    <proxy proxybindingid="5001" name="SHIELD TV">media_player</proxy>
+  <modified>11/13/2026 09:13 PM</modified>
+  <proxies qty="3">
+    <proxy proxybindingid="5001" name="SHIELD Now Playing" primary="True" large_image="icons/device_lg.png" small_image="icons/device_sm.png">media_service</proxy>
     <proxy proxybindingid="5002" name="SHIELD App Switcher">avswitch</proxy>
+    <proxy proxybindingid="5003" name="SHIELD TV">media_player</proxy>
   </proxies>
   <capabilities>
     <has_play>True</has_play>
@@ -30,10 +31,158 @@
     <shuffle_modes>Off</shuffle_modes>
     <has_discrete_input_select>True</has_discrete_input_select>
     <allow_audio_pathing>True</allow_audio_pathing>
+    <navigator_display_option proxybindingid="5001">
+      <display_icons>
+        <Icon width="70" height="70">controller://driver/shield-tv-bridge/icons/device/experience_70.png</Icon>
+      </display_icons>
+    </navigator_display_option>
+    <UI xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" proxybindingid="5001">
+<Icons>
+<IconGroup id="amt_rew">
+<Icon width="20" height="20">controller://driver/shield-tv-bridge/icons/amt_rew/amt_rew_20.png</Icon>
+<Icon width="30" height="30">controller://driver/shield-tv-bridge/icons/amt_rew/amt_rew_30.png</Icon>
+<Icon width="40" height="40">controller://driver/shield-tv-bridge/icons/amt_rew/amt_rew_40.png</Icon>
+<Icon width="50" height="50">controller://driver/shield-tv-bridge/icons/amt_rew/amt_rew_50.png</Icon>
+<Icon width="60" height="60">controller://driver/shield-tv-bridge/icons/amt_rew/amt_rew_60.png</Icon>
+<Icon width="70" height="70">controller://driver/shield-tv-bridge/icons/amt_rew/amt_rew_70.png</Icon>
+<Icon width="80" height="80">controller://driver/shield-tv-bridge/icons/amt_rew/amt_rew_80.png</Icon>
+<Icon width="90" height="90">controller://driver/shield-tv-bridge/icons/amt_rew/amt_rew_90.png</Icon>
+<Icon width="100" height="100">controller://driver/shield-tv-bridge/icons/amt_rew/amt_rew_100.png</Icon>
+<Icon width="110" height="110">controller://driver/shield-tv-bridge/icons/amt_rew/amt_rew_110.png</Icon>
+<Icon width="120" height="120">controller://driver/shield-tv-bridge/icons/amt_rew/amt_rew_120.png</Icon>
+<Icon width="130" height="130">controller://driver/shield-tv-bridge/icons/amt_rew/amt_rew_130.png</Icon>
+<Icon width="140" height="140">controller://driver/shield-tv-bridge/icons/amt_rew/amt_rew_140.png</Icon>
+</IconGroup>
+<IconGroup id="amt_ff">
+<Icon width="20" height="20">controller://driver/shield-tv-bridge/icons/amt_ff/amt_ff_20.png</Icon>
+<Icon width="30" height="30">controller://driver/shield-tv-bridge/icons/amt_ff/amt_ff_30.png</Icon>
+<Icon width="40" height="40">controller://driver/shield-tv-bridge/icons/amt_ff/amt_ff_40.png</Icon>
+<Icon width="50" height="50">controller://driver/shield-tv-bridge/icons/amt_ff/amt_ff_50.png</Icon>
+<Icon width="60" height="60">controller://driver/shield-tv-bridge/icons/amt_ff/amt_ff_60.png</Icon>
+<Icon width="70" height="70">controller://driver/shield-tv-bridge/icons/amt_ff/amt_ff_70.png</Icon>
+<Icon width="80" height="80">controller://driver/shield-tv-bridge/icons/amt_ff/amt_ff_80.png</Icon>
+<Icon width="90" height="90">controller://driver/shield-tv-bridge/icons/amt_ff/amt_ff_90.png</Icon>
+<Icon width="100" height="100">controller://driver/shield-tv-bridge/icons/amt_ff/amt_ff_100.png</Icon>
+<Icon width="110" height="110">controller://driver/shield-tv-bridge/icons/amt_ff/amt_ff_110.png</Icon>
+<Icon width="120" height="120">controller://driver/shield-tv-bridge/icons/amt_ff/amt_ff_120.png</Icon>
+<Icon width="130" height="130">controller://driver/shield-tv-bridge/icons/amt_ff/amt_ff_130.png</Icon>
+<Icon width="140" height="140">controller://driver/shield-tv-bridge/icons/amt_ff/amt_ff_140.png</Icon>
+</IconGroup>
+</Icons>
+<NowPlaying>
+<ActionIds>Shuffle Repeat</ActionIds>
+<List>
+<ItemDefaultActionProperty>default_action</ItemDefaultActionProperty>
+<ItemActionIdsProperty>actions_list</ItemActionIdsProperty>
+<TitleProperty>title</TitleProperty>
+<SubTitleProperty>subtitle</SubTitleProperty>
+<ImageProperty>image_list</ImageProperty>
+<LengthProperty>duration</LengthProperty>
+<IsHeader>
+<Property>isHeader</Property>
+<ValidValues>
+<Value>true</Value>
+</ValidValues>
+</IsHeader>
+</List>
+</NowPlaying>
+<Actions>
+<Action>
+<Id>Shuffle</Id>
+<Name>Turn Shuffle On</Name>
+<Command>
+<Name>ToggleShuffle</Name>
+<Type>PROTOCOL</Type>
+</Command>
+</Action>
+<Action>
+<Id>Repeat</Id>
+<Name>Turn Repeat On</Name>
+<Command>
+<Name>ToggleRepeat</Name>
+<Type>PROTOCOL</Type>
+</Command>
+</Action>
+<Action>
+<Id>NowPlaying</Id>
+<Name>Now Playing</Name>
+<Command>
+<Name>NowPlayingCommand</Name>
+<Type>PROTOCOL</Type>
+</Command>
+</Action>
+</Actions>
+<Dashboard>
+<Transport>
+<Id>SkipRev</Id>
+<ButtonType>SKIP_REV</ButtonType>
+<ReleaseCommand>
+<Name>SKIP_REV</Name>
+<Type>PROTOCOL</Type>
+</ReleaseCommand>
+</Transport>
+<Transport>
+<Id>Rew</Id>
+<ButtonType>CUSTOM</ButtonType>
+<Name>Rewind</Name>
+<IconId>amt_rew</IconId>
+<ReleaseCommand>
+<Name>ScanRev</Name>
+<Type>PROTOCOL</Type>
+</ReleaseCommand>
+</Transport>
+<Transport>
+<Id>Play</Id>
+<ButtonType>PLAY</ButtonType>
+<ReleaseCommand>
+<Name>PLAY</Name>
+<Type>PROTOCOL</Type>
+</ReleaseCommand>
+</Transport>
+<Transport>
+<Id>Pause</Id>
+<ButtonType>PAUSE</ButtonType>
+<ReleaseCommand>
+<Name>PAUSE</Name>
+<Type>PROTOCOL</Type>
+</ReleaseCommand>
+</Transport>
+<Transport>
+<Id>Ff</Id>
+<ButtonType>CUSTOM</ButtonType>
+<Name>Fast Forward</Name>
+<IconId>amt_ff</IconId>
+<ReleaseCommand>
+<Name>ScanFwd</Name>
+<Type>PROTOCOL</Type>
+</ReleaseCommand>
+</Transport>
+<Transport>
+<Id>SkipFwd</Id>
+<ButtonType>SKIP_FWD</ButtonType>
+<ReleaseCommand>
+<Name>SKIP_FWD</Name>
+<Type>PROTOCOL</Type>
+</ReleaseCommand>
+</Transport>
+</Dashboard>
+    </UI>
   </capabilities>
   <connections>
-    <connection>
+    <connection proxybindingid="5001">
       <id>5001</id>
+      <facing>6</facing>
+      <connectionname>SHIELD Now Playing Proxy</connectionname>
+      <type>2</type>
+      <consumer>False</consumer>
+      <classes>
+        <class>
+          <classname>MediaService</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection>
+      <id>5003</id>
       <facing>6</facing>
       <connectionname>SHIELD TV</connectionname>
       <type>2</type>
@@ -47,7 +196,7 @@
         </class>
       </classes>
     </connection>
-    <connection proxybindingid="5001">
+    <connection proxybindingid="5003">
       <id>2000</id>
       <facing>6</facing>
       <connectionname>Output Main</connectionname>
@@ -74,7 +223,7 @@
         </class>
       </classes>
     </connection>
-    <connection proxybindingid="5001">
+    <connection proxybindingid="5003">
       <id>1101</id>
       <type>5</type>
       <connectionname>Video in from SHIELD App Switch</connectionname>
@@ -93,7 +242,7 @@
         </class>
       </classes>
     </connection>
-    <connection proxybindingid="5001">
+    <connection proxybindingid="5003">
       <id>3101</id>
       <type>6</type>
       <connectionname>Audio In from SHIELD App Switch</connectionname>
@@ -465,7 +614,7 @@
       <property>
         <name>Driver Version</name>
         <type>STRING</type>
-        <default>1.0.0</default>
+        <default>1.1.0</default>
         <readonly>true</readonly>
       </property>
       <property>
