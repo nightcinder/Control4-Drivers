@@ -1,14 +1,14 @@
 -- Shield TV Bridge - Control4 DriverWorks driver (Lua 5.1)
--- Version 1.1.0
+-- Version 1.2.0
 -- Controls an NVIDIA Shield TV through an HTTP/JSON bridge on a Linux host.
--- Presents a media_service proxy (5001, Navigator Now Playing), an avswitch proxy
--- (5002) with 25 app slots, and a media_player proxy (5003, remote keys and power).
+-- Presents one media_service primary proxy (5001: keys, power, HDMI output, Navigator
+-- Now Playing) and an avswitch proxy (5002) with 25 app slots.
 
-local DRIVER_VERSION = "1.1.0"
+local DRIVER_VERSION = "1.2.0"
 
-local PROXY_NOWPLAYING = 5001   -- media_service (primary): Navigator Now Playing
+local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
-local PROXY_MEDIA = 5003        -- media_player: remote keys, power
+local PROXY_MEDIA = 5001        -- same proxy (no separate media_player proxy)
 local VAR_CURRENT_SELECTED_DEVICE = 1000
 local NP_REPUBLISH_MS = 10000
 local INPUT_MIN = 3051
@@ -221,6 +221,7 @@ local function parseStatus(body)
   end
   return {
     app = jsonString(top, "app"),
+    art = jsonString(top, "art"),
     awake = jsonBool(top, "awake"),
     v2 = jsonBool(top, "v2_connected"),
     adb = jsonBool(top, "adb_connected"),
@@ -316,7 +317,18 @@ end
 -- so no progress is published. Queue, dashboard and media info follow the v8 test driver
 -- that showed correctly in Navigator.
 
-local npCurrent = nil        -- { title, artist, album, state } or nil when nothing to show
+local npCurrent = nil        -- { title, artist, album, state, art } or nil when nothing to show
+
+-- Cover art is served by the bridge at <Bridge URL>/art/<id>; mode picks plain or base64 URL.
+local function artUrl(path)
+  if not path or path == "" then return "" end
+  local base = string.gsub(trim(prop("Bridge URL")), "/+$", "")
+  local url = base .. path
+  if prop("Cover Art Mode") == "Base64 URL" then
+    return C4:Base64Encode(url)
+  end
+  return url
+end
 local npTimer = nil
 local npSelected = false
 
@@ -347,7 +359,7 @@ local function npSendMediaInfo()
     ALBUM = it.album or "",
     ARTIST = it.artist or "",
     GENRE = "",
-    IMAGEURL = "",
+    IMAGEURL = artUrl(it.art),
   }, "COMMAND", true)
 end
 
@@ -356,7 +368,13 @@ local function npSendQueue()
   if npCurrent then
     local sub = npCurrent.artist or ""
     if sub == "" then sub = npCurrent.album or "" end
-    list = list .. npItemXml(npCurrent.title or "", sub, false)
+    local item = npItemXml(npCurrent.title or "", sub, false)
+    local img = artUrl(npCurrent.art)
+    if img ~= "" then
+      local tag = '<image_list width="512" height="512">' .. xmlEsc(img) .. "</image_list></item>"
+      item = string.gsub(item, "</item>$", function() return tag end)
+    end
+    list = list .. item
   end
   list = list .. npItemXml("Service", "", true)
   local tags = "<can_shuffle>false</can_shuffle><can_repeat>false</can_repeat>"
@@ -457,7 +475,7 @@ local function handleStatus(st)
   local item = nowPlayingFor(st)
   local key = ""
   if item then
-    key = item.title .. "|" .. item.artist .. "|" .. item.album .. "|" .. item.state
+    key = item.title .. "|" .. item.artist .. "|" .. item.album .. "|" .. item.state .. "|" .. tostring(st.art or "")
   end
   if key == lastNowKey then return end
   lastNowKey = key
@@ -476,7 +494,7 @@ local function handleStatus(st)
   end
   C4:UpdateProperty("Now Playing", display)
   if item then
-    npCurrent = { title = title, artist = artist, album = album, state = item.state }
+    npCurrent = { title = title, artist = artist, album = album, state = item.state, art = st.art or "" }
   else
     npCurrent = nil
   end
@@ -608,10 +626,13 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
           npStartTimer()
         end
         return ""
-      elseif cmd == "DEVICE_DESELECTED" or cmd == "OFF" then
+      elseif cmd == "DEVICE_DESELECTED" then
         npSelected = false
         npStopTimer()
         return
+      elseif cmd == "OFF" then
+        npSelected = false
+        npStopTimer()   -- then falls through to the sleep command below
       elseif cmd == "ToggleShuffle" or cmd == "ToggleRepeat" or cmd == "NowPlayingCommand" then
         return
       end
