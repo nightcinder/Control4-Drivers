@@ -13,6 +13,7 @@ import io
 import logging
 import re
 import secrets
+import time
 import zipfile
 from collections import OrderedDict
 from pathlib import Path
@@ -31,6 +32,8 @@ APP_LABELS = {
     "org.jellyfin.androidtv": "Jellyfin",
 }
 PNG_RE = re.compile(r"^res/.*(banner|ic_launcher|app_icon|icon).*\.png$", re.I)
+PLEX_PACKAGE = "com.plexapp.android"
+FALLBACK_TTL = 15  # seconds a fallback (app icon) answer is reused before Plex/iTunes are tried again
 
 
 def app_label(package: str) -> str:
@@ -98,23 +101,36 @@ class ArtResolver:
         self._pull_apk = pull_apk
         self._images: OrderedDict[str, tuple[bytes, str]] = OrderedDict()
         self._keys: dict[str, str] = {}
+        self._fallback_until: dict[str, tuple[str, float]] = {}
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def get(self, art_id: str) -> tuple[bytes, str] | None:
         return self._images.get(art_id)
 
-    def _store(self, key: str, data: bytes, ctype: str) -> str:
+    def _put(self, data: bytes, ctype: str) -> str:
         art_id = secrets.token_urlsafe(9)
         self._images[art_id] = (data, ctype)
-        self._keys[key] = art_id
         while len(self._images) > MAX_CACHED:
             old, _ = self._images.popitem(last=False)
             for k in [k for k, v in self._keys.items() if v == old]:
                 del self._keys[k]
+            for k in [k for k, (v, _) in self._fallback_until.items() if v == old]:
+                del self._fallback_until[k]
+        return art_id
+
+    def _store(self, key: str, data: bytes, ctype: str) -> str:
+        art_id = self._put(data, ctype)
+        self._keys[key] = art_id
         return art_id
 
     async def resolve(self, package: str, title: str, artist: str, album: str) -> str | None:
         key = f"{package}|{title}|{artist}"
+        fallback = self._fallback_until.get(key)
+        if fallback:
+            art_id, until = fallback
+            if time.monotonic() < until and art_id in self._images:
+                return art_id
+            del self._fallback_until[key]
         if key in self._keys and self._keys[key] in self._images:
             return self._keys[key]
         for finder in (self._plex, self._itunes):
@@ -126,7 +142,12 @@ class ArtResolver:
             if found:
                 return self._store(key, _square(found), "image/png")
         icon = await self._app_icon(package)
-        return self._store(key, icon, "image/png") if icon else None
+        if not icon:
+            return None
+        # Fallback only: not cached permanently, so a Plex session listed a moment later is still picked up.
+        art_id = self._put(icon, "image/png")
+        self._fallback_until[key] = (art_id, time.monotonic() + FALLBACK_TTL)
+        return art_id
 
     async def _fetch(self, url: str, headers: dict[str, str] | None = None) -> bytes | None:
         import aiohttp
@@ -181,6 +202,8 @@ class ArtResolver:
     async def _app_icon(self, package: str) -> bytes | None:
         if not re.fullmatch(r"[A-Za-z0-9_.]+", package or ""):
             return None
+        if package == PLEX_PACKAGE:
+            return generated_tile(package)
         cached = self._dir / f"{package}.png"
         if cached.exists():
             return cached.read_bytes()
