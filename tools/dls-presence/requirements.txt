@@ -1,0 +1,4 @@
+# pin aioesphomeapi to the version installed and tested on the server before deploying
+aioesphomeapi>=30
+life360
+aiohttp
