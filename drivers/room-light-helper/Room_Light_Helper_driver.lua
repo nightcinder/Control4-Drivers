@@ -1,7 +1,10 @@
 --[[
-  Room Light Helper v1.3.0 (Control4 DriverWorks, OS 3.x)
+  Room Light Helper v1.4.0 (Control4 DriverWorks, OS 3.x)
   One instance per room. Laundry is the first room.
   Changelog:
+    1.4.0 - Fade In (sec) property (default 5) sets the turn-on ramp time (was fixed 1500 ms).
+           Fade Out (sec) property (default 30, 0 = plain OFF) ramps the light to 0 on the last
+           release. A Request On during that fade reclaims the light with a normal ramp.
     1.3.0 - Active sources, helper-on flag and pending off time are saved with PersistSetValue
            and restored in OnDriverLateInit. Sources past Source Timeout are dropped on reload.
            Repeated Request On from the same Source keeps its first start time (tested, no change).
@@ -41,11 +44,10 @@
   Not in v1: keypad holds, away mode, DLS integration. Max Level is a plain property.
 ]]
 
-local DRIVER_VERSION = "1.3.0"
+local DRIVER_VERSION = "1.4.0"
 local CHECK_FAST_MS = 10000   -- check timer while the light listener is not registered
 local CHECK_SLOW_MS = 60000   -- check timer once the listener is registered
 local LIGHT_LEVEL_VAR = 1001          -- light proxy LIGHT_LEVEL variable id
-local RAMP_MS = 1500
 local RELAMP_MIN_CHANGE = 10
 local EVENT_ON_BY_HELPER = 1
 local EVENT_OFF_BY_HELPER = 2
@@ -54,6 +56,7 @@ local EVENT_SOURCE_TIMEOUT = 3
 local sources = {}          -- source name -> os.time() of its request
 local sourceCount = 0
 local helperOn = false      -- helper turned the light on and has not turned it off
+local fadingOut = false     -- helper started a Fade Out ramp to 0 that has not finished yet
 local lastLevel = nil
 local lux = nil
 local luxTime = 0
@@ -129,21 +132,37 @@ local function computeLevel()
   return math.floor(clamp(level, minL, maxL) + 0.5)
 end
 
+-- Turn-on ramp time in seconds (Fade In (sec), read each time).
+local function fadeInSec()
+  return clamp(num("Fade In (sec)", 5), 0, 60)
+end
+
 local function rampTo(level)
   local id = getLightId()
   if not id or id == 0 then
     logf("No light selected: set the Room Light ID property")
     return false
   end
-  C4:SendToDevice(id, "RAMP_TO_LEVEL", { LEVEL = level, TIME = RAMP_MS })
+  C4:SendToDevice(id, "RAMP_TO_LEVEL", { LEVEL = level, TIME = fadeInSec() * 1000 })
   lastLevel = level
+  fadingOut = false
   dbg("Ramp to " .. level)
   return true
 end
 
+-- Last release: ramp to 0 over Fade Out (sec), or plain OFF when Fade Out is 0.
 local function lightOff()
   local id = getLightId()
-  if id and id ~= 0 then C4:SendToDevice(id, "OFF", {}) end
+  local fadeSec = clamp(num("Fade Out (sec)", 30), 0, 300)
+  if id and id ~= 0 then
+    if fadeSec > 0 then
+      C4:SendToDevice(id, "RAMP_TO_LEVEL", { LEVEL = 0, TIME = fadeSec * 1000 })
+      fadingOut = true
+    else
+      C4:SendToDevice(id, "OFF", {})
+      fadingOut = false
+    end
+  end
   lastLevel = nil
 end
 
@@ -253,7 +272,8 @@ local function requestOn(name)
       if lastLevel and math.abs(target - lastLevel) >= RELAMP_MIN_CHANGE then rampTo(target) end
     else
       local level = getLightLevel()
-      if level and level > 0 then
+      -- A level above 0 during our own Fade Out is not an outside light: take it back with a normal ramp.
+      if level and level > 0 and not fadingOut then
         helperOn = false
         dbg("Light already on; leaving it alone")
       else
@@ -366,6 +386,7 @@ end
 function OnWatchedVariableChanged(idDevice, idVariable, strValue)
   if idVariable ~= LIGHT_LEVEL_VAR then return end
   local level = tonumber(strValue) or 0
+  if level == 0 then fadingOut = false end
   if level == 0 and helperOn then
     -- Light went off outside the helper: stop owning it.
     helperOn = false

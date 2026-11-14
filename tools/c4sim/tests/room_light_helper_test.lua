@@ -27,8 +27,22 @@ end
 local function cmd(name, params) sim.exec(name, params or {}) end
 local function on(src) cmd("REQUEST_ON", { Source = src }) end
 local function off(src) cmd("RELEASE", { Source = src }) end
-local function ramps() return sim.count_sent("RAMP_TO_LEVEL") end
-local function offs() return sim.count_sent("OFF") end
+-- ramps: turn-on ramps (level above 0). offs: plain OFF or a Fade Out ramp to 0.
+local function count_sent_where(pred)
+  local n = 0
+  for _, s in ipairs(sim.sent) do
+    if pred(s) then n = n + 1 end
+  end
+  return n
+end
+local function ramps()
+  return count_sent_where(function(s) return s.cmd == "RAMP_TO_LEVEL" and s.params.LEVEL > 0 end)
+end
+local function offs()
+  return count_sent_where(function(s)
+    return s.cmd == "OFF" or (s.cmd == "RAMP_TO_LEVEL" and s.params.LEVEL == 0)
+  end)
+end
 local function event_count(id)
   local n = 0
   for _, e in ipairs(sim.events) do
@@ -48,7 +62,7 @@ t.test("first Request ramps the light on with fallback level", function()
   t.ok(r ~= nil, "ramp sent")
   t.eq(r.id, LIGHT, "to bound light")
   t.eq(r.params.LEVEL, 60, "fallback level without lux")
-  t.eq(r.params.TIME, 1500, "ramp time")
+  t.eq(r.params.TIME, 5000, "fade in default 5 s")
   t.eq(event_count(1), 1, "on event")
   t.eq(Properties["Active Sources"], "Laundry Motion", "active sources")
   t.eq(Properties.Status, "Active: 1 source(s)", "status")
@@ -282,6 +296,80 @@ t.test("reload with nothing saved starts idle and sends nothing", function()
   sim.advance(300 * SEC)
   t.eq(offs(), 0, "no off")
   t.eq(ramps(), 0, "no ramp")
+end)
+
+t.test("Fade In (sec) sets the turn-on ramp time", function()
+  start({ ["Fade In (sec)"] = "12" })
+  on("Alpha")
+  t.eq(sim.last_sent("RAMP_TO_LEVEL").params.TIME, 12000, "ramp time from property")
+end)
+
+t.test("last release fades out: RAMP_TO_LEVEL 0 over Fade Out (sec), no plain OFF", function()
+  start()
+  on("Alpha")
+  off("Alpha")
+  sim.advance(179 * SEC)
+  t.eq(offs(), 0, "no fade at 179 s")
+  sim.advance(2 * SEC)
+  local r = sim.last_sent("RAMP_TO_LEVEL")
+  t.eq(r.id, LIGHT, "to bound light")
+  t.eq(r.params.LEVEL, 0, "fade to 0")
+  t.eq(r.params.TIME, 30000, "default Fade Out 30 s")
+  t.eq(offs(), 1, "one fade")
+  t.eq(sim.count_sent("OFF"), 0, "no plain OFF")
+  t.eq(event_count(2), 1, "off event")
+end)
+
+t.test("Fade Out (sec) changes the fade time", function()
+  start({ ["Fade Out (sec)"] = "45" })
+  on("Alpha")
+  off("Alpha")
+  sim.advance(180 * SEC)
+  t.eq(sim.last_sent("RAMP_TO_LEVEL").params.TIME, 45000, "45 s fade")
+end)
+
+t.test("Fade Out 0 sends plain OFF after Off Delay", function()
+  start({ ["Fade Out (sec)"] = "0" })
+  on("Alpha")
+  off("Alpha")
+  sim.advance(181 * SEC)
+  t.eq(sim.count_sent("OFF"), 1, "plain OFF")
+  t.eq(count_sent_where(function(s) return s.cmd == "RAMP_TO_LEVEL" and s.params.LEVEL == 0 end), 0, "no fade")
+end)
+
+t.test("Request On during a fade-out reclaims the light with a normal ramp", function()
+  start()
+  on("Alpha")
+  off("Alpha")
+  sim.advance(181 * SEC)           -- fade-out started
+  sim.fire_var(LIGHT, LEVEL_VAR, "40")  -- light still above 0 mid-fade
+  on("Beta")
+  local r = sim.last_sent("RAMP_TO_LEVEL")
+  t.eq(r.params.LEVEL, 60, "normal ramp to target")
+  t.eq(r.params.TIME, 5000, "fade in time")
+  t.eq(ramps(), 2, "turn-on ramp sent again")
+  t.eq(event_count(1), 2, "on event fired again")
+  t.eq(Properties["Light State"], "On by helper", "helper owns the light again")
+  sim.advance(600 * SEC)
+  t.eq(offs(), 1, "no new fade while Beta is active")
+  off("Beta")
+  sim.advance(181 * SEC)
+  t.eq(offs(), 2, "new fade after Beta releases")
+end)
+
+t.test("light turned on externally after our fade ended is left alone", function()
+  start()
+  on("Alpha")
+  off("Alpha")
+  sim.advance(181 * SEC)
+  sim.fire_var(LIGHT, LEVEL_VAR, "0")   -- fade finished
+  sim.fire_var(LIGHT, LEVEL_VAR, "80")  -- someone else turns it on
+  on("Beta")
+  t.eq(ramps(), 1, "no new ramp")
+  t.eq(Properties["Light State"], "On externally", "state")
+  off("Beta")
+  sim.advance(600 * SEC)
+  t.eq(offs(), 1, "helper never fades out an external light")
 end)
 
 t.finish("room-light-helper")
