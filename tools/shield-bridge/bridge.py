@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from aiohttp import web
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 CLIENT_NAME = "shield-bridge"
 HEALTH_INTERVAL = 2.0
 BACKOFF_MIN = 1.0
@@ -283,11 +283,11 @@ class Shield:
     def _v2_healthy(self) -> bool:
         return self._remote is not None and bool(getattr(self._remote, "is_available", True))
 
-    def send_key(self, key: str) -> None:
+    def send_key(self, key: str, direction: str = "SHORT") -> None:
         if not self.v2.up or self._remote is None:
             raise LinkDown("remote v2 not connected")
         try:
-            self._remote.send_key_command(key)
+            self._remote.send_key_command(key, direction)
         except Exception as exc:
             self.v2.fail(exc)
             raise LinkDown(f"remote v2 send failed: {exc}") from exc
@@ -449,7 +449,8 @@ def make_app(bridge: Config, shields: dict[str, Shield]) -> web.Application:
         if name not in ALLOWED_KEYS:
             return error(400, "unknown key name")
         try:
-            request["shield"].send_key(name)
+            d = {"start": "START_LONG", "end": "END_LONG"}.get(request.query.get("dir", ""), "SHORT")
+            request["shield"].send_key(name, d)
         except LinkDown as exc:
             return error(503, str(exc))
         return web.json_response({"ok": True, "key": name})

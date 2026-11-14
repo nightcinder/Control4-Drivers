@@ -6,9 +6,9 @@
   <control>lua_gen</control>
   <controlmethod>ip</controlmethod>
   <driver>DriverWorks</driver>
-  <version>6</version>
+  <version>7</version>
   <created>11/13/2026 08:00 PM</created>
-  <modified>11/13/2026 09:34 PM</modified>
+  <modified>11/13/2026 09:35 PM</modified>
   <proxies qty="2">
     <proxy proxybindingid="5001" name="SHIELD TV" primary="True" large_image="icons/device_lg.png" small_image="icons/device_sm.png">media_service</proxy>
     <proxy proxybindingid="5002" name="SHIELD App Switcher">avswitch</proxy>
@@ -134,8 +134,12 @@
 <ButtonType>CUSTOM</ButtonType>
 <Name>Rewind</Name>
 <IconId>amt_rew</IconId>
+<PressCommand>
+<Name>ScanRevPress</Name>
+<Type>PROTOCOL</Type>
+</PressCommand>
 <ReleaseCommand>
-<Name>ScanRev</Name>
+<Name>ScanRevRelease</Name>
 <Type>PROTOCOL</Type>
 </ReleaseCommand>
 </Transport>
@@ -160,8 +164,12 @@
 <ButtonType>CUSTOM</ButtonType>
 <Name>Fast Forward</Name>
 <IconId>amt_ff</IconId>
+<PressCommand>
+<Name>ScanFwdPress</Name>
+<Type>PROTOCOL</Type>
+</PressCommand>
 <ReleaseCommand>
-<Name>ScanFwd</Name>
+<Name>ScanFwdRelease</Name>
 <Type>PROTOCOL</Type>
 </ReleaseCommand>
 </Transport>
@@ -607,7 +615,7 @@
       <property>
         <name>Driver Version</name>
         <type>STRING</type>
-        <default>1.2.1</default>
+        <default>1.2.2</default>
         <readonly>true</readonly>
       </property>
       <property>

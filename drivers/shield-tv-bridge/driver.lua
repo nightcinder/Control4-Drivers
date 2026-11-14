@@ -1,10 +1,10 @@
 -- Shield TV Bridge - Control4 DriverWorks driver (Lua 5.1)
--- Version 1.2.1
+-- Version 1.2.2
 -- Controls an NVIDIA Shield TV through an HTTP/JSON bridge on a Linux host.
 -- Presents one media_service primary proxy (5001: keys, power, HDMI output, Navigator
 -- Now Playing) and an avswitch proxy (5002) with 25 app slots.
 
-local DRIVER_VERSION = "1.2.1"
+local DRIVER_VERSION = "1.2.2"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -637,8 +637,13 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
         return
       end
       -- Dashboard buttons: ScanRev / ScanFwd use the Shield's rewind / fast-forward keys.
-      if cmd == "ScanRev" then cmd = "SCAN_REV"
-      elseif cmd == "ScanFwd" then cmd = "SCAN_FWD" end
+      local scanKey = { ScanRevPress = "MEDIA_REWIND", ScanRevRelease = "MEDIA_REWIND",
+                        ScanFwdPress = "MEDIA_FAST_FORWARD", ScanFwdRelease = "MEDIA_FAST_FORWARD" }
+      if scanKey[cmd] then
+        -- hold the key while the button is held, so scanning is continuous
+        httpPost("/v1/key", "name=" .. scanKey[cmd] .. "&dir=" .. (string.find(cmd, "Press") and "start" or "end"), nil)
+        return
+      end
     end
 
     if idBinding == PROXY_SWITCH then
