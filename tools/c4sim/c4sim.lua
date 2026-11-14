@@ -176,6 +176,8 @@ local function build_env()
   local env = setmetatable({}, { __index = _G })
   env.C4 = C4
   env.Properties = sim.Properties
+  -- Control4 exposes PersistData as a plain global table that the driver reads and writes directly.
+  env.PersistData = sim.persist
   -- os.time() follows the simulated clock, so timeouts and lux age work under advance().
   local realos = os
   env.os = setmetatable({ time = function(t)
