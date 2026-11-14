@@ -501,14 +501,27 @@ local function prReconcile(now)
   for _, room in ipairs(rooms) do
     local pr = room.pr
     if pr then
-      pr.offAt = nil
       if pr.occIn then
+        pr.offAt = nil
         if pr.state ~= PR_HOLD then
           pr.state = PR_OCCUPIED
           presenceDrive(room, now)
         end
-      elseif pr.state ~= PR_VACANT then
-        if anyOn(room) then prStartFade(room, now) else pr.state = PR_VACANT end
+      elseif pr.state == PR_HOLD and not anyOn(room) then
+        -- restored manual-off hold (T14): only a confirmed vacancy plus the off delay ends it (T10)
+        if prUnconfirmed(pr.rawSrc) then
+          pr.offAt = nil
+        elseif not pr.offAt then
+          pr.offAt, pr.offConfirmed = now + pr.offDelaySec, true
+        end
+      else
+        pr.offAt = nil
+        if pr.state ~= PR_VACANT and anyOn(room) then
+          prStartFade(room, now)
+        else
+          pr.state = PR_VACANT
+          for _, l in ipairs(room.lights) do l.offHold = nil end   -- no off hold outlives a vacancy
+        end
       end
     end
   end
@@ -583,7 +596,7 @@ local function presenceTick()
       -- a manual-on light in a vacant follow room fades once its hold has expired (section 5 note)
       if pr.state == PR_VACANT and pr.follow and not pr.occIn and not presenceAway
          and not room.overrideUntil and not (room.wake and room.wake.enabled)
-         and anyOn(room) and not anyHeld(room) then
+         and anyOn(room) and not anyHeld(room) and Properties["Enabled"] == "On" then
         local wait, adopt = false, false
         for _, l in ipairs(room.lights) do
           local cur = curLevel(l)
@@ -645,7 +658,7 @@ local function parsePresence(r, room, warns)
     fadeInSec = num("fadeInSec", 2, 0, 60, false),
     fadeOutSec = num("fadeOutSec", 30, 0, 300, false),
     nightLevel = num("nightLevel", tonumber(Properties["Night Level (%)"]) or 20, 0, 100, true),
-    state = PR_VACANT, occIn = false, rawOcc = false, rawSrc = "clear", lastOnSrc = "",
+    state = PR_VACANT, occIn = false, rawOcc = false, rawSrc = "unknown", lastOnSrc = "",
   }
 end
 
@@ -1029,8 +1042,8 @@ function OnWatchedVariableChanged(idDevice, idVariable, strValue)
   if light.ignoreUntil and now <= light.ignoreUntil then
     local from, to = light.rampFrom or 0, light.rampTo or 0
     if not room.pr then
-      -- rooms without "presence": old 1.10.1 rule
-      if v >= math.min(from, to) - OWN_BAND and v <= math.max(from, to) + OWN_BAND then return end
+      -- rooms without "presence": 1.10.1 rule, all feedback inside the window is our own
+      return
     else
       local own = v >= math.min(from, to) - OWN_BAND and v <= math.max(from, to) + OWN_BAND
       -- once the ramp is over (2 s settle) only the target level is ours
@@ -1195,7 +1208,7 @@ end
 
 function OnPropertyChanged(name)
   if name == "Rooms JSON" then loadRooms(true)
-  elseif name == "Presence Lighting" or name == "Vacancy Delay (min)" then loadRooms()
+  elseif name == "Presence Lighting" or name == "Vacancy Delay (min)" then loadRooms(true)
   elseif name == "Latitude" or name == "Longitude" then sunEvents.day = nil pollCloud()
   elseif name == "Update Interval (min)" or name == "Cloud Poll Interval (min)" then startTimers()
   elseif name == "Cloud Cover Source" then pollCloud()
