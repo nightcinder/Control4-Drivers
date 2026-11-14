@@ -1,0 +1,699 @@
+<devicedata>
+  <name>Shield TV Bridge</name>
+  <model>SHIELD-TV-BRIDGE</model>
+  <manufacturer>Custom</manufacturer>
+  <creator>Custom</creator>
+  <control>lua_gen</control>
+  <controlmethod>ip</controlmethod>
+  <driver>DriverWorks</driver>
+  <version>1</version>
+  <created>11/13/2026 08:00 PM</created>
+  <modified>11/13/2026 08:00 PM</modified>
+  <proxies qty="2">
+    <proxy proxybindingid="5001" name="SHIELD TV">media_player</proxy>
+    <proxy proxybindingid="5002" name="SHIELD App Switcher">avswitch</proxy>
+  </proxies>
+  <capabilities>
+    <has_play>True</has_play>
+    <has_pause>True</has_pause>
+    <has_skip_fwd>True</has_skip_fwd>
+    <has_skip_rev>True</has_skip_rev>
+    <has_menu>True</has_menu>
+    <has_toggle_mute_control>True</has_toggle_mute_control>
+    <has_discrete_mute_control>False</has_discrete_mute_control>
+    <has_up_down_volume_control>True</has_up_down_volume_control>
+    <has_discrete_volume_control>False</has_discrete_volume_control>
+    <has_repeat>False</has_repeat>
+    <has_shuffle>False</has_shuffle>
+    <has_search>False</has_search>
+    <repeat_modes>Off</repeat_modes>
+    <shuffle_modes>Off</shuffle_modes>
+    <has_discrete_input_select>True</has_discrete_input_select>
+    <allow_audio_pathing>True</allow_audio_pathing>
+  </capabilities>
+  <connections>
+    <connection>
+      <id>5001</id>
+      <facing>6</facing>
+      <connectionname>SHIELD TV</connectionname>
+      <type>2</type>
+      <consumer>false</consumer>
+      <audiosource>false</audiosource>
+      <videosource>false</videosource>
+      <linelevel>false</linelevel>
+      <classes>
+        <class>
+          <classname>MEDIA_PLAYER</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5001">
+      <id>2000</id>
+      <facing>6</facing>
+      <connectionname>Output Main</connectionname>
+      <type>5</type>
+      <consumer>False</consumer>
+      <audiosource>False</audiosource>
+      <videosource>True</videosource>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>HDMI</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection>
+      <id>5002</id>
+      <type>2</type>
+      <connectionname>AVSWITCH</connectionname>
+      <consumer>False</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>AVSWITCH</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5001">
+      <id>1101</id>
+      <type>5</type>
+      <connectionname>Video in from SHIELD App Switch</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <idautobind>10</idautobind>
+      <hidden>True</hidden>
+      <classes>
+        <class>
+          <classname>COMPONENT</classname>
+          <autobind>true</autobind>
+        </class>
+        <class>
+          <classname>HDMI</classname>
+          <autobind>true</autobind>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5001">
+      <id>3101</id>
+      <type>6</type>
+      <connectionname>Audio In from SHIELD App Switch</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <idautobind>20</idautobind>
+      <hidden>True</hidden>
+      <classes>
+        <class>
+          <classname>STEREO</classname>
+          <autobind>true</autobind>
+        </class>
+        <class>
+          <classname>DIGITAL_COAX</classname>
+          <autobind>true</autobind>
+        </class>
+        <class>
+          <classname>DIGITAL_OPTICAL</classname>
+          <autobind>true</autobind>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>2110</id>
+      <type>5</type>
+      <connectionname>SHIELD App Switch Video Out</connectionname>
+      <consumer>False</consumer>
+      <linelevel>True</linelevel>
+      <idautobind>10</idautobind>
+      <hidden>True</hidden>
+      <classes>
+        <class>
+          <classname>COMPONENT</classname>
+          <autobind>true</autobind>
+        </class>
+        <class>
+          <classname>HDMI</classname>
+          <autobind>true</autobind>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>4110</id>
+      <type>6</type>
+      <connectionname>SHIELD App Switch Audio Out</connectionname>
+      <consumer>False</consumer>
+      <linelevel>True</linelevel>
+      <idautobind>20</idautobind>
+      <hidden>True</hidden>
+      <classes>
+        <class>
+          <classname>STEREO</classname>
+          <autobind>true</autobind>
+        </class>
+        <class>
+          <classname>DIGITAL_COAX</classname>
+          <autobind>true</autobind>
+        </class>
+        <class>
+          <classname>DIGITAL_OPTICAL</classname>
+          <autobind>true</autobind>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3051</id>
+      <type>5</type>
+      <connectionname>MiniApp 1</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3052</id>
+      <type>5</type>
+      <connectionname>MiniApp 2</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3053</id>
+      <type>5</type>
+      <connectionname>MiniApp 3</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3054</id>
+      <type>5</type>
+      <connectionname>MiniApp 4</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3055</id>
+      <type>5</type>
+      <connectionname>MiniApp 5</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3056</id>
+      <type>5</type>
+      <connectionname>MiniApp 6</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3057</id>
+      <type>5</type>
+      <connectionname>MiniApp 7</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3058</id>
+      <type>5</type>
+      <connectionname>MiniApp 8</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3059</id>
+      <type>5</type>
+      <connectionname>MiniApp 9</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3060</id>
+      <type>5</type>
+      <connectionname>MiniApp 10</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3061</id>
+      <type>5</type>
+      <connectionname>MiniApp 11</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3062</id>
+      <type>5</type>
+      <connectionname>MiniApp 12</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3063</id>
+      <type>5</type>
+      <connectionname>MiniApp 13</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3064</id>
+      <type>5</type>
+      <connectionname>MiniApp 14</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3065</id>
+      <type>5</type>
+      <connectionname>MiniApp 15</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3066</id>
+      <type>5</type>
+      <connectionname>MiniApp 16</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3067</id>
+      <type>5</type>
+      <connectionname>MiniApp 17</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3068</id>
+      <type>5</type>
+      <connectionname>MiniApp 18</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3069</id>
+      <type>5</type>
+      <connectionname>MiniApp 19</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3070</id>
+      <type>5</type>
+      <connectionname>MiniApp 20</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3071</id>
+      <type>5</type>
+      <connectionname>MiniApp 21</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3072</id>
+      <type>5</type>
+      <connectionname>MiniApp 22</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3073</id>
+      <type>5</type>
+      <connectionname>MiniApp 23</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3074</id>
+      <type>5</type>
+      <connectionname>MiniApp 24</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection proxybindingid="5002">
+      <id>3075</id>
+      <type>5</type>
+      <connectionname>MiniApp 25</connectionname>
+      <consumer>True</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>RF_MINI_APP</classname>
+        </class>
+      </classes>
+    </connection>
+  </connections>
+  <config>
+    <script file="driver.lua" />
+    <properties>
+      <property>
+        <name>Driver Version</name>
+        <type>STRING</type>
+        <default>1.0.0</default>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Log Level</name>
+        <type>LIST</type>
+        <items>
+          <item>0 - Alert</item>
+          <item>1 - Error</item>
+          <item>2 - Warning</item>
+          <item>3 - Info</item>
+          <item>4 - Trace</item>
+          <item>5 - Debug</item>
+        </items>
+        <default>2 - Warning</default>
+      </property>
+      <property>
+        <name>Log Mode</name>
+        <type>LIST</type>
+        <items>
+          <item>Off</item>
+          <item>Print</item>
+          <item>Log</item>
+          <item>Print and Log</item>
+        </items>
+        <default>Off</default>
+      </property>
+      <property>
+        <name>Bridge URL</name>
+        <type>STRING</type>
+        <default>http://172.21.1.157:8790</default>
+      </property>
+      <property>
+        <name>Bridge Token</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>Shield Name</name>
+        <type>STRING</type>
+        <default>Downstairs</default>
+      </property>
+      <property>
+        <name>Poll Seconds</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>2</minimum>
+        <maximum>30</maximum>
+        <default>3</default>
+      </property>
+      <property>
+        <name>Command Delay Milliseconds</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>100</minimum>
+        <maximum>1000</maximum>
+        <default>150</default>
+      </property>
+      <property>
+        <name>MENU Button</name>
+        <type>LIST</type>
+        <items>
+          <item>Home</item>
+          <item>Back</item>
+          <item>Menu</item>
+        </items>
+        <default>Home</default>
+      </property>
+      <property>
+        <name>CANCEL Button</name>
+        <type>LIST</type>
+        <items>
+          <item>Home</item>
+          <item>Back</item>
+          <item>Menu</item>
+        </items>
+        <default>Back</default>
+      </property>
+      <property>
+        <name>INFO Button</name>
+        <type>LIST</type>
+        <items>
+          <item>Home</item>
+          <item>Back</item>
+          <item>Menu</item>
+        </items>
+        <default>Menu</default>
+      </property>
+      <property>
+        <name>Connected To Bridge</name>
+        <type>STRING</type>
+        <default>false</default>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Current App</name>
+        <type>STRING</type>
+        <default></default>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Now Playing</name>
+        <type>STRING</type>
+        <default></default>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>App 1 Package</name>
+        <type>STRING</type>
+        <default>com.plexapp.android</default>
+      </property>
+      <property>
+        <name>App 2 Package</name>
+        <type>STRING</type>
+        <default>com.google.android.youtube.tv</default>
+      </property>
+      <property>
+        <name>App 3 Package</name>
+        <type>STRING</type>
+        <default>com.spotify.tv.android</default>
+      </property>
+      <property>
+        <name>App 4 Package</name>
+        <type>STRING</type>
+        <default>com.netflix.ninja</default>
+      </property>
+      <property>
+        <name>App 5 Package</name>
+        <type>STRING</type>
+        <default>org.jellyfin.androidtv</default>
+      </property>
+      <property>
+        <name>App 6 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 7 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 8 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 9 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 10 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 11 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 12 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 13 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 14 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 15 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 16 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 17 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 18 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 19 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 20 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 21 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 22 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 23 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 24 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+      <property>
+        <name>App 25 Package</name>
+        <type>STRING</type>
+        <default></default>
+      </property>
+    </properties>
+  </config>
+</devicedata>
