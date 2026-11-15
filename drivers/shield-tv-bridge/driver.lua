@@ -1,10 +1,10 @@
 -- Shield TV Bridge - Control4 DriverWorks driver (Lua 5.1)
--- Version 1.3.0
+-- Version 1.3.1
 -- Controls an NVIDIA Shield TV through an HTTP/JSON bridge on a Linux host.
 -- Presents one media_service primary proxy (5001: keys, power, HDMI output, Navigator
 -- Now Playing) and an avswitch proxy (5002) with 25 app slots.
 
-local DRIVER_VERSION = "1.3.0"
+local DRIVER_VERSION = "1.3.1"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -63,6 +63,7 @@ local keyQueue = {}
 local failCount = 0
 local connectedSent = nil
 local lastApp = nil
+local lastAwake = nil
 local lastNowKey = nil
 
 -- ---------------------------------------------------------------- helpers
@@ -546,6 +547,7 @@ function OnVariableChanged(idDevice, idVariable, strValue)
 end
 
 local function handleStatus(st)
+  lastAwake = st.awake
   if st.awake == false then
     npSelected = false
   end
@@ -692,6 +694,9 @@ local function switchToInput(input, output)
     return
   end
   logMsg(LOG_INFO, "Launching app slot %d (%s)", slot, pkg)
+  if lastAwake == false then
+    httpPost("/v1/wake", nil, nil)
+  end
   httpPost("/v1/launch", "package=" .. pkg, nil)
   C4:SendToProxy(PROXY_SWITCH, "INPUT_OUTPUT_CHANGED", { INPUT = input, OUTPUT = output })
 end
@@ -718,6 +723,10 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
       if cmd == "DEVICE_SELECTED" or cmd == "GetDashboard" or cmd == "GetQueue" then
         npPublishAll()
         if cmd == "DEVICE_SELECTED" then
+          if lastAwake == false then
+            logMsg(LOG_INFO, "Shield asleep on source select; waking")
+            httpPost("/v1/wake", nil, nil)
+          end
           npSelected = true
           npStartTimer()
         end
