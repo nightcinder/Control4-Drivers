@@ -9,10 +9,11 @@
       "robot": ["Kitchen"]
     },
     "Laundry": {
-      "sources": ["esp"],
+      "sources": ["esp", "robot"],
       "esp": [
         { "host": "ep-laundry.lan", "key": "<api encryption key>", "entity": "occupancy" }
-      ]
+      ],
+      "robot": ["Laundry"]
     },
     "LivingRoom": {
       "sources": ["esp", "robot"],

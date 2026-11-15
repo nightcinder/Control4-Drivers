@@ -152,5 +152,26 @@
         "fri"
       ]
     }
+  },
+  {
+    "name": "Laundry",
+    "key": "Laundry",
+    "lights": [
+      {
+        "id": 568,
+        "kind": "lutron"
+      }
+    ],
+    "presence": {
+      "follow": true,
+      "offDelaySec": 180,
+      "robotOffDelaySec": 90,
+      "fadeInSec": 2,
+      "fadeOutSec": 30,
+      "nightLevel": 20,
+      "sources": [
+        "robot"
+      ]
+    }
   }
 ]
