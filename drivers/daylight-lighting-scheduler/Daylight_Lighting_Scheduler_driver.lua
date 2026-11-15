@@ -1,7 +1,10 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.11.2
+  DRIVER_VERSION: 1.11.3
 
+  1.11.3: manual off inside the on-window stays off until the next on edge (not the hold timer); a manual off at 8% or
+  less sets a hold; a Rooms JSON save or restart inside the off window sends the pending off; on_daylight rooms with an
+  off time after midnight run through midnight (trigger kept until that time).
   1.11.2: manual change made while a scheduled-off (or any non-presence) ramp is running is no longer swallowed as DLS's own feedback: a level moving against the ramp now sets the per-light hold, so off enforcement no longer re-sends 0 on the user.
 1.11.1: Fable review fixes: manual off just after an auto-on now holds; a light turned on during/after a DLS fade is adopted instead of faded again; feed silence/unknown/stuck no longer end a manual-off hold; Enabled=Off and scene hold block presence ramps; HELLO count tolerates rooms DLS lacks; Presence Lighting/Vacancy Delay change no longer fades occupied rooms; persisted presence data type-guarded.
   1.11.0 (UNTESTED): follow-me presence. Rooms JSON "presence" object per room; OCC lines from the poller
@@ -32,7 +35,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.11.2"
+DRIVER_VERSION = "1.11.3"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -882,7 +885,13 @@ function Update()
       end
       if l.overrideUntil then lightsHeld = lightsHeld + 1 end
     end
-    if minNow < noon - 60 then room.dayTriggered = false; room.offEnforce = nil end   -- reset each morning
+    -- reset each morning; 1.11.3: an on_daylight room whose off time is after midnight keeps its trigger until that time
+    local keepWrap = false
+    if room.on_daylight and room.off then
+      local o = resolveTimeSpec(room.off, now, lat, lon)
+      keepWrap = o ~= nil and o < noon and minNow < o
+    end
+    if minNow < noon - 60 and not keepWrap then room.dayTriggered = false; room.offEnforce = nil end
     local dayActive = dayOk(room.days, now)
 
     -- presence: lights go off once the room is confirmed vacant. A manual hold keeps them on unless
@@ -939,7 +948,11 @@ function Update()
             dbg("daylight trigger", room.name, string.format("D=%.2f", D))
           end
         end
-        inWindow = room.dayTriggered and offMin ~= nil and minNow < offMin
+        if offMin ~= nil and offMin < noon then   -- 1.11.3: off time after midnight: open from the trigger to midnight, then to off
+          inWindow = room.dayTriggered and (minNow >= noon or minNow < offMin)
+        else
+          inWindow = room.dayTriggered and offMin ~= nil and minNow < offMin
+        end
       elseif scheduled then
         if onMin <= offMin then inWindow = (minNow >= onMin and minNow < offMin)
         else inWindow = (minNow >= onMin or minNow < offMin) end
@@ -956,7 +969,9 @@ function Update()
       elseif prBlocks then
         room.wasInWindow = inWindow
       else
-      if scheduled and room.wasInWindow and not inWindow then
+      -- 1.11.3: the first tick after load (Rooms JSON save or restart) inside the off window counts as a pending off edge
+      if scheduled and not inWindow and (room.wasInWindow or (room.wasInWindow == nil and not room.pr
+          and (minNow >= offMin or minNow < noon - 60))) then
         local offMs = room.off_ramp_min and (room.off_ramp_min * 60000) or rampMs
         for _, l in ipairs(room.lights) do
           if not l.overrideUntil then sendLevel(l, 0, offMs) end
@@ -964,6 +979,9 @@ function Update()
         room.offEnforce = true
         room.offFadeUntil = now + math.ceil(offMs / 1000) + 30   -- keep 'follow' from fighting the fade-out
         dbg("scheduled off", room.name, "fade min", tostring(offMs / 60000))
+      end
+      if inWindow and not room.wasInWindow and not room.pr then      -- 1.11.3: the on edge clears manual-off holds
+        for _, l in ipairs(room.lights) do l.offHold = nil end
       end
       room.wasInWindow = inWindow
       if inWindow then room.offEnforce = nil end
@@ -1079,11 +1097,14 @@ function OnWatchedVariableChanged(idDevice, idVariable, strValue)
       if own then light.fbLast = v return end
     end
   elseif light.lastLevel then
-    if math.abs(v - light.lastLevel) <= OWN_BAND then return end
+    if math.abs(v - light.lastLevel) <= OWN_BAND and not (v == 0 and light.lastLevel > 0) then return end   -- 1.11.3: a manual off is never DLS's own feedback
   elseif not room.pr or math.abs(v) <= OWN_BAND then
     return                                   -- never ramped (baseline 0 for presence rooms)
   end
   if room.pr then return prManual(room, light, v, now) end
+  -- 1.11.3: a manual off inside the on-window stays off until the next on edge, not just until the hold expires
+  if v == 0 and room.wasInWindow then light.offHold = true
+  elseif v > 0 then light.offHold = nil end
   local holdSec = (tonumber(Properties["Override Hold (min)"]) or 120) * 60
   light.overrideUntil = math.max(light.overrideUntil or 0, now + holdSec)   -- per light; never shorten a hold
   dbg("manual change detected, holding light", tostring(light.id), room.name, "for min", tostring(holdSec / 60))
