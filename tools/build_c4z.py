@@ -165,7 +165,7 @@ def build(folder, dry_run=False):
     # Auto-bump. In a dry run the bumped XML is only handed to the checks in memory.
     try:
         bump, why = plan_bump(path)
-    except ValueError as e:
+    except (ValueError, zipfile.BadZipFile) as e:
         print(f"FAIL {name} [b] {e}")
         return False
     xml_override = None
