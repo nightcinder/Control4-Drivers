@@ -151,11 +151,13 @@
     "lights": [
       {
         "id": 337,
-        "kind": "lutron"
+        "kind": "lutron",
+        "max_level": 30
       },
       {
         "id": 482,
-        "kind": "lifx"
+        "kind": "lifx",
+        "max_level": 40
       }
     ],
     "wake": {
