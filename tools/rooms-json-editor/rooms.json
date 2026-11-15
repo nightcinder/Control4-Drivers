@@ -39,6 +39,26 @@
     },
     "window_gain": 0.4,
     "facing_deg": 0,
+    "curtains": [
+      {
+        "id": 493,
+        "name": "Den West",
+        "facing_deg": 90,
+        "open_at": "sunrise+15",
+        "close_at": "sunset+30",
+        "glare_threshold": 0.35,
+        "glare_position": 25
+      },
+      {
+        "id": 499,
+        "name": "Lounge",
+        "facing_deg": 270,
+        "open_at": "sunrise+15",
+        "close_at": "sunset+30",
+        "glare_threshold": 0.35,
+        "glare_position": 25
+      }
+    ],
     "lights": [
       {
         "id": 331,
