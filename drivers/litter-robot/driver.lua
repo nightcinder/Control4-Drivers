@@ -1,6 +1,6 @@
 --[[
   Whisker Litter-Robot 4 cat visit counter via LAN HTTP bridge (Control4 DriverWorks, OS 3.4.x)
-  Version: 1.0.0  (UNTESTED on real Composer/Director)
+  Version: 1.0.1  (UNTESTED on real Composer/Director)
 
   Polls GET /status on litter-bridge every Poll Interval seconds (5 s minimum).
   The bridge counts cat visits. When visits_since_reset >= Visits Before Clean AND the box is
@@ -9,7 +9,7 @@
   retried without firing the event again.
 ]]
 
-local DRIVER_VERSION = "1.0.0"
+local DRIVER_VERSION = "1.0.1"
 local DEFAULT_HOST = "172.21.1.157"
 local DEFAULT_PORT = "8793"
 local DEFAULT_POLL = 15
@@ -154,7 +154,7 @@ local function checkThreshold()
   end
   local need = tonumber(prop("Visits Before Clean")) or 2
   if state.visits < need then return end
-  if state.catInBox or state.status ~= "ready" then return end
+  if state.catInBox or (state.status ~= "ready" and state.status ~= "drawer_full") then return end
   local settle = (tonumber(prop("Settle Minutes")) or 10) * 60
   if os.time() - (state.lastVisitTs or 0) < settle then return end
 
