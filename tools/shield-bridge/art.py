@@ -2,7 +2,7 @@
 
 Order: Plex poster (only if art.plex_url and art.plex_token are set in config.json),
 then an Apple (iTunes Search) lookup for music, then the open app's own icon
-(pulled from its APK over ADB, or a generated tile). Images are served by the bridge
+(pulled from its APK over ADB), then a generic streaming-box picture (shield_tile). Images are served by the bridge
 at /art/<id>; ids are random per image, so the URL carries no secret.
 """
 from __future__ import annotations
@@ -33,6 +33,9 @@ APP_LABELS = {
 }
 PNG_RE = re.compile(r"^res/.*(banner|ic_launcher|app_icon|icon).*\.png$", re.I)
 PLEX_PACKAGE = "com.plexapp.android"
+LAUNCHER_PACKAGE = "com.google.android.tvlauncher"  # Shield home screen: never pull an APK for it
+ICON_CACHE_VERSION = "v2"  # bump when the fallback art changes so old cached icons are ignored
+SHIELD_BG = (28, 28, 30)
 FALLBACK_TTL = 15  # seconds a fallback (app icon) answer is reused before Plex/iTunes are tried again
 
 
@@ -74,6 +77,40 @@ def generated_tile(package: str) -> bytes:
               label, fill=(255, 255, 255), font=font)
     out = io.BytesIO()
     img.save(out, "PNG")
+    return out.getvalue()
+
+
+def shield_image(size: int, background: tuple[int, int, int, int], ss: int = 4) -> Any:
+    """A generic black streaming box (no logo, no text) on a background, drawn at ss x and downsampled."""
+    from PIL import Image, ImageDraw
+
+    big = size * ss
+    canvas = Image.new("RGBA", (big, big), background)
+    w, h = int(big * 0.44), int(big * 0.66)
+    x0, y0 = (big - w) // 2, (big - h) // 2
+    x1, y1 = x0 + w, y0 + h
+    radius = int(w * 0.42)
+    mask = Image.new("L", (big, big), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((x0, y0, x1, y1), radius=radius, fill=255)
+    grad = Image.new("RGBA", (big, big), (0, 0, 0, 255))
+    gdraw = ImageDraw.Draw(grad)
+    for y in range(y0, y1):
+        t = (y - y0) / max(1, h - 1)
+        c = int(66 - 52 * t)  # slightly lighter at the top, near black at the bottom
+        gdraw.line((0, y, big, y), fill=(c, c, c + 3, 255))
+    canvas.paste(grad, (0, 0), mask)
+    draw = ImageDraw.Draw(canvas)
+    draw.rounded_rectangle((x0, y0, x1, y1), radius=radius, outline=(92, 92, 98, 255), width=3 * ss)
+    dot = int(w * 0.035)
+    cx, cy = x0 + w // 2, y1 - int(h * 0.12)
+    draw.ellipse((cx - dot, cy - dot, cx + dot, cy + dot), fill=(60, 200, 90, 255))
+    return canvas.resize((size, size), Image.LANCZOS)
+
+
+def shield_tile() -> bytes:
+    """The no-icon fallback: a 512x512 PNG of the generic streaming box on the dark tile background."""
+    out = io.BytesIO()
+    shield_image(TILE, (*SHIELD_BG, 255)).convert("RGB").save(out, "PNG")
     return out.getvalue()
 
 
@@ -233,9 +270,9 @@ class ArtResolver:
     async def _app_icon(self, package: str) -> bytes | None:
         if not re.fullmatch(r"[A-Za-z0-9_.]+", package or ""):
             return None
-        if package == PLEX_PACKAGE:
-            return generated_tile(package)
-        cached = self._dir / f"{package}.png"
+        if package in (PLEX_PACKAGE, LAUNCHER_PACKAGE):
+            return shield_tile()
+        cached = self._dir / f"{package}.{ICON_CACHE_VERSION}.png"
         if cached.exists():
             return cached.read_bytes()
         icon = None
@@ -246,6 +283,6 @@ class ArtResolver:
         except Exception as exc:  # noqa: BLE001
             log.debug("app icon pull %s: %s", package, exc)
         if icon is None:
-            icon = generated_tile(package)
+            icon = shield_tile()
         cached.write_bytes(icon)
         return icon

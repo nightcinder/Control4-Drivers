@@ -257,6 +257,33 @@ class ArtResolverTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(resolver.get(art_id), (b"FAKE_PNG_POSTER", "image/png"))
             self.assertIn("http://172.21.1.157:32400/library/metadata/99/thumb/1", calls)
 
+    def test_shield_tile_is_512_png(self) -> None:
+        import io
+
+        from PIL import Image
+
+        data = art.shield_tile()
+        self.assertTrue(data.startswith(b"\x89PNG\r\n\x1a\n"))
+        img = Image.open(io.BytesIO(data))
+        self.assertEqual(img.size, (512, 512))
+        self.assertEqual(img.getpixel((2, 2)), (28, 28, 30))
+
+    async def test_unknown_package_without_apk_icon_gets_shield_tile(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            pull = AsyncMock(return_value=None)
+            resolver = art.ArtResolver({}, Path(td), pull)
+            icon = await resolver._app_icon("com.example.unknownapp")
+            self.assertEqual(icon, art.shield_tile())
+            self.assertTrue((Path(td) / "com.example.unknownapp.v2.png").exists())
+
+    async def test_launcher_returns_shield_tile_without_apk_pull(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            pull = AsyncMock(return_value=b"APK")
+            resolver = art.ArtResolver({}, Path(td), pull)
+            icon = await resolver._app_icon("com.google.android.tvlauncher")
+            self.assertEqual(icon, art.shield_tile())
+            pull.assert_not_awaited()
+
     async def test_direct_plex_thumb_short_circuits_session_lookup(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             resolver = art.ArtResolver(
