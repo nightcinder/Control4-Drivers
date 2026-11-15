@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from aiohttp import web
 
-VERSION = "0.3.2"
+VERSION = "0.4.0"
 CLIENT_NAME = "shield-bridge"
 HEALTH_INTERVAL = 2.0
 BACKOFF_MIN = 1.0
@@ -598,6 +598,8 @@ def make_app(bridge: Config, shields: dict[str, Shield]) -> web.Application:
             return await handler(request)
         if not token_ok(request.headers.get("Authorization", ""), bridge.token):
             return error(401, "unauthorized")
+        if request.path == "/v1/shields":
+            return await handler(request)
         shield = shields.get(request.query.get("shield", default))
         if shield is None:
             return error(404, "unknown shield")
@@ -606,6 +608,9 @@ def make_app(bridge: Config, shields: dict[str, Shield]) -> web.Application:
 
     async def status(request: web.Request) -> web.Response:
         return web.json_response(request["shield"].status())
+
+    async def shield_list(_request: web.Request) -> web.Response:
+        return web.json_response({"shields": list(shields), "default": default})
 
     async def key(request: web.Request) -> web.Response:
         name = request.query.get("name", "")
@@ -666,6 +671,7 @@ def make_app(bridge: Config, shields: dict[str, Shield]) -> web.Application:
             await shield.stop()
 
     app = web.Application(middlewares=[guard])
+    app.router.add_get("/v1/shields", shield_list)
     app.router.add_get("/v1/status", status)
     app.router.add_post("/v1/key", key)
     app.router.add_post("/v1/wake", wake)

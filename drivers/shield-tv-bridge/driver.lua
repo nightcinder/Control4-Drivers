@@ -1,10 +1,10 @@
 -- Shield TV Bridge - Control4 DriverWorks driver (Lua 5.1)
--- Version 1.2.5
+-- Version 1.3.0
 -- Controls an NVIDIA Shield TV through an HTTP/JSON bridge on a Linux host.
 -- Presents one media_service primary proxy (5001: keys, power, HDMI output, Navigator
 -- Now Playing) and an avswitch proxy (5002) with 25 app slots.
 
-local DRIVER_VERSION = "1.2.5"
+local DRIVER_VERSION = "1.3.0"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -282,6 +282,35 @@ local function httpPost(path, query, onDone)
     end)
   end)
   if not ok then logMsg(LOG_ERROR, "POST %s failed: %s", path, tostring(err)) end
+end
+
+-- Fills the Shield Name drop-down from the bridge (GET /v1/shields). Bridges older than
+-- 0.4.0 answer 404, in which case the list from driver.xml stays as it is.
+local function refreshShieldList()
+  local base = trim(prop("Bridge URL")):gsub("/+$", "")
+  if base == "" then return end
+  pcall(function() C4:urlSetTimeout(10) end)
+  local ok, err = pcall(function()
+    C4:urlGet(base .. "/v1/shields", authHeaders(), false, function(ticketId, strData, responseCode, tHeaders, strError)
+      pcall(function()
+        if tonumber(responseCode) ~= 200 or not strData then
+          logMsg(LOG_WARN, "Shield list unavailable (code %s)", tostring(responseCode))
+          return
+        end
+        local arr = strData:match('"shields"%s*:%s*%[(.-)%]') or ""
+        local names = {}
+        for n in arr:gmatch('"(.-)"') do names[#names + 1] = n end
+        if #names == 0 then return end
+        local cur, pick = shieldName(), names[1]
+        for _, n in ipairs(names) do
+          if n == cur then pick = cur break end
+        end
+        C4:UpdatePropertyList("Shield Name", table.concat(names, ","), pick)
+        logMsg(LOG_INFO, "Shield list from bridge: %s (selected %s)", table.concat(names, ", "), pick)
+      end)
+    end)
+  end)
+  if not ok then logMsg(LOG_ERROR, "Shield list request failed: %s", tostring(err)) end
 end
 
 -- ---------------------------------------------------------------- status and Now Playing
@@ -774,6 +803,7 @@ function OnDriverLateInit()
     C4:UpdateProperty("Connected To Bridge", "false")
     npSetVars()
     npRegisterRooms()
+    refreshShieldList()
     startPolling()
     pollStatus()
   end)
@@ -786,6 +816,7 @@ function OnPropertyChanged(strProperty)
       applyLogSettings()
     elseif strProperty == "Poll Seconds" or strProperty == "Bridge URL"
         or strProperty == "Bridge Token" or strProperty == "Shield Name" then
+      if strProperty == "Bridge URL" or strProperty == "Bridge Token" then refreshShieldList() end
       startPolling()
     end
   end)
