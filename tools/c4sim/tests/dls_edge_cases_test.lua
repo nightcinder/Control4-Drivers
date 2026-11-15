@@ -95,4 +95,57 @@ t.test("5: on_daylight room with a 00:30 off time lights after the trigger and g
   t.ok(ramps_off() >= 1, "off after 00:30")
 end)
 
+-- 1.11.4: restart helper (same properties as start, clock set to a day offset plus h:m, PersistData carried over)
+local function restart_at(day_offset, h, m, persist)
+  local ok = sim.load_driver(DRV, {
+    xml = XML,
+    properties = { ["Enabled"] = "On", ["Update Interval (min)"] = "1", ["Ramp Time (sec)"] = "90", ["Override Hold (min)"] = "120", ["Rooms JSON"] = ROOM_DAYLIGHT_WRAP, ["Presence"] = "Home", ["Latitude"] = "51.5", ["Longitude"] = "-0.1" },
+    persist = persist,
+    start_ms = (local_sec(h, m) + day_offset * 86400) * SEC,
+    before = function(s) s.set_var(U, VAR, "40") end,
+  })
+  t.ok(ok, "reload: " .. tostring(sim.errors[1]))
+  sim.sent = {}
+end
+
+local ROOM_PRESENCE_EVE = '[{"name":"Hall","key":"Hall","on":"18:00","off":"22:30","presence":{"follow":true},"lights":[{"id":337,"kind":"lutron"}]}]'
+
+t.test("6: on_daylight wrap room restarted between midnight and its 00:30 off stays on (trigger persisted)", function()
+  sim.reset(1)
+  start(15, 0, ROOM_DAYLIGHT_WRAP)
+  sim.advance(2 * 60 * SEC)
+  t.ok(ramps_on() >= 1, "lights on after the afternoon trigger")
+  local persist = sim.persist
+  restart_at(1, 0, 10, persist)                -- restart at 00:10 the next day, lights still on
+  sim.advance(2 * 60 * SEC)
+  t.eq(ramps_off(), 0, "no early off after the restart before 00:30")
+  sim.advance(30 * 60 * SEC)
+  t.ok(ramps_off() >= 1, "off after 00:30 following the restart")
+end)
+
+t.test("7: bad or stale persisted daylight data is ignored without error", function()
+  sim.reset(1)
+  start(15, 0, ROOM_DAYLIGHT_WRAP)
+  sim.advance(2 * 60 * SEC)
+  local persist = sim.persist
+  persist.daylightFired = "junk"
+  restart_at(1, 0, 10, persist)
+  sim.advance(60 * SEC)
+  t.eq(#sim.errors, 0, "no Lua error with junk persisted data")
+  persist.daylightFired = { Porch = 12345 }
+  restart_at(1, 0, 10, persist)
+  sim.advance(60 * SEC)
+  t.eq(#sim.errors, 0, "no Lua error with non-string persisted date")
+end)
+
+t.test("8: presence room restarted inside its off window with a light on and no occupancy is faded by presence logic", function()
+  sim.reset(1)
+  start(23, 0, ROOM_PRESENCE_EVE)
+  sim.advance(60 * SEC)
+  t.eq(ramps_off(), 0, "nothing sent before the presence gate opens")
+  sim.advance(4 * 60 * SEC)
+  t.ok(ramps_off() >= 1, "vacant follow room fades its light after the gate opens")
+  t.eq(ramps_on(), 0, "nothing turned on")
+end)
+
 t.finish("dls-edge-cases")
