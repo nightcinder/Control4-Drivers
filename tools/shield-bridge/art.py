@@ -123,7 +123,20 @@ class ArtResolver:
         self._keys[key] = art_id
         return art_id
 
-    async def resolve(self, package: str, title: str, artist: str, album: str) -> str | None:
+    def fallback_expired(self, package: str, title: str, artist: str) -> bool:
+        """Return True unless permanent art or an unexpired fallback image is cached."""
+        key = f"{package}|{title}|{artist}"
+        if key in self._keys and self._keys[key] in self._images:
+            return False
+        fallback = self._fallback_until.get(key)
+        if fallback:
+            art_id, until = fallback
+            return time.monotonic() >= until or art_id not in self._images
+        return True
+
+    async def resolve(
+        self, package: str, title: str, artist: str, album: str, thumb: str = ""
+    ) -> str | None:
         key = f"{package}|{title}|{artist}"
         fallback = self._fallback_until.get(key)
         if fallback:
@@ -133,11 +146,18 @@ class ArtResolver:
             del self._fallback_until[key]
         if key in self._keys and self._keys[key] in self._images:
             return self._keys[key]
-        for finder in (self._plex, self._itunes):
+        finders: list[tuple[str, Callable[[], Awaitable[bytes | None]]]] = []
+        if thumb:
+            finders.append(("_plex_thumb", lambda: self._plex_thumb(thumb)))
+        finders.extend((
+            ("_plex", lambda: self._plex(title, artist, album)),
+            ("_itunes", lambda: self._itunes(title, artist, album)),
+        ))
+        for label, attempt in finders:
             try:
-                found = await asyncio.wait_for(finder(title, artist, album), HTTP_TIMEOUT + 4)
+                found = await asyncio.wait_for(attempt(), HTTP_TIMEOUT + 4)
             except Exception as exc:  # noqa: BLE001
-                log.debug("art %s: %s", finder.__name__, exc)
+                log.debug("art %s: %s", label, exc)
                 found = None
             if found:
                 return self._store(key, _square(found), "image/png")
@@ -159,6 +179,14 @@ class ArtResolver:
                     return None
                 return await resp.read()
 
+    async def _plex_thumb(self, thumb: str) -> bytes | None:
+        base, token = self._cfg.get("plex_url"), self._cfg.get("plex_token")
+        if not base or not token or not thumb:
+            return None
+        headers = {"X-Plex-Token": str(token), "Accept": "application/json"}
+        path = thumb if thumb.startswith("/") else f"/{thumb}"
+        return await self._fetch(f"{str(base).rstrip('/')}{path}", headers)
+
     async def _plex(self, title: str, artist: str, album: str) -> bytes | None:
         base, token = self._cfg.get("plex_url"), self._cfg.get("plex_token")
         if not base or not token or not title:
@@ -172,7 +200,10 @@ class ArtResolver:
         items = (json.loads(raw).get("MediaContainer") or {}).get("Metadata") or []
         want = title.strip().lower()
         for item in items:
-            if str(item.get("title", "")).strip().lower() != want:
+            if (
+                str(item.get("title", "")).strip().lower() != want
+                and str(item.get("grandparentTitle", "")).strip().lower() != want
+            ):
                 continue
             kind = item.get("type")
             path = (item.get("grandparentThumb") if kind == "episode"

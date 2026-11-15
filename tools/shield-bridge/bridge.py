@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from aiohttp import web
 
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 CLIENT_NAME = "shield-bridge"
 HEALTH_INTERVAL = 2.0
 BACKOFF_MIN = 1.0
@@ -90,11 +90,20 @@ class _Session:
     meta: tuple[str | None, str | None, str | None] | None = None
 
 
-def _first(sessions: list[_Session], codes: frozenset[int] | set[int]) -> _Session | None:
-    return next((s for s in sessions if s.code in codes), None)
+def _pick_session(
+    sessions: list[_Session], codes: frozenset[int] | set[int], current_app: str | None = None
+) -> _Session | None:
+    matching = [s for s in sessions if s.code in codes]
+    if not matching:
+        return None
+    if current_app:
+        for s in matching:
+            if s.package == current_app:
+                return s
+    return matching[0]
 
 
-def parse_media_session(text: str) -> dict[str, Any]:
+def parse_media_session(text: str, current_app: str | None = None) -> dict[str, Any]:
     """Pick the active media session: playing/buffering first, then paused, else none."""
     sessions: list[_Session] = []
     for raw in text.splitlines():
@@ -111,7 +120,10 @@ def parse_media_session(text: str) -> dict[str, Any]:
             current.code = int(playback.group(1))
         if current.meta is None and "metadata:" in line and DESCRIPTION_KEY in line:
             current.meta = _split_metadata(line.split(DESCRIPTION_KEY, 1)[1])
-    chosen = _first(sessions, PLAYING_CODES) or _first(sessions, {PAUSED_CODE})
+    chosen = (
+        _pick_session(sessions, PLAYING_CODES, current_app)
+        or _pick_session(sessions, {PAUSED_CODE}, current_app)
+    )
     if chosen is None:
         return {"app": None, "state": "none", "title": None, "artist": None, "album": None}
     title, artist, album = chosen.meta or (None, None, None)
@@ -127,6 +139,8 @@ class ShieldConfig:
     name: str
     host: str
     adb_port: int
+    plex_machine_id: str = ""
+    plex_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -147,7 +161,13 @@ def load_config(path: Path) -> Config:
     raw = json.loads(path.read_text(encoding="utf-8"))
     base = path.resolve().parent
     shields = {
-        name: ShieldConfig(name, str(s["host"]), int(s.get("adb_port", 5555)))
+        name: ShieldConfig(
+            name,
+            str(s["host"]),
+            int(s.get("adb_port", 5555)),
+            plex_machine_id=str(s.get("plex_machine_id", "")),
+            plex_name=str(s.get("plex_name", "")),
+        )
         for name, s in raw.get("shields", {}).items()
     }
     if not shields:
@@ -240,6 +260,9 @@ class Shield:
         self.app: str | None = None
         self.now_playing: dict[str, Any] = parse_media_session("")
         self.art_path = ""
+        self._art_cfg = dict(bridge.art)
+        self._plex_thumb = ""
+        self._warned_plex_players: set[str] = set()
         self._art_key: tuple[Any, ...] | None = None
         self._art_task: asyncio.Task[None] | None = None
         self.art = self._make_art(bridge)
@@ -366,25 +389,154 @@ class Shield:
                 raise LinkDown(f"adb pull failed: {exc}") from exc
         return buf.getvalue()
 
-    async def _resolve_art(self, key: tuple[Any, ...]) -> None:
+    @staticmethod
+    def _player_match_score(cfg: ShieldConfig, player: dict[str, Any]) -> int:
+        title = str(player.get("title", "")).lower()
+        product = str(player.get("product", "")).lower()
+        machine = str(player.get("machineIdentifier", "")).lower()
+        want_id = cfg.plex_machine_id.strip().lower()
+        if want_id:
+            return 4 if want_id in machine else 0
+        want_name = cfg.plex_name.strip().lower()
+        if want_name and want_name in title:
+            return 4
+        if (cfg.host and player.get("address") == cfg.host) or (cfg.name and cfg.name.lower() in title):
+            return 3
+        if "shield" in title or "plex for android (tv)" in product or "com-plexapp-android" in machine:
+            return 2
+        return 0
+
+    def _matches_shield(self, player: dict[str, Any]) -> int:
+        score = self._player_match_score(self.cfg, player)
+        if score <= 0:
+            return 0
+        # Never claim a player that explicitly identifies another Shield in config.json.
+        for other in self._bridge.shields.values():
+            if other.name != self.cfg.name and self._player_match_score(other, player) >= 3:
+                return 0
+        return score
+
+    async def _fetch_plex_sessions(self, base: str, token: str) -> bytes | None:
+        import aiohttp
+
+        headers = {"X-Plex-Token": token, "Accept": "application/json"}
+        timeout = aiohttp.ClientTimeout(total=4)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f"{base.rstrip('/')}/status/sessions", headers=headers) as resp:
+                if resp.status != 200:
+                    return None
+                return await resp.read()
+
+    @staticmethod
+    def _format_plex_item(item: dict[str, Any], pstate: str) -> tuple[dict[str, Any], str]:
+        kind = str(item.get("type") or "")
+        if kind == "episode":
+            title = str(item.get("grandparentTitle") or item.get("title") or "").strip()
+            p_idx, idx = item.get("parentIndex"), item.get("index")
+            se = (
+                f"S{int(p_idx):02d}E{int(idx):02d}"
+                if (isinstance(p_idx, int) and not isinstance(p_idx, bool)
+                    and isinstance(idx, int) and not isinstance(idx, bool))
+                else ""
+            )
+            ep = str(item.get("title") or "").strip()
+            artist = f"{se} · {ep}" if (se and ep) else (ep or se)
+            album = str(item.get("parentTitle") or "").strip()
+            thumb = str(item.get("grandparentThumb") or item.get("parentThumb") or item.get("thumb") or "")
+        elif kind == "track":
+            title = str(item.get("title") or "").strip()
+            artist = str(item.get("grandparentTitle") or item.get("originalTitle") or "").strip()
+            album = str(item.get("parentTitle") or "").strip()
+            thumb = str(item.get("parentThumb") or item.get("thumb") or item.get("grandparentThumb") or "")
+        else:
+            title = str(item.get("title") or "").strip()
+            artist = str(item.get("year") or "").strip()
+            album = str(item.get("tagline") or "").strip()
+            thumb = str(item.get("thumb") or "")
+        return (
+            {
+                "state": pstate,
+                "title": title or None,
+                "artist": artist or None,
+                "album": album or None,
+                "app": "com.plexapp.android",
+            },
+            thumb,
+        )
+
+    async def _plex_now_playing(self) -> tuple[dict[str, Any], str] | None:
+        base, token = self._art_cfg.get("plex_url"), self._art_cfg.get("plex_token")
+        if not base or not token:
+            return None
+        raw = await self._fetch_plex_sessions(str(base), str(token))
+        if not raw:
+            return None
+        items = (json.loads(raw).get("MediaContainer") or {}).get("Metadata") or []
+        best: tuple[tuple[int, int], dict[str, Any], str] | None = None
+        for item in items:
+            player = item.get("Player") or {}
+            raw_state = str(player.get("state", "")).lower()
+            if raw_state not in ("playing", "paused", "buffering"):
+                continue
+            score = self._matches_shield(player)
+            if score <= 0:
+                continue
+            is_playing = 1 if raw_state in ("playing", "buffering") else 0
+            rank = (score, is_playing)
+            if best is None or rank > best[0]:
+                pstate = "playing" if is_playing else "paused"
+                best = (rank, item, pstate)
+        if best is None:
+            return None
+        if best[0][0] == 2 and len(self._bridge.shields) > 1:
+            player = best[1].get("Player") or {}
+            mid = str(player.get("machineIdentifier") or "")
+            if mid not in self._warned_plex_players:
+                self._warned_plex_players.add(mid)
+                log.info(
+                    "%s matched Plex player generically (title=%r machineIdentifier=%r); "
+                    "set plex_machine_id in config.json to pin each Shield",
+                    self.cfg.name,
+                    player.get("title"),
+                    mid,
+                )
+        return self._format_plex_item(best[1], best[2])
+
+    async def _resolve_art(self, key: tuple[Any, ...], thumb: str = "") -> None:
         app, title, artist, album = key
-        art_id = await self.art.resolve(app, title, artist, album)
+        art_id = await self.art.resolve(app, title, artist, album, thumb=thumb)
         if key == self._art_key:
             self.art_path = f"/art/{art_id}" if art_id else ""
 
     def _update_art(self) -> None:
-        np = self.now_playing
-        if self.art is None or np.get("state") not in ("playing", "paused") or not np.get("title"):
+        if self.art is None:
             self._art_key, self.art_path = None, ""
             return
-        key = (np.get("app") or self.app or "", np.get("title") or "", np.get("artist") or "",
-               np.get("album") or "")
+        np = self.now_playing
+        if np.get("state") in ("playing", "paused") and np.get("title"):
+            key = (
+                np.get("app") or self.app or "",
+                np.get("title") or "",
+                np.get("artist") or "",
+                np.get("album") or "",
+            )
+        elif self.awake is not False and self.app:
+            key = (self.app, "", "", "")
+        else:
+            self._art_key, self.art_path = None, ""
+            return
         if key == self._art_key:
+            # Only retry on fallback TTL when a real title exists to match Plex/iTunes posters;
+            # app-only idle tiles reuse their art_id instead of churning URLs every FALLBACK_TTL.
+            if (self._art_task is None or self._art_task.done()) and (
+                not self.art_path or (bool(key[1]) and self.art.fallback_expired(key[0], key[1], key[2]))
+            ):
+                self._art_task = asyncio.create_task(self._resolve_art(key, self._plex_thumb))
             return
         self._art_key, self.art_path = key, ""
         if self._art_task is not None and not self._art_task.done():
             self._art_task.cancel()
-        self._art_task = asyncio.create_task(self._resolve_art(key))
+        self._art_task = asyncio.create_task(self._resolve_art(key, self._plex_thumb))
 
     # -- polling
     async def _poll_loop(self) -> None:
@@ -408,7 +560,18 @@ class Shield:
         if awake is not None:
             self.awake = awake
         self.app = parse_focus(focus_text)
-        self.now_playing = parse_media_session(media_text)
+        np = parse_media_session(media_text, self.app)
+        plex_thumb = ""
+        if self.app == "com.plexapp.android":
+            try:
+                plex_res = await self._plex_now_playing()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("%s plex now playing: %s", self.cfg.name, exc)
+                plex_res = None
+            if plex_res is not None:
+                np, plex_thumb = plex_res
+        self.now_playing = np
+        self._plex_thumb = plex_thumb
         self._update_art()
 
 
