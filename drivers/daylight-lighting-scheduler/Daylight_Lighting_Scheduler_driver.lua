@@ -1,8 +1,9 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.11.1
+  DRIVER_VERSION: 1.11.2
 
-  1.11.1: Fable review fixes: manual off just after an auto-on now holds; a light turned on during/after a DLS fade is adopted instead of faded again; feed silence/unknown/stuck no longer end a manual-off hold; Enabled=Off and scene hold block presence ramps; HELLO count tolerates rooms DLS lacks; Presence Lighting/Vacancy Delay change no longer fades occupied rooms; persisted presence data type-guarded.
+  1.11.2: manual change made while a scheduled-off (or any non-presence) ramp is running is no longer swallowed as DLS's own feedback: a level moving against the ramp now sets the per-light hold, so off enforcement no longer re-sends 0 on the user.
+1.11.1: Fable review fixes: manual off just after an auto-on now holds; a light turned on during/after a DLS fade is adopted instead of faded again; feed silence/unknown/stuck no longer end a manual-off hold; Enabled=Off and scene hold block presence ramps; HELLO count tolerates rooms DLS lacks; Presence Lighting/Vacancy Delay change no longer fades occupied rooms; persisted presence data type-guarded.
   1.11.0 (UNTESTED): follow-me presence. Rooms JSON "presence" object per room; OCC lines from the poller
   (Presence Port, same TCP port as PRESENCE) drive a per-room state machine VACANT / OCCUPIED / FADING / HOLD.
   Silence (Property "Occupancy Silence (sec)", default 180) = vacant. Night level per room, manual off in an
@@ -31,7 +32,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.11.1"
+DRIVER_VERSION = "1.11.2"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -293,6 +294,7 @@ local function sendLevel(light, level, ms)
   enqueue(function() C4:SendToDevice(light.id, "RAMP_TO_LEVEL", { LEVEL = lvl, TIME = ms }) end)
   light.rampFrom = tonumber(C4:GetDeviceVariable(light.id, LIGHT_LEVEL_VAR)) or 0   -- section 7 rule 1
   light.rampTo = lvl
+  light.settled = nil
   light.lastLevel = level
   light.lastCmd = os.time()
   light.rampEnd = os.time() + math.ceil(ms / 1000)
@@ -966,6 +968,18 @@ function Update()
       room.wasInWindow = inWindow
       if inWindow then room.offEnforce = nil end
 
+      -- 1.11.2 settle check: once an off ramp has finished, a light that sits well above 0 was turned on by hand
+      -- (feedback during the ramp can be swallowed as our own), so hold it instead of letting enforcement undo it
+      for _, l in ipairs(room.lights) do
+        if l.rampTo == 0 and l.rampEnd and now > l.rampEnd + 3 and not l.settled and not l.overrideUntil then
+          l.settled = true
+          if curLevel(l) > OWN_BAND then
+            l.overrideUntil = now + (tonumber(Properties["Override Hold (min)"]) or 120) * 60
+            dbg("light on after off ramp, holding", room.name, tostring(l.id))
+          end
+        end
+      end
+
       -- off enforcement: lights whose hold expired (or whose off was dropped) are re-sent off,
       -- at most once per 5 min per light, while the room is still off-window
       if room.offEnforce and not presenceOn() and not (room.offFadeUntil and now < room.offFadeUntil) then
@@ -1042,8 +1056,17 @@ function OnWatchedVariableChanged(idDevice, idVariable, strValue)
   if light.ignoreUntil and now <= light.ignoreUntil then
     local from, to = light.rampFrom or 0, light.rampTo or 0
     if not room.pr then
-      -- rooms without "presence": 1.10.1 rule, all feedback inside the window is our own
-      return
+      -- 1.11.2: only feedback that moves with the ramp is ours; a level moving against it (e.g. 0 -> 30 during a
+      -- scheduled-off ramp to 0) is a hand on the dimmer and falls through to the hold below
+      local own = true
+      local from, to = light.rampFrom or 0, light.rampTo or 0
+      if light.fbLast then
+        if to < from and v > light.fbLast + OWN_BAND then own = false end
+        if to > from and v < light.fbLast - OWN_BAND then own = false end
+      end
+      -- once the ramp is over (2 s settle) only the target level is ours
+      if own and light.rampEnd and now > light.rampEnd + 2 and math.abs(v - to) > OWN_BAND then own = false end
+      if own then light.fbLast = v return end
     else
       local own = v >= math.min(from, to) - OWN_BAND and v <= math.max(from, to) + OWN_BAND
       -- once the ramp is over (2 s settle) only the target level is ours
