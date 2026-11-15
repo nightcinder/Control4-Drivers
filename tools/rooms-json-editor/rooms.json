@@ -161,7 +161,7 @@
       }
     ],
     "wake": {
-      "enabled": false,
+      "enabled": true,
       "at": "sunrise-15",
       "stop": "sunrise+30",
       "ramp_min": 30,
