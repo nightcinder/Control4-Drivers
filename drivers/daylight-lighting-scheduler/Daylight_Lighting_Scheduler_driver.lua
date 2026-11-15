@@ -1,7 +1,8 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.11.3
+  DRIVER_VERSION: 1.11.4
 
+  1.11.4: an on_daylight room's daylight trigger (and the date it fired) is saved in PersistData and restored after a restart or Rooms JSON save when still valid for the day cycle, so an off time after midnight is not sent early.
   1.11.3: manual off inside the on-window stays off until the next on edge (not the hold timer); a manual off at 8% or
   less sets a hold; a Rooms JSON save or restart inside the off window sends the pending off; on_daylight rooms with an
   off time after midnight run through midnight (trigger kept until that time).
@@ -35,7 +36,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.11.3"
+DRIVER_VERSION = "1.11.4"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -945,6 +946,10 @@ function Update()
           local D = clearDaylight(el) * cloudTransmittance(cloudPct)
           if D < room.on_daylight then
             room.dayTriggered = true
+            if type(PersistData) == "table" then                       -- 1.11.4: the trigger survives a restart or Rooms JSON save
+              if type(PersistData.daylightFired) ~= "table" then PersistData.daylightFired = {} end
+              PersistData.daylightFired[room.name] = os.date("%Y%m%d", now)
+            end
             dbg("daylight trigger", room.name, string.format("D=%.2f", D))
           end
         end
@@ -1186,6 +1191,19 @@ local function loadRooms(closeGate)
       end
     end
     if #room.lights > 0 then table.insert(rooms, room) end
+    -- 1.11.4: restore the daylight trigger after a restart or Rooms JSON save. Valid only if it fired today, or
+    -- yesterday evening for a room whose off time is after midnight and not yet reached. Bad data is ignored.
+    if room.on_daylight and type(PersistData) == "table" and type(PersistData.daylightFired) == "table" then
+      local fired = PersistData.daylightFired[room.name]
+      if type(fired) == "string" then
+        local nowT = os.time()
+        local offMin = resolveTimeSpec(room.off or "23:00", nowT, latlon())
+        local firedToday = fired == os.date("%Y%m%d", nowT)
+        local firedYesterdayWrap = fired == os.date("%Y%m%d", nowT - 86400) and offMin ~= nil and offMin < 720
+          and minuteOf(nowT) < offMin
+        if firedToday or firedYesterdayWrap then room.dayTriggered = true end
+      end
+    end
     if type(r.presence) == "table" then
       local key = presenceKey(r)
       if #room.lights == 0 then warns[#warns + 1] = room.name .. ".presence (needs a light)"
