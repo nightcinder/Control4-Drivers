@@ -1,0 +1,179 @@
+<devicedata>
+	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Whisker or Control4</copyright>
+	<creator>Custom Driver Project</creator>
+	<manufacturer>Custom</manufacturer>
+	<name>litter-robot</name>
+	<model>Whisker Litter-Robot 4 (LAN Bridge)</model>
+	<created>11/15/2026 09:00 AM</created>
+	<modified>11/15/2026 09:00 AM</modified>
+	<version>1</version>
+	<small image_source="c4z">icons/device_sm.png</small>
+	<large image_source="c4z">icons/device_lg.png</large>
+	<control>lua_gen</control>
+	<controlmethod>ip</controlmethod>
+	<driver>DriverWorks</driver>
+	<combo>false</combo>
+	<proxies qty="1">
+		<proxy proxybindingid="5001" name="Litter-Robot 4" primary="True" image_source="c4z" small_image="icons/device_sm.png" large_image="icons/device_lg.png">uibutton</proxy>
+	</proxies>
+
+	<connections>
+		<connection>
+			<id>5001</id>
+			<facing>6</facing>
+			<connectionname>UIBUTTON</connectionname>
+			<type>2</type>
+			<consumer>False</consumer>
+			<audiosource>False</audiosource>
+			<videosource>False</videosource>
+			<linelevel>False</linelevel>
+			<classes>
+				<class>
+					<classname>UIBUTTON</classname>
+				</class>
+			</classes>
+		</connection>
+	</connections>
+	<templatedescription>Whisker Litter-Robot 4 cat visit counter through a LAN HTTP bridge. Fires Visit Threshold Reached once after the set number of cat visits and a settle time with the box ready, then resets the bridge counter. UNTESTED.</templatedescription>
+
+	<!--
+		v1 (1.0.0) - first release: cat visit counting, visit threshold with settle time, drawer full and bridge unreachable events. UNTESTED on hardware and in Composer.
+		Bridge endpoints: GET /status and POST /reset-visits (litter-bridge on liesa, default port 8793).
+	-->
+	<events>
+		<event>
+			<id>1</id>
+			<name>Cat Visit Detected</name>
+			<description>Fires each time the bridge counts a new cat visit</description>
+		</event>
+		<event>
+			<id>2</id>
+			<name>Visit Threshold Reached</name>
+			<description>Fires once when visits reach Visits Before Clean and the box has been ready for Settle Minutes since the last visit. The driver then resets the bridge counter</description>
+		</event>
+		<event>
+			<id>3</id>
+			<name>Drawer Full</name>
+			<description>Fires when the waste drawer reports full</description>
+		</event>
+		<event>
+			<id>4</id>
+			<name>Bridge Unreachable</name>
+			<description>Fires when the LAN bridge cannot be reached or returns an error</description>
+		</event>
+	</events>
+	<config>
+		<power_management_method>AlwaysOn</power_management_method>
+		<power_command_delay>0</power_command_delay>
+		<power_delay>0</power_delay>
+		<power_command_needed>False</power_command_needed>
+		<script file="driver.lua" />
+
+		<commands>
+			<command>
+				<name>Reset Visit Counter</name>
+				<command>RESET_VISITS</command>
+				<description>Set the bridge visit counter back to zero</description>
+			</command>
+			<command>
+				<name>Refresh Now</name>
+				<command>REFRESH</command>
+				<description>Poll the bridge now</description>
+			</command>
+			<command>
+				<name>Fire Test Threshold</name>
+				<command>FIRE_TEST_THRESHOLD</command>
+				<description>Fire Visit Threshold Reached for testing without changing the bridge counter</description>
+			</command>
+		</commands>
+
+		<properties>
+			<property>
+				<name>Bridge Host</name>
+				<type>STRING</type>
+				<readonly>false</readonly>
+				<default>172.21.1.157</default>
+			</property>
+			<property>
+				<name>Bridge Port</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>1</minimum>
+				<maximum>65535</maximum>
+				<readonly>false</readonly>
+				<default>8793</default>
+			</property>
+			<property>
+				<name>Poll Interval</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>5</minimum>
+				<maximum>3600</maximum>
+				<readonly>false</readonly>
+				<default>15</default>
+			</property>
+			<property>
+				<name>Visits Before Clean</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>1</minimum>
+				<maximum>50</maximum>
+				<readonly>false</readonly>
+				<default>2</default>
+			</property>
+			<property>
+				<name>Settle Minutes</name>
+				<type>RANGED_INTEGER</type>
+				<minimum>0</minimum>
+				<maximum>240</maximum>
+				<readonly>false</readonly>
+				<default>10</default>
+			</property>
+			<property>
+				<name>Log Mode</name>
+				<type>LIST</type>
+				<readonly>false</readonly>
+				<default>Off</default>
+				<items>
+					<item>Off</item>
+					<item>Print</item>
+					<item>Log</item>
+					<item>Print and Log</item>
+				</items>
+			</property>
+			<property>
+				<name>Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Not started</default>
+			</property>
+			<property>
+				<name>Robot Status</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Visits Since Clean</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>0</default>
+			</property>
+			<property>
+				<name>Drawer Level</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>n/a</default>
+			</property>
+			<property>
+				<name>Last Error</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Driver Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>1.0.0</default>
+			</property>
+		</properties>
+	</config>
+</devicedata>
