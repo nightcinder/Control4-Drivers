@@ -1,10 +1,12 @@
 -- Shield TV Bridge - Control4 DriverWorks driver (Lua 5.1)
--- Version 1.3.2
+-- Version 1.5.1
 -- Controls an NVIDIA Shield TV through an HTTP/JSON bridge on a Linux host.
 -- Presents one media_service primary proxy (5001: keys, power, HDMI output, Navigator
--- Now Playing) and an avswitch proxy (5002) with 25 app slots.
+-- Now Playing), an avswitch proxy (5002) with 25 mini app slots (3051-3075), and a uibutton
+-- proxy (5003, "Shield Remote") that opens the phone remote web page www/remote1.html.
+-- The App N Package properties are fallbacks, used only when no mini app is bound to the slot.
 
-local DRIVER_VERSION = "1.3.2"
+local DRIVER_VERSION = "1.5.1"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -65,6 +67,18 @@ local connectedSent = nil
 local lastApp = nil
 local lastAwake = nil
 local lastNowKey = nil
+local publishRemoteState   -- forward declaration (Shield Remote page, defined below)
+local fetchInlineArt       -- forward declaration
+local publishArt           -- forward declaration (sets the UI_ART variable)
+-- Art diagnostics the Shield Remote page reports back (shown in Web Page Status).
+local UI_ART_STATUS = {
+  UI_ART_OK = "art shown",
+  UI_ART_ERR = "art failed to load",
+  UI_ART_NONE = "no art received",
+}
+local artInline = { key = "", data = "" }   -- art path and its data: URI for the Shield Remote page
+local roomMuted = nil      -- room mute state for the page (nil = unknown)
+local roomVolume = nil
 
 -- ---------------------------------------------------------------- helpers
 
@@ -120,6 +134,20 @@ end
 
 -- ---------------------------------------------------------------- JSON (flat, no library)
 
+-- Code point to UTF-8 bytes (Lua 5.1 has no utf8 library). Bad or lone surrogate codes give "?".
+local function utf8char(code)
+  if not code or code < 0 or (code >= 0xD800 and code <= 0xDFFF) or code > 0x10FFFF then return "?" end
+  if code < 0x80 then return string.char(code) end
+  if code < 0x800 then
+    return string.char(0xC0 + math.floor(code / 0x40), 0x80 + code % 0x40)
+  end
+  if code < 0x10000 then
+    return string.char(0xE0 + math.floor(code / 0x1000), 0x80 + math.floor(code / 0x40) % 0x40, 0x80 + code % 0x40)
+  end
+  return string.char(0xF0 + math.floor(code / 0x40000), 0x80 + math.floor(code / 0x1000) % 0x40,
+    0x80 + math.floor(code / 0x40) % 0x40, 0x80 + code % 0x40)
+end
+
 -- startPos is the index of the opening quote. Returns decoded text and the
 -- index of the closing quote.
 local function parseJsonString(s, startPos)
@@ -137,12 +165,16 @@ local function parseJsonString(s, startPos)
       elseif nx == "r" then
         out[#out + 1] = "\r"
       elseif nx == "u" then
+        -- \uXXXX to UTF-8 (surrogate pairs joined); 1.5.0: was "?" for anything non-ASCII.
         local code = tonumber(s:sub(i + 2, i + 5), 16)
-        if code and code < 128 then
-          out[#out + 1] = string.char(code)
-        else
-          out[#out + 1] = "?"
+        if code and code >= 0xD800 and code <= 0xDBFF and s:sub(i + 6, i + 7) == "\\u" then
+          local lo = tonumber(s:sub(i + 8, i + 11), 16)
+          if lo and lo >= 0xDC00 and lo <= 0xDFFF then
+            code = 0x10000 + (code - 0xD800) * 0x400 + (lo - 0xDC00)
+            i = i + 6
+          end
         end
+        out[#out + 1] = utf8char(code)
         i = i + 4
       else
         out[#out + 1] = nx
@@ -490,6 +522,7 @@ local function npPublishAll()
   npSendMediaInfo()
   npSendQueue()
   npSendDashboard()
+  if publishRemoteState then publishRemoteState(false) end
 end
 
 local function npStopTimer()
@@ -678,22 +711,94 @@ local function slotFromInput(v)
   return n - 3050
 end
 
+-- Mini app variables checked in order; the first valid value wins.
+local MINIAPP_VARS = { "UM_NV_SHIELD", "UM_SUNBRITE_TV", "UM_AMAZON" }
+
+-- Returns a trimmed package name that is safe to put in a launch url, or nil.
+local function safePackage(s)
+  if type(s) ~= "string" then return nil end
+  local p = trim(s)
+  if p == "" then return nil end
+  if not string.match(p, "^[%w_%.]+$") then return nil end
+  return p
+end
+
+-- vars is { [id] = { name = ..., value = ... } } or a plain { NAME = "value" } map.
+local function miniAppPackage(vars)
+  if type(vars) ~= "table" then return nil end
+  local byName = {}
+  for k, v in pairs(vars) do
+    if type(v) == "table" then
+      if type(v.name) == "string" then byName[v.name] = v.value end
+    elseif type(k) == "string" then
+      byName[k] = v
+    end
+  end
+  for _, name in ipairs(MINIAPP_VARS) do
+    local pkg = safePackage(byName[name])
+    if pkg then return pkg end
+  end
+  return nil
+end
+
+-- Device id of the mini app bound to this input, or nil.
+local function boundMiniApp(input)
+  local n = tonumber(input)
+  if not n then return nil end
+  local ok, dev = pcall(function() return C4:GetBoundProviderDevice(C4:GetDeviceID(), n) end)
+  if not ok or dev == nil or dev == 0 or dev == "" then return nil end
+  return dev
+end
+
+-- Package to launch for an input, and where it came from ("miniapp", "property" or nil).
+local function packageForInput(input)
+  local slot = slotFromInput(input)
+  if not slot then return nil, nil end
+  local dev = boundMiniApp(input)
+  if dev then
+    local ok, vars = pcall(function() return C4:GetDeviceVariables(dev) end)
+    if ok then
+      local pkg = miniAppPackage(vars)
+      if pkg then return pkg, "miniapp" end
+    end
+  end
+  local raw = trim(prop("App " .. slot .. " Package"))
+  if raw == "" then return nil, nil end
+  local pkg = safePackage(raw)
+  if not pkg then
+    logMsg(LOG_WARN, "App slot %d package has disallowed characters", slot)
+    return nil, nil
+  end
+  return pkg, "property"
+end
+
+-- Writes "Bound Apps": each MiniApp slot with a usable mini app value, or "none".
+local function refreshBoundApps()
+  local parts = {}
+  for slot = 1, 25 do
+    local dev = boundMiniApp(3050 + slot)
+    if dev then
+      local ok, vars = pcall(function() return C4:GetDeviceVariables(dev) end)
+      local pkg = ok and miniAppPackage(vars) or nil
+      if pkg then parts[#parts + 1] = "MiniApp " .. slot .. "=" .. pkg end
+    end
+  end
+  local text = (#parts > 0) and table.concat(parts, "; ") or "none"
+  pcall(function() C4:UpdateProperty("Bound Apps", text) end)
+end
+
 local function switchToInput(input, output)
   local slot = slotFromInput(input)
   if not slot then
     logMsg(LOG_WARN, "Input %s is not an app slot", tostring(input))
     return
   end
-  local pkg = trim(prop("App " .. slot .. " Package"))
-  if pkg == "" then
+  local pkg, source = packageForInput(input)
+  if not pkg then
     logMsg(LOG_WARN, "App slot %d has no package set", slot)
     return
   end
-  if not string.match(pkg, "^[%w_%.]+$") then
-    logMsg(LOG_WARN, "App slot %d package has disallowed characters", slot)
-    return
-  end
-  logMsg(LOG_INFO, "Launching app slot %d (%s)", slot, pkg)
+  logMsg(LOG_INFO, "Launching app slot %d (%s, from %s)", slot, pkg, source)
   if lastAwake == false then
     httpPost("/v1/wake", nil, nil)
   end
@@ -703,12 +808,400 @@ end
 
 local BUTTON_LABEL_KEY = BUTTON_VALUES
 
+-- ---------------------------------------------------------------- Navigator UI (Tabs & Screens)
+
+local function xmlUnesc(s)
+  s = tostring(s or "")
+  s = string.gsub(s, "&quot;", '"')
+  s = string.gsub(s, "&apos;", "'")
+  s = string.gsub(s, "&lt;", "<")
+  s = string.gsub(s, "&gt;", ">")
+  s = string.gsub(s, "&amp;", "&")
+  return s
+end
+
+local function parseNavArgs(tParams)
+  local args = {}
+  local raw = tParams and tParams.ARGS
+  if type(raw) ~= "string" or raw == "" then return args end
+  if C4 and C4.ParseXml then
+    local ok, parsed = pcall(function() return C4:ParseXml(raw) end)
+    if ok and type(parsed) == "table" and type(parsed.ChildNodes) == "table" then
+      for _, node in pairs(parsed.ChildNodes) do
+        if node.Attributes and node.Attributes.name then
+          args[node.Attributes.name] = node.Value or ""
+        end
+      end
+      return args
+    end
+  end
+  for k, v in string.gmatch(raw, '<arg%s+name=["\']([^"\']+)["\'][^>]*>(.-)</arg>') do
+    args[k] = xmlUnesc(v)
+  end
+  return args
+end
+
+local function sendNavData(tParams, data)
+  if tParams and tParams.NAVID and tParams.SEQ then
+    C4:SendToProxy(PROXY_NOWPLAYING, "DATA_RECEIVED", {
+      NAVID = tParams.NAVID,
+      SEQ = tParams.SEQ,
+      DATA = data or "",
+    })
+  end
+end
+
+local function navListItemXml(id, title, subtitle, isHeader, actionId)
+  local out = { "<item>" }
+  if id and id ~= "" then
+    out[#out + 1] = "<id>" .. xmlEsc(id) .. "</id>"
+  end
+  out[#out + 1] = "<title>" .. xmlEsc(title or "") .. "</title>"
+  if subtitle and subtitle ~= "" then
+    out[#out + 1] = "<subtitle>" .. xmlEsc(subtitle) .. "</subtitle>"
+  end
+  if isHeader then
+    out[#out + 1] = "<isHeader>true</isHeader>"
+  elseif actionId and actionId ~= "" then
+    out[#out + 1] = "<default_action>" .. xmlEsc(actionId) .. "</default_action>"
+    out[#out + 1] = "<actions_list>" .. xmlEsc(actionId) .. "</actions_list>"
+  end
+  out[#out + 1] = "</item>"
+  return table.concat(out)
+end
+
+local REMOTE_UI_ITEMS = {
+  { header = true, title = "Navigation" },
+  { id = "DPAD_CENTER", title = "Select (OK)" },
+  { id = "DPAD_UP", title = "Up" },
+  { id = "DPAD_DOWN", title = "Down" },
+  { id = "DPAD_LEFT", title = "Left" },
+  { id = "DPAD_RIGHT", title = "Right" },
+  { id = "HOME", title = "Home" },
+  { id = "BACK", title = "Back" },
+  { id = "MENU", title = "Menu" },
+  { header = true, title = "Playback" },
+  { id = "MEDIA_PLAY", title = "Play" },
+  { id = "MEDIA_PAUSE", title = "Pause" },
+  { id = "__nowplaying__", title = "Now Playing", subtitle = "Open playback controls" },
+}
+
+local function buildRemoteListXml()
+  local parts = { "<List>" }
+  for _, it in ipairs(REMOTE_UI_ITEMS) do
+    parts[#parts + 1] = navListItemXml(it.id, it.title, it.subtitle, it.header, "RemotePress")
+  end
+  parts[#parts + 1] = "</List>"
+  return table.concat(parts)
+end
+
+-- Display name of a bound mini app device, or nil.
+local function miniAppName(input)
+  local dev = boundMiniApp(input)
+  if not dev or not C4.GetDeviceDisplayName then return nil end
+  local ok, name = pcall(function() return C4:GetDeviceDisplayName(tonumber(dev)) end)
+  if ok and type(name) == "string" and trim(name) ~= "" then return trim(name) end
+  return nil
+end
+
+-- 1.5.0: the Watch page is Apps only (the Remote key list is gone; the D-pad lives in the
+-- Shield Remote web page driver). Lists bound mini apps first-class, App N Package as fallback.
+local function buildAppsListXml()
+  local parts = { "<List>",
+    navListItemXml("__nowplaying__", "Now Playing", "Open playback controls", false, "RemotePress"),
+    navListItemXml(nil, "Apps", nil, true) }
+  local count, seen = 0, {}
+  for slot = 1, 25 do
+    local input = 3050 + slot
+    local pkg = packageForInput(input)
+    if pkg and not seen[pkg] then
+      seen[pkg] = true
+      count = count + 1
+      parts[#parts + 1] = navListItemXml(pkg, miniAppName(input) or appLabel(pkg), nil, false, "AppLaunchUI")
+    end
+  end
+  if count == 0 then
+    parts[#parts + 1] = navListItemXml(nil, "No apps configured", "Bind mini apps or set App N Package in Composer", false)
+  end
+  parts[#parts + 1] = "</List>"
+  return table.concat(parts)
+end
+
+local function ensureRoomSelected(roomId)
+  local rid = tonumber(roomId)
+  if rid and C4.GetBoundConsumerDevices then
+    local ok, devs = pcall(function() return C4:GetBoundConsumerDevices(C4:GetDeviceID(), PROXY_NOWPLAYING) end)
+    local proxyId = (ok and type(devs) == "table") and next(devs) or nil
+    if proxyId and C4.SendToDevice then
+      pcall(function() C4:SendToDevice(rid, "SELECT_VIDEO_DEVICE", { deviceid = proxyId }) end)
+    end
+  end
+  if lastAwake == false then
+    httpPost("/v1/wake", nil, nil)
+  end
+  npSelected = true
+  npPublishAll()
+  npStartTimer()
+end
+
+-- ---------------------------------------------------------------- Shield Remote web page (1.5.0)
+-- uibutton proxy 5003 opens www/remote3.html. The page sends parameter-free UI_* commands
+-- (UI_KEY_<KEY>, UI_VOL_UP/DOWN, UI_MUTE, UI_REFRESH, UI_HELLO_<build>) and reads the UI_STATE
+-- variable / SendDataToUI snapshot. Opening the page (SELECT on 5003) never sends a key.
+local PROXY_REMOTE = 5003
+local PAGE_BUILD = 3            -- must match PAGE_BUILD in www/remote3.html (file renamed per release)
+local uiSeq = 0
+
+local REMOTE_KEYS = {
+  DPAD_UP = true, DPAD_DOWN = true, DPAD_LEFT = true, DPAD_RIGHT = true, DPAD_CENTER = true,
+  BACK = true, HOME = true, MENU = true,
+  MEDIA_PLAY = true, MEDIA_PAUSE = true, MEDIA_PLAY_PAUSE = true, MEDIA_NEXT = true,
+  MEDIA_PREVIOUS = true, MEDIA_REWIND = true, MEDIA_FAST_FORWARD = true,
+}
+
+local function myProxyId()
+  if not C4.GetBoundConsumerDevices then return nil end
+  local ok, devs = pcall(function() return C4:GetBoundConsumerDevices(C4:GetDeviceID(), PROXY_NOWPLAYING) end)
+  return (ok and type(devs) == "table") and tonumber((next(devs))) or nil
+end
+
+-- True when the room's current video/watch source is this Shield.
+local function roomIsOnMe(roomId)
+  local pid = myProxyId()
+  if not pid then return true end   -- unknown: do not force a source change
+  local ok, v = pcall(function() return C4:GetDeviceVariable(tonumber(roomId), VAR_CURRENT_SELECTED_DEVICE) end)
+  return ok and tonumber(v) == pid
+end
+
+local function jsonEsc(s)
+  s = tostring(s or "")
+  s = string.gsub(s, '[%c"\\]', function(c)
+    if c == '"' then return '\\"' end
+    if c == "\\" then return "\\\\" end
+    return string.format("\\u%04x", string.byte(c))
+  end)
+  return '"' .. s .. '"'
+end
+
+local remoteStateText = nil
+
+publishRemoteState = function(force)
+  local it = npCurrent or {}
+  if fetchInlineArt then fetchInlineArt(it.art or "") end
+  local awake = "null"
+  if lastAwake == true then awake = "true" elseif lastAwake == false then awake = "false" end
+  local text = "{" .. table.concat({
+    '"title":' .. jsonEsc(it.title),
+    '"artist":' .. jsonEsc(it.artist),
+    '"album":' .. jsonEsc(it.album),
+    '"state":' .. jsonEsc(it.state),
+    '"art":' .. jsonEsc(artUrl(it.art, true)),
+    '"app":' .. jsonEsc(appLabel(lastApp)),
+    '"awake":' .. awake,
+  }, ",") .. "}"
+  local extra = string.format('"muted":%s,"vol":%s,"artKey":%s',
+    roomMuted == nil and "null" or tostring(roomMuted),
+    roomVolume and tostring(roomVolume) or "null",
+    jsonEsc(artInline.key or ""))
+  local fullText = text .. extra
+  if force or fullText ~= remoteStateText then
+    remoteStateText = fullText
+    uiSeq = uiSeq + 1
+    local head = string.format('{"t":"shieldremote","seq":%d,"build":%d,"linked":true,"np":%s,%s',
+      uiSeq, PAGE_BUILD, text, extra)
+    -- 1.5.1: the art no longer rides here; it has its own UI_ART variable (SendDataToUI never
+    -- reached the Navigator web view, so the 1.5.0 artData copy was never seen).
+    pcall(function() C4:SetVariable("UI_STATE", head .. "}") end)
+    pcall(function() C4:SendDataToUI(head .. "}") end)
+  end
+end
+
+-- UI_ART variable: {"t":"shieldart","key":<art path>,"data":<data: URI or "">}, set only on change.
+local artVarText = nil
+publishArt = function(force)
+  local text = '{"t":"shieldart","key":' .. jsonEsc(artInline.key or "") ..
+    ',"data":' .. jsonEsc(artInline.data or "") .. "}"
+  if force or text ~= artVarText then
+    artVarText = text
+    pcall(function() C4:SetVariable("UI_ART", text) end)
+  end
+end
+
+-- Inline art: the web view will not load http images, so fetch a small JPEG thumbnail from the
+-- bridge (/art/<id>?w=320, bridge 0.4.3+) and send it to the page as a data: URI in UI_ART.
+local ART_WIDTH = 320
+local ART_MAX_BYTES = 60000
+fetchInlineArt = function(path)
+  if path == "" then
+    if artInline.key ~= "" then artInline = { key = "", data = "" }; publishArt(false); publishRemoteState(false) end
+    return
+  end
+  if path == artInline.key then return end
+  -- A request that never called back is retried after 15 s.
+  if path == artInline.pending and os.time() - (artInline.pendingAt or 0) < 15 then return end
+  artInline.pending = path
+  artInline.pendingAt = os.time()
+  local base = string.gsub(trim(prop("Bridge URL")), "/+$", "")
+  pcall(function()
+    C4:urlGet(base .. path .. "?w=" .. ART_WIDTH, {}, false, function(ticket, data, code, headers, err)
+      if artInline.pending ~= path then return end
+      artInline.pending = nil
+      local n = data and #data or 0
+      if tonumber(code) == 200 and n > 0 and n <= ART_MAX_BYTES then
+        local ctype = "image/jpeg"
+        if type(headers) == "table" then
+          for k, v in pairs(headers) do
+            if string.lower(tostring(k)) == "content-type" then ctype = tostring(v) end
+          end
+        end
+        artInline = { key = path, data = "data:" .. ctype .. ";base64," .. C4:Base64Encode(data) }
+      else
+        logMsg(LOG_DEBUG, "Inline art skipped (code %s, %d bytes)", tostring(code), n)
+        artInline = { key = path, data = "" }
+      end
+      publishArt(false)
+      publishRemoteState(false)
+    end)
+  end)
+end
+
+local function remoteKey(tParams)
+  local key = trim(tParams.KEY or "")
+  if not REMOTE_KEYS[key] then
+    logMsg(LOG_WARN, "Shield Remote key %s not allowed", key)
+    return
+  end
+  local rid = tonumber(tParams.ROOMID or "")
+  if rid and not roomIsOnMe(rid) then
+    -- First press with the room on another source (or off): select the Shield and wake it, drop the key.
+    logMsg(LOG_INFO, "Shield Remote: selecting Shield in room %d (key %s dropped)", rid, key)
+    ensureRoomSelected(rid)
+    return
+  end
+  if lastAwake == false then httpPost("/v1/wake", nil, nil) end
+  enqueueKey(key)
+end
+
+local ROOM_VOLUME = { UI_VOL_UP = "PULSE_VOL_UP", UI_VOL_DOWN = "PULSE_VOL_DOWN", UI_MUTE = "MUTE_TOGGLE" }
+
+local function myRoomId()
+  local ok, r = pcall(function() return C4:RoomGetId() end)
+  return ok and tonumber(r) or nil
+end
+
+-- Room mute/volume state for the page: find the room's variables by name and watch them.
+local roomAudio = { room = nil, mute = nil, vol = nil }
+
+local function truthy(v)
+  local s = string.lower(trim(tostring(v or "")))
+  return s == "1" or s == "true" or s == "on"
+end
+
+local function watchRoomAudio()
+  local rid = myRoomId()
+  if not rid then return end
+  local ok, vars = pcall(function() return C4:GetDeviceVariables(rid) end)
+  if not ok or type(vars) ~= "table" then return end
+  local names = {}
+  for id, v in pairs(vars) do
+    if type(v) == "table" and type(v.name) == "string" then
+      local n = string.upper(v.name)
+      names[#names + 1] = v.name .. "=" .. tostring(id)
+      if not roomAudio.mute and string.find(n, "MUTE", 1, true) then
+        roomAudio.mute = tonumber(id); roomMuted = truthy(v.value)
+      elseif n == "CURRENT_VOLUME" or (not roomAudio.vol and string.find(n, "VOLUME", 1, true)
+          and not string.find(n, "DEVICE", 1, true) and tonumber(v.value)) then
+        roomAudio.vol = tonumber(id); roomVolume = tonumber(v.value)
+      end
+    end
+  end
+  roomAudio.room = rid
+  logMsg(LOG_DEBUG, "Room %d variables: %s", rid, table.concat(names, ", "))
+  for _, id in ipairs({ roomAudio.mute, roomAudio.vol }) do
+    pcall(function() C4:RegisterVariableListener(rid, id) end)
+  end
+end
+
+function OnWatchedVariableChanged(idDevice, idVariable, strValue)
+  local ok, err = pcall(function()
+    local dev, var = tonumber(idDevice), tonumber(idVariable)
+    if var == VAR_CURRENT_SELECTED_DEVICE then npRefreshSelection() end
+    if dev ~= roomAudio.room then return end
+    if var == roomAudio.mute then roomMuted = truthy(strValue); publishRemoteState(false)
+    elseif var == roomAudio.vol then roomVolume = tonumber(strValue); publishRemoteState(false) end
+  end)
+  if not ok then logMsg(LOG_ERROR, "OnWatchedVariableChanged error: %s", tostring(err)) end
+end
+
+-- Handles one UI_* command from the Shield Remote page.
+local function handleUi(cmd)
+  if string.sub(cmd, 1, 7) == "UI_KEY_" then
+    remoteKey({ KEY = string.sub(cmd, 8), ROOMID = myRoomId() })
+  elseif ROOM_VOLUME[cmd] then
+    local rid = myRoomId()
+    if rid then pcall(function() C4:SendToDevice(rid, ROOM_VOLUME[cmd], {}) end) end
+    if cmd == "UI_MUTE" and not roomAudio.mute then
+      -- No room mute variable to watch: flip our own idea of it so the icon still follows.
+      roomMuted = not (roomMuted == true)
+      publishRemoteState(false)
+    end
+  elseif cmd == "UI_REFRESH" then
+    publishArt(true)
+    publishRemoteState(true)
+  elseif UI_ART_STATUS[cmd] then
+    pcall(function() C4:UpdateProperty("Web Page Status", "Page build " .. PAGE_BUILD .. " OK, " .. UI_ART_STATUS[cmd]) end)
+  elseif string.sub(cmd, 1, 9) == "UI_HELLO_" then
+    local b = string.sub(cmd, 10)
+    if tonumber(b) == PAGE_BUILD then
+      pcall(function() C4:UpdateProperty("Web Page Status", "Page build " .. b .. " OK") end)
+    else
+      pcall(function() C4:UpdateProperty("Web Page Status",
+        "PAGE IS STALE: page " .. b .. ", driver expects " .. PAGE_BUILD) end)
+    end
+    publishArt(true)
+    publishRemoteState(true)
+  else
+    logMsg(LOG_DEBUG, "Unhandled UI command %s", cmd)
+  end
+end
+
+function ExecuteCommand(strCommand, tParams)
+  local ok, err = pcall(function()
+    local cmd = tostring(strCommand or "")
+    if string.sub(cmd, 1, 3) == "UI_" then handleUi(cmd) end
+  end)
+  if not ok then logMsg(LOG_ERROR, "ExecuteCommand error: %s", tostring(err)) end
+end
+
+local NAV_TABS_XML = table.concat({
+  "<Tabs>",
+  "<Tab><Id>Apps</Id><Name>Apps</Name><IconId>device</IconId><ScreenId>AppsScreen</ScreenId></Tab>",
+  "</Tabs>",
+})
+
 -- ---------------------------------------------------------------- proxy commands
 
 function ReceivedFromProxy(idBinding, strCommand, tParams)
   local ok, err = pcall(function()
     tParams = tParams or {}
     local cmd = tostring(strCommand or "")
+
+    -- Shield Remote tile/page (uibutton 5003): UI_* commands act; SELECT and anything else only republish.
+    if tonumber(idBinding) == PROXY_REMOTE then
+      if string.sub(cmd, 1, 3) == "UI_" then handleUi(cmd) else publishRemoteState(true) end
+      return
+    end
+
+    -- Mini app PASSTHROUGH: unwrap the inner remote key and handle it like a 5001 key.
+    if cmd == "PASSTHROUGH" then
+      local inner = tostring(tParams.PASSTHROUGH_COMMAND or "")
+      if inner == "" then
+        logMsg(LOG_DEBUG, "PASSTHROUGH without a command (dropped)")
+        return
+      end
+      cmd = inner
+      idBinding = PROXY_MEDIA
+    end
 
     if INPUT_COMMANDS[cmd] and tParams.INPUT ~= nil then
       switchToInput(tParams.INPUT, tParams.OUTPUT)
@@ -731,6 +1224,51 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
           npStartTimer()
         end
         return ""
+      elseif cmd == "TabsCommand" then
+        logMsg(LOG_DEBUG, "TabsCommand (nav=%s)", tostring(tParams.NAVID or ""))
+        sendNavData(tParams, NAV_TABS_XML)
+        return
+      elseif cmd == "GetRemoteScreen" then
+        logMsg(LOG_DEBUG, "GetRemoteScreen (nav=%s)", tostring(tParams.NAVID or ""))
+        sendNavData(tParams, buildRemoteListXml())
+        return
+      elseif cmd == "GetAppsScreen" then
+        logMsg(LOG_DEBUG, "GetAppsScreen (nav=%s)", tostring(tParams.NAVID or ""))
+        sendNavData(tParams, buildAppsListXml())
+        return
+      elseif cmd == "RemotePress" then
+        local args = parseNavArgs(tParams)
+        local key = trim(args.id or "")
+        logMsg(LOG_DEBUG, "RemotePress id=%s", key)
+        if key == "__nowplaying__" then
+          ensureRoomSelected(tParams.ROOMID)
+          sendNavData(tParams, "<NextScreen>#nowplaying</NextScreen>")
+        elseif key ~= "" then
+          if lastAwake == false then httpPost("/v1/wake", nil, nil) end
+          enqueueKey(key)
+          sendNavData(tParams, "")
+        else
+          sendNavData(tParams, "")
+        end
+        return
+      elseif cmd == "AppLaunchUI" then
+        local args = parseNavArgs(tParams)
+        local pkg = trim(args.id or "")
+        logMsg(LOG_INFO, "AppLaunchUI package=%s", pkg)
+        if pkg ~= "" and string.match(pkg, "^[%w_%.]+$") then
+          ensureRoomSelected(tParams.ROOMID)
+          httpPost("/v1/launch", "package=" .. pkg, nil)
+          sendNavData(tParams, "<NextScreen>#nowplaying</NextScreen>")
+        else
+          sendNavData(tParams, "")
+        end
+        return
+      elseif cmd == "DESTROY_NAV" or cmd == "DESTROY_NAVIGATOR" then
+        logMsg(LOG_DEBUG, "%s (nav=%s)", cmd, tostring(tParams.NAVID or ""))
+        return
+      elseif cmd == "SELECT_SOURCE" or cmd == "RESELECT_SOURCE" then
+        npPublishAll()
+        return
       elseif cmd == "DEVICE_DESELECTED" then
         logMsg(LOG_DEBUG, "DEVICE_DESELECTED (no action)")
         return
@@ -792,6 +1330,11 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
       return
     end
 
+    if string.sub(cmd, 1, 4) == "END_" then
+      logMsg(LOG_TRACE, "Ignoring key release %s", cmd)
+      return
+    end
+
     logMsg(LOG_DEBUG, "Unknown command %s on binding %s", cmd, tostring(idBinding))
   end)
   if not ok then
@@ -803,6 +1346,9 @@ end
 
 function OnDriverInit()
   pcall(function() C4:UpdateProperty("Driver Version", DRIVER_VERSION) end)
+  -- Snapshot for the Shield Remote page (must stay visible so the page can subscribe).
+  pcall(function() C4:AddVariable("UI_STATE", "", "STRING", true, false) end)
+  pcall(function() C4:AddVariable("UI_ART", "", "STRING", true, false) end)
   applyLogSettings()
 end
 
@@ -812,11 +1358,20 @@ function OnDriverLateInit()
     C4:UpdateProperty("Connected To Bridge", "false")
     npSetVars()
     npRegisterRooms()
+    refreshBoundApps()
+    watchRoomAudio()
     refreshShieldList()
     startPolling()
     pollStatus()
   end)
   if not ok then logMsg(LOG_ERROR, "Late init error: %s", tostring(err)) end
+end
+
+function OnBindingChanged(idBinding, strClass, bIsBound)
+  local n = tonumber(idBinding)
+  if not n or n < INPUT_MIN or n > INPUT_MAX then return end
+  local ok, err = pcall(refreshBoundApps)
+  if not ok then logMsg(LOG_ERROR, "Binding change error: %s", tostring(err)) end
 end
 
 function OnPropertyChanged(strProperty)
