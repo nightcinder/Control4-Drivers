@@ -119,4 +119,24 @@ t.test("no mini app and empty property launches nothing", function()
   t.eq(launched(), nil, "nothing launched with default App 3 Package")
 end)
 
+t.test("PASSTHROUGH UP on binding 5002 sends DPAD_UP", function()
+  start(nil)
+  sim.call("ReceivedFromProxy", 5002, "PASSTHROUGH", { PASSTHROUGH_COMMAND = "UP" })
+  t.ok(any_url_has("/v1/key") and any_url_has("name=DPAD_UP"), "DPAD_UP key posted")
+end)
+
+t.test("PASSTHROUGH PLAY on binding 3051 sends MEDIA_PLAY", function()
+  start(nil)
+  sim.call("ReceivedFromProxy", 3051, "PASSTHROUGH", { PASSTHROUGH_COMMAND = "PLAY" })
+  t.ok(any_url_has("/v1/key") and any_url_has("name=MEDIA_PLAY"), "MEDIA_PLAY key posted")
+end)
+
+t.test("PASSTHROUGH without a command does nothing", function()
+  start(nil)
+  local before = #sim.http
+  sim.call("ReceivedFromProxy", 5002, "PASSTHROUGH", {})
+  t.eq(#sim.http, before, "no http request")
+  t.eq(#sim.errors, 0, "no driver error logged")
+end)
+
 t.finish("shield-tv-bridge")
