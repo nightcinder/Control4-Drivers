@@ -94,6 +94,7 @@ function sim.reset(deviceId)
   sim.vars = {}
   sim.binds = {}
   sim.dvars = {}
+  sim.devvars = {}
   sim.persist = {}
   sim._store = {}
   sim.xml_names = {}
@@ -398,6 +399,18 @@ end
 
 function C4:GetBoundProviderDevice(deviceId, bindingId)
   return sim.binds[vkey(deviceId, bindingId)]
+end
+
+-- Test helper: stores the table C4:GetDeviceVariables returns for deviceId.
+-- Setting the value to the string "error" makes GetDeviceVariables raise.
+function sim.set_device_vars(deviceId, tbl)
+  sim.devvars[deviceId] = tbl
+end
+
+function C4:GetDeviceVariables(deviceId)
+  local v = sim.devvars[deviceId]
+  if v == "error" then error("GetDeviceVariables failed") end
+  return v
 end
 
 function C4:GetBoundConsumerDevices()
