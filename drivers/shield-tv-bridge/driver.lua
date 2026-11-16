@@ -1,10 +1,10 @@
 -- Shield TV Bridge - Control4 DriverWorks driver (Lua 5.1)
--- Version 1.3.2
+-- Version 1.3.3
 -- Controls an NVIDIA Shield TV through an HTTP/JSON bridge on a Linux host.
 -- Presents one media_service primary proxy (5001: keys, power, HDMI output, Navigator
 -- Now Playing) and an avswitch proxy (5002) with 25 app slots.
 
-local DRIVER_VERSION = "1.3.2"
+local DRIVER_VERSION = "1.3.3"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -731,6 +731,18 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
           npStartTimer()
         end
         return ""
+      elseif cmd == "TabsCommand" then
+        if tParams.NAVID and tParams.SEQ then
+          C4:SendToProxy(PROXY_NOWPLAYING, "DATA_RECEIVED", {
+            NAVID = tParams.NAVID,
+            SEQ = tParams.SEQ,
+            DATA = "<Tabs></Tabs>",
+          })
+        end
+        return
+      elseif cmd == "DESTROY_NAV" or cmd == "DESTROY_NAVIGATOR" then
+        logMsg(LOG_DEBUG, "%s (nav=%s)", cmd, tostring(tParams.NAVID or ""))
+        return
       elseif cmd == "DEVICE_DESELECTED" then
         logMsg(LOG_DEBUG, "DEVICE_DESELECTED (no action)")
         return
