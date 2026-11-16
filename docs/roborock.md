@@ -62,7 +62,7 @@ The variables are created with `C4:AddVariable` and written with `C4:SetVariable
 | Clean Rooms | Rooms; Mode | Rooms: ids (`16,17`) or room names from the vacuum's map (`Kitchen, Living room`). 0.7.0 adds Mode and names |
 | Set Cleaning Mode | Mode | 0.7.0. Lasting change of the vacuum's own setting |
 | Pause, Stop | | |
-| Dock | | Return to dock. 0.7.0: safe to call at any time. When the robot is already on the dock (and no job is running and no start was sent in the last 3 minutes) nothing is sent and Last Command shows "Dock skipped: already on the dock" |
+| Dock | | Return to dock. 0.7.0: safe to call at any time. When the robot is already on the dock (and no job is running and no start was sent in the last 3 minutes) nothing is sent and Last Command shows "Dock skipped: already on the dock". The check uses the last polled state, so a job started from the Roborock app in the last minute or so (bridge idle poll 60 s plus the driver poll) can be missed and the Dock skipped |
 
 0.6.3: every command is accepted by its code (`START_FULL_CLEAN`) or its Composer name (`Start Full Clean`), also through `LUA_ACTION` and `ReceivedFromProxy`. An unknown command is logged as "unhandled command".
 
@@ -100,7 +100,7 @@ The bridge sends python-roborock's state names in lower case with underscores. T
 - At the dock but busy: `emptying_the_bin`, `washing_the_mop`, `washing_the_mop_2`, `attaching_the_mop`, `detaching_the_mop`. Docked fires, the job is not finished yet
 - Stopped: `idle` ends the job without Cleaning Finished
 - `paused` and `error` keep the job open
-- Recharge in the middle of a job: `charging` with `in_cleaning` above 0 and the battery below 100 keeps the job open (Docked fires, Cleaning Finished does not). `charging_complete` or a full battery always ends the job
+- Recharge in the middle of a job: `charging` with `in_cleaning` above 0 and the battery below 100 keeps the job open (Docked fires, Cleaning Finished does not). `charging_complete` or a full battery always ends the job, and so does arriving on the dock after this driver sent Stop or Dock in that job
 
 Activity (property) and `VACUUM_ACTIVITY` (variable) put all 43 python-roborock state names into eight words:
 
@@ -125,7 +125,7 @@ These names come from reading python-roborock 7.22.0 (`RoborockStateCode`), not 
 
 - Room Progress stays n/a. python-roborock has no per-room cleaned data.
 - Run Progress with "(device)": the vacuum's own `clean_percent`. Only some models report it. To be confirmed on this vacuum.
-- Run Progress with "(estimate)": cleaned area of this job divided by the cleaned area of the last finished job of the same kind (whole home, or the same room list). It is capped at 99. The first job of each kind shows n/a because there is nothing to compare with. Jobs that were stopped or sent home early are not used as a reference. The web page marks an estimate with "~" and "est.".
+- Run Progress with "(estimate)": cleaned area of this job divided by the cleaned area of the last finished job of the same kind (whole home, or the same room list). It is capped at 99. The first job of each kind shows n/a because there is nothing to compare with. Jobs that were stopped or sent home early are not used as a reference (a Dock sent while the robot is already returning home does not count as sent home early). The web page marks an estimate with "~" and "est.".
 
 ## Web view and tile icons
 
