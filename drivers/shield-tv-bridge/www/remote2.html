@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="color-scheme" content="dark">
+<title>Shield Remote</title>
+<style>
+  :root {
+    --bg:#0a0d13; --glass:rgba(255,255,255,.07); --glass-hi:rgba(255,255,255,.12);
+    --line:rgba(255,255,255,.09); --text:#f3f5f9; --muted:rgba(235,240,250,.58);
+    --accent:#76b900; --accent-soft:rgba(118,185,0,.22);
+  }
+  * { box-sizing:border-box; margin:0; -webkit-user-select:none; user-select:none;
+      -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; }
+  html, body { height:100%; background:var(--bg); color:var(--text); overflow:hidden;
+    font:15px/1.3 system-ui,-apple-system,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+    touch-action:manipulation; }
+
+  /* Art-tinted backdrop */
+  #bg { position:fixed; inset:-15%; background-size:cover; background-position:center;
+    filter:blur(56px) saturate(1.5); opacity:0; transform:scale(1.15); transition:opacity .6s ease; }
+  #bg.on { opacity:.55; }
+  #shade { position:fixed; inset:0;
+    background:linear-gradient(180deg, rgba(10,13,19,.15) 0%, rgba(10,13,19,.55) 45%, rgba(10,13,19,.92) 72%, var(--bg) 100%); }
+
+  .app { position:relative; height:100%; display:flex; flex-direction:column; align-items:center;
+    padding:max(14px, env(safe-area-inset-top)) 20px max(14px, env(safe-area-inset-bottom)); gap:14px; }
+
+  /* Now Playing hero */
+  .hero { flex:3 1 0; min-height:0; width:100%; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:14px; }
+  .art { position:relative; width:min(74vw, 40vh, 340px); aspect-ratio:1; border-radius:22px;
+    overflow:hidden; flex:0 0 auto; background:linear-gradient(145deg,#1d2533,#121722);
+    box-shadow:0 24px 60px rgba(0,0,0,.55), 0 0 0 1px var(--line) inset; }
+  .art img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0;
+    transition:opacity .35s ease; }
+  .art img.on { opacity:1; }
+  .art .ph { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  .art .ph svg { width:30%; height:30%; fill:rgba(255,255,255,.18); }
+  .meta { width:100%; max-width:420px; text-align:center; }
+  .title { font-size:22px; font-weight:700; letter-spacing:-.01em; line-height:1.2;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .sub { margin-top:4px; color:var(--muted); font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .chip { display:inline-flex; align-items:center; gap:6px; margin-top:10px; padding:4px 10px;
+    border-radius:999px; background:var(--glass); border:1px solid var(--line);
+    font-size:12px; font-weight:600; color:var(--muted); letter-spacing:.02em; }
+  .chip i { width:7px; height:7px; border-radius:50%; background:var(--muted); }
+  .chip.playing { color:#d9f5a8; } .chip.playing i { background:var(--accent); box-shadow:0 0 8px var(--accent); }
+  .chip:empty { display:none; }
+
+  /* Buttons */
+  button { appearance:none; border:0; background:none; color:inherit; padding:0; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; }
+  button svg { width:22px; height:22px; fill:currentColor; pointer-events:none; }
+  .ghost { width:46px; height:46px; border-radius:50%; color:rgba(255,255,255,.85);
+    transition:transform .08s ease, background .15s ease; }
+  .ghost.down { background:var(--glass-hi); transform:scale(.92); }
+
+  .transport { display:flex; align-items:center; justify-content:center; gap:10px; flex:0 0 auto; }
+  .play { width:64px; height:64px; border-radius:50%; background:var(--text); color:#0a0d13;
+    box-shadow:0 10px 30px rgba(0,0,0,.4); transition:transform .08s ease; margin:0 6px; }
+  .play svg { width:28px; height:28px; }
+  .play.down { transform:scale(.92); }
+
+  /* D-pad */
+  .dpadwrap { flex:2 1 0; min-height:0; width:100%; display:flex; align-items:center; justify-content:center; }
+  .dpad { width:min(52vw, 26vh, 210px); aspect-ratio:1; flex:0 0 auto; }
+  .dpad svg { width:100%; height:100%; overflow:visible; }
+  .disc { fill:rgba(255,255,255,.06); stroke:var(--line); stroke-width:1; }
+  .zone path { fill:transparent; transition:fill .12s ease; }
+  .zone polyline { fill:none; stroke:rgba(255,255,255,.55); stroke-width:5; stroke-linecap:round;
+    stroke-linejoin:round; transition:stroke .12s ease; }
+  .zone.down path { fill:var(--accent-soft); }
+  .zone.down polyline { stroke:var(--accent); }
+  .ok circle { fill:rgba(255,255,255,.1); stroke:var(--line); stroke-width:1; transition:fill .12s ease; }
+  .ok text { fill:var(--text); font:600 17px system-ui,-apple-system,sans-serif; letter-spacing:.06em; }
+  .ok.down circle { fill:var(--accent); }
+  .ok.down text { fill:#0a0d13; }
+
+  /* Bottom bar */
+  .bar { display:flex; gap:10px; width:100%; max-width:420px; flex:0 0 auto; }
+  .pill { flex:1; display:flex; justify-content:space-around; align-items:center; height:52px;
+    border-radius:26px; background:var(--glass); border:1px solid var(--line);
+    -webkit-backdrop-filter:blur(20px); backdrop-filter:blur(20px); }
+  .pill .ghost { width:44px; height:44px; }
+  #mute.on { color:#ff8a7a; }
+</style>
+</head>
+<body>
+<div id="bg"></div><div id="shade"></div>
+<div class="app">
+  <section class="hero">
+    <div class="art">
+      <div class="ph"><svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg></div>
+      <img id="art" alt="">
+    </div>
+    <div class="meta">
+      <div class="title" id="title">Shield TV</div>
+      <div class="sub" id="sub"></div>
+      <div class="chip" id="chip"></div>
+    </div>
+    <div class="transport">
+      <button class="ghost" data-cmd="UI_KEY_MEDIA_PREVIOUS" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg></button>
+      <button class="ghost" data-cmd="UI_KEY_MEDIA_REWIND" aria-label="Rewind"><svg viewBox="0 0 24 24"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6 8.5 6V6l-8.5 6z"/></svg></button>
+      <button class="play" data-cmd="UI_KEY_MEDIA_PLAY_PAUSE" aria-label="Play or pause">
+        <svg id="ppPlay" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></svg>
+        <svg id="ppPause" viewBox="0 0 24 24" style="display:none"><path d="M6.5 5h4v14h-4zm7 0h4v14h-4z"/></svg>
+      </button>
+      <button class="ghost" data-cmd="UI_KEY_MEDIA_FAST_FORWARD" aria-label="Fast forward"><svg viewBox="0 0 24 24"><path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/></svg></button>
+      <button class="ghost" data-cmd="UI_KEY_MEDIA_NEXT" aria-label="Next"><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg></button>
+    </div>
+  </section>
+
+
+
+  <div class="dpadwrap"><div class="dpad"><svg id="dpad" viewBox="0 0 200 200"></svg></div></div>
+
+  <div class="bar">
+    <div class="pill">
+      <button class="ghost" data-cmd="UI_KEY_BACK" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></button>
+      <button class="ghost" data-cmd="UI_KEY_HOME" aria-label="Home"><svg viewBox="0 0 24 24"><path d="M12 3 3 10.5V21h6v-6h6v6h6V10.5z"/></svg></button>
+      <button class="ghost" data-cmd="UI_KEY_MENU" aria-label="Menu"><svg viewBox="0 0 24 24"><path d="M4 7h16v2H4zm0 4h16v2H4zm0 4h16v2H4z"/></svg></button>
+    </div>
+    <div class="pill">
+      <button class="ghost" data-cmd="UI_VOL_DOWN" data-rep="1" aria-label="Volume down"><svg viewBox="0 0 24 24"><path d="M5 11h14v2H5z"/></svg></button>
+      <button class="ghost" id="mute" data-cmd="UI_MUTE" aria-label="Mute">
+        <svg id="volOn" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05A4.5 4.5 0 0 0 16.5 12zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06A9 9 0 0 0 14 3.23z"/></svg>
+        <svg id="volOff" viewBox="0 0 24 24" style="display:none"><path d="M3 9v6h4l5 5V4L7 9H3zm13.59 3L19 9.59 17.59 8.17 15.17 10.6 12.76 8.17l-1.42 1.42L13.76 12l-2.42 2.41 1.42 1.42 2.41-2.42 2.42 2.42L19 14.41z"/></svg>
+      </button>
+      <button class="ghost" data-cmd="UI_VOL_UP" data-rep="1" aria-label="Volume up"><svg viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg></button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var PAGE_BUILD = 2;                    // must match PAGE_BUILD in driver.lua
+  var S = null, lastSeq = null, gotState = false;
+  var artCache = { key: "", data: "" }, shownArt = null, muteGuessUntil = 0, muteGuess = null;
+  var hasC4 = !!(window.C4 && typeof window.C4.sendCommand === "function");
+  var NS = "http://www.w3.org/2000/svg";
+
+  function $(id) { return document.getElementById(id); }
+
+  function send(cmd) {
+    if (hasC4) { try { window.C4.sendCommand(cmd, "{}", false, true); } catch (e) {} }
+    else if (window.console) { console.log("[preview] " + cmd); }
+  }
+
+  // One command on press; held arrows and volume repeat (400 ms, then every 150 ms, capped at 40).
+  function bind(node, cmd, repeat) {
+    var t1 = null, t2 = null;
+    function stop() { clearTimeout(t1); clearInterval(t2); t1 = t2 = null; node.classList.remove("down"); }
+    node.addEventListener("pointerdown", function (e) {
+      if (e.button) return;
+      e.preventDefault();
+      stop(); node.classList.add("down");
+      if (navigator.vibrate) { try { navigator.vibrate(8); } catch (x) {} }
+      send(cmd);
+      if (cmd === "UI_MUTE") { muteGuess = !isMuted(); muteGuessUntil = Date.now() + 3000; renderMute(); }
+      if (repeat) {
+        var n = 0;
+        t1 = setTimeout(function () {
+          t2 = setInterval(function () { if (++n > 40) { stop(); return; } send(cmd); }, 150);
+        }, 400);
+      }
+    });
+    ["pointerup", "pointercancel", "pointerleave"].forEach(function (ev) { node.addEventListener(ev, stop); });
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("blur", stop);
+    document.addEventListener("visibilitychange", stop);
+  }
+
+  // ---- D-pad: glass disc, four quadrant zones with chevrons, OK in the middle ----
+  function mk(name, attrs, parent) {
+    var e = document.createElementNS(NS, name);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function pt(r, deg) { var a = deg * Math.PI / 180; return [100 + r * Math.cos(a), 100 + r * Math.sin(a)]; }
+  function buildDpad() {
+    var svg = $("dpad"), RO = 99, RI = 42;
+    mk("circle", { cx: 100, cy: 100, r: RO, "class": "disc" }, svg);
+    [["UI_KEY_DPAD_UP", 270], ["UI_KEY_DPAD_RIGHT", 0], ["UI_KEY_DPAD_DOWN", 90], ["UI_KEY_DPAD_LEFT", 180]]
+      .forEach(function (z) {
+        var c = z[1], a = pt(RO, c - 45), b = pt(RO, c + 45), d = pt(RI, c + 45), e = pt(RI, c - 45);
+        var g = mk("g", { "class": "zone", "data-cmd": z[0], "data-rep": "1" }, svg);
+        mk("path", { d: "M" + a + " A" + RO + " " + RO + " 0 0 1 " + b + " L" + d + " A" + RI + " " + RI + " 0 0 0 " + e + " Z" }, g);
+        var tip = pt(78, c), w1 = pt(66, c - 10), w2 = pt(66, c + 10);   // chevron pointing outward
+        mk("polyline", { points: w1 + " " + tip + " " + w2 }, g);
+      });
+    var ok = mk("g", { "class": "ok", "data-cmd": "UI_KEY_DPAD_CENTER" }, svg);
+    mk("circle", { cx: 100, cy: 100, r: RI - 4 }, ok);
+    mk("text", { x: 100, y: 106, "text-anchor": "middle" }, ok).textContent = "OK";
+  }
+
+  // ---- State from the driver (variable or SendDataToUI; Navigator may deliver it twice) ----
+  function findState(x, depth) {
+    if (depth > 4 || x == null) return null;
+    if (typeof x === "string") {
+      var t = x.trim();
+      if (t.charAt(0) !== "{" && t.charAt(0) !== "[") return null;
+      try { return findState(JSON.parse(t), depth + 1); } catch (e) { return null; }
+    }
+    if (typeof x === "object") {
+      if (x.t === "shieldremote" && x.seq != null) return x;
+      for (var k in x) {
+        if (Object.prototype.hasOwnProperty.call(x, k)) {
+          var r = findState(x[k], depth + 1);
+          if (r) return r;
+        }
+      }
+    }
+    return null;
+  }
+  function onAnything() {
+    for (var i = 0; i < arguments.length; i++) {
+      var st = findState(arguments[i], 0);
+      if (!st) continue;
+      // Art only travels with SendDataToUI; keep it when the variable copy (no artData) arrives.
+      if (typeof st.artData === "string") artCache = { key: st.artKey || "", data: st.artData };
+      if (st.seq === lastSeq) { renderArt(); return; }
+      lastSeq = st.seq; gotState = true; S = st;
+      render();
+      return;
+    }
+  }
+  ["onVariable", "onVariableChanged", "onVariableUpdate", "onDataToUi", "onDataToUI"].forEach(function (n) {
+    window[n] = onAnything;
+  });
+
+  // ---- Rendering ----
+  function renderArt() {
+    var key = S && S.artKey ? S.artKey : "";
+    var data = key && artCache.key === key ? artCache.data : "";
+    if (data === shownArt) return;
+    shownArt = data;
+    var img = $("art"), bg = $("bg");
+    if (!data) { img.classList.remove("on"); bg.classList.remove("on"); return; }
+    img.onload = function () { img.classList.add("on"); };
+    img.onerror = function () { img.classList.remove("on"); bg.classList.remove("on"); };
+    img.src = data;
+    bg.style.backgroundImage = "url('" + data + "')";
+    bg.classList.add("on");
+  }
+  function isMuted() {
+    if (muteGuess !== null && Date.now() < muteGuessUntil) return muteGuess;
+    return !!(S && S.muted);
+  }
+  function renderMute() {
+    var m = isMuted();
+    $("volOn").style.display = m ? "none" : "";
+    $("volOff").style.display = m ? "" : "none";
+    $("mute").classList.toggle("on", m);
+  }
+  function render() {
+    var np = (S && S.np) || {};
+    var playing = np.state === "playing";
+    $("title").textContent = np.title || (np.awake === false ? "Shield TV" : (np.app || "Nothing playing"));
+    var parts = [];
+    if (np.artist) parts.push(np.artist);
+    if (np.album) parts.push(np.album);
+    $("sub").textContent = parts.join(" · ");
+    var chip = $("chip"), label = "";
+    if (!S) label = "Connecting";
+    else if (np.awake === false) label = "Asleep";
+    else if (playing) label = "Playing";
+    else if (np.state === "paused") label = "Paused";
+    chip.className = "chip" + (playing ? " playing" : "");
+    chip.innerHTML = label ? "<i></i>" + label : "";
+    $("ppPlay").style.display = playing ? "none" : "";
+    $("ppPause").style.display = playing ? "" : "none";
+    if (S && S.muted != null && muteGuess !== null && S.muted === muteGuess) muteGuess = null;
+    renderMute();
+    renderArt();
+  }
+
+  // ---- Connect / preview ----
+  function connect() {
+    if (!hasC4) {
+      S = { t: "shieldremote", seq: 0, muted: false, artKey: "", np: {
+        title: "Supernatural", artist: "S12E14 – The Raid", album: "Season 12",
+        state: "playing", app: "Plex", awake: true } };
+      render(); return;
+    }
+    try { window.C4.subscribeToVariable("UI_STATE", true); } catch (e) {}
+    try { window.C4.subscribeToDataToUi(true); } catch (e) {}
+    send("UI_HELLO_" + PAGE_BUILD);
+    setTimeout(function () { if (!gotState) send("UI_REFRESH"); }, 5000);
+  }
+
+  function init() {
+    document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+    buildDpad();
+    Array.prototype.forEach.call(document.querySelectorAll("[data-cmd]"), function (n) {
+      bind(n, n.getAttribute("data-cmd"), n.getAttribute("data-rep") === "1");
+    });
+    render();
+    connect();
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
+})();
+</script>
+</body>
+</html>

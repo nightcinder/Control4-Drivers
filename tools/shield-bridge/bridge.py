@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from aiohttp import web
 
-VERSION = "0.4.2"
+VERSION = "0.4.3"
 CLIENT_NAME = "shield-bridge"
 HEALTH_INTERVAL = 2.0
 BACKOFF_MIN = 1.0
@@ -577,6 +577,16 @@ class Shield:
 
 # ---------------------------------------------------------------- HTTP
 
+def thumbnail_jpeg(data: bytes, width: int) -> tuple[bytes, str]:
+    """Scale an art image to at most width x width and return it as a JPEG (quality 82)."""
+    from PIL import Image  # art needs Pillow anyway; imported here so the bridge runs without it
+    img = Image.open(io.BytesIO(data)).convert("RGB")
+    img.thumbnail((width, width), Image.LANCZOS)
+    out = io.BytesIO()
+    img.save(out, "JPEG", quality=82, optimize=True)
+    return out.getvalue(), "image/jpeg"
+
+
 def token_ok(header: str, token: str) -> bool:
     """Constant-time check of 'Authorization: Bearer <token>'. Empty token refuses all."""
     if not token:
@@ -655,7 +665,13 @@ def make_app(bridge: Config, shields: dict[str, Shield]) -> web.Application:
         for shield in shields.values():
             found = shield.art.get(art_id) if shield.art is not None else None
             if found:
-                return web.Response(body=found[0], content_type=found[1],
+                body, ctype = found
+                width = request.query.get("w", "")
+                if width.isdigit():
+                    # 0.4.3: ?w=N returns a small JPEG (N clamped 32..512) for drivers that inline art.
+                    body, ctype = await asyncio.get_running_loop().run_in_executor(
+                        None, thumbnail_jpeg, body, max(32, min(512, int(width))))
+                return web.Response(body=body, content_type=ctype,
                                     headers={"Cache-Control": "max-age=3600"})
         return web.Response(status=404)
 
