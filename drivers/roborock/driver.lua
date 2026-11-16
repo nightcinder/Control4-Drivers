@@ -578,8 +578,9 @@ local function applyState(body)
   -- A recharge in the middle of a job: on the dock, charging, the vacuum still says it is in a job
   -- (in_cleaning above 0, bridge 0.2.3) and the battery is not full. The job is not over then.
   local inCleaning = numField(body, "in_cleaning")
+  -- Not after this driver sent Stop or Dock in the job: that robot was sent home, so the job ends on the dock.
   local midJobCharge = (st == "charging") and inCleaning ~= nil and inCleaning > 0
-    and battery ~= nil and battery < 100
+    and battery ~= nil and battery < 100 and not state.runAborted
   local ended = state.runActive and ((dockedNow and not midJobCharge) or st == "idle")
   state.runPct, state.runPctSource = computeRunProgress()
 
@@ -868,8 +869,15 @@ local function sendCommand(action, rooms, mode)
           state.runRooms = nil
           state.pendingKey, state.pendingKeyAt = "full", os.time()
         end
-      elseif (action == "stop" or action == "dock") and state.runActive then
+      elseif action == "stop" and state.runActive then
         state.runAborted = true
+      elseif action == "dock" and state.runActive then
+        -- A Dock sent while the robot is already driving home does not cut the job short, so the job
+        -- still counts as a full clean and as a progress reference.
+        local s = normState(state.st)
+        if not (s == "returning_home" or s == "returning" or s == "docking") then
+          state.runAborted = true
+        end
       end
       logmsg("command " .. label .. " accepted")
       setProp("Status", "Command sent: " .. label)
@@ -1019,6 +1027,7 @@ function ExecuteCommand(strCommand, tParams)
     end
     if #rooms == 0 then
       logmsg("Clean Rooms called with no room ids")
+      setLastCommand("Clean Rooms not sent: no rooms given")
       return
     end
     local mode = modeFromParam(tParams["Mode"])
