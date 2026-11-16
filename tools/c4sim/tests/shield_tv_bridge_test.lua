@@ -167,9 +167,9 @@ t.test("binding change outside 3051-3075 is ignored", function()
   t.eq(#sim.errors, 0, "no driver error logged")
 end)
 
-t.test("Driver Version is 1.4.0", function()
+t.test("Driver Version is 1.4.1", function()
   start(nil)
-  t.eq(sim._store["Driver Version"], "1.4.0", "driver version property")
+  t.eq(sim._store["Driver Version"], "1.4.1", "driver version property")
 end)
 
 t.finish("shield-tv-bridge")
