@@ -2,7 +2,8 @@
 -- Version 1.5.0
 -- Controls an NVIDIA Shield TV through an HTTP/JSON bridge on a Linux host.
 -- Presents one media_service primary proxy (5001: keys, power, HDMI output, Navigator
--- Now Playing) and an avswitch proxy (5002) with 25 mini app slots (3051-3075).
+-- Now Playing), an avswitch proxy (5002) with 25 mini app slots (3051-3075), and a uibutton
+-- proxy (5003, "Shield Remote") that opens the phone remote web page www/remote1.html.
 -- The App N Package properties are fallbacks, used only when no mini app is bound to the slot.
 
 local DRIVER_VERSION = "1.5.0"
@@ -932,9 +933,13 @@ local function ensureRoomSelected(roomId)
   npStartTimer()
 end
 
--- ---------------------------------------------------------------- Shield Remote companion (1.5.0)
--- The Shield Remote web page driver sends SHIELD_REMOTE_KEY / SHIELD_REMOTE_REFRESH here with
--- C4:SendToDevice, and reads the REMOTE_STATE variable (JSON) for its Now Playing strip.
+-- ---------------------------------------------------------------- Shield Remote web page (1.5.0)
+-- uibutton proxy 5003 opens www/remote1.html. The page sends parameter-free UI_* commands
+-- (UI_KEY_<KEY>, UI_VOL_UP/DOWN, UI_MUTE, UI_REFRESH, UI_HELLO_<build>) and reads the UI_STATE
+-- variable / SendDataToUI snapshot. Opening the page (SELECT on 5003) never sends a key.
+local PROXY_REMOTE = 5003
+local PAGE_BUILD = 1            -- must match PAGE_BUILD in www/remote1.html (file renamed per release)
+local uiSeq = 0
 
 local REMOTE_KEYS = {
   DPAD_UP = true, DPAD_DOWN = true, DPAD_LEFT = true, DPAD_RIGHT = true, DPAD_CENTER = true,
@@ -984,7 +989,11 @@ publishRemoteState = function(force)
   }, ",") .. "}"
   if force or text ~= remoteStateText then
     remoteStateText = text
-    pcall(function() C4:SetVariable("REMOTE_STATE", text) end)
+    uiSeq = uiSeq + 1
+    local snap = string.format('{"t":"shieldremote","seq":%d,"build":%d,"linked":true,"np":%s}',
+      uiSeq, PAGE_BUILD, text)
+    pcall(function() C4:SetVariable("UI_STATE", snap) end)
+    pcall(function() C4:SendDataToUI(snap) end)
   end
 end
 
@@ -1005,14 +1014,40 @@ local function remoteKey(tParams)
   enqueueKey(key)
 end
 
+local ROOM_VOLUME = { UI_VOL_UP = "PULSE_VOL_UP", UI_VOL_DOWN = "PULSE_VOL_DOWN", UI_MUTE = "MUTE_TOGGLE" }
+
+local function myRoomId()
+  local ok, r = pcall(function() return C4:RoomGetId() end)
+  return ok and tonumber(r) or nil
+end
+
+-- Handles one UI_* command from the Shield Remote page.
+local function handleUi(cmd)
+  if string.sub(cmd, 1, 7) == "UI_KEY_" then
+    remoteKey({ KEY = string.sub(cmd, 8), ROOMID = myRoomId() })
+  elseif ROOM_VOLUME[cmd] then
+    local rid = myRoomId()
+    if rid then pcall(function() C4:SendToDevice(rid, ROOM_VOLUME[cmd], {}) end) end
+  elseif cmd == "UI_REFRESH" then
+    publishRemoteState(true)
+  elseif string.sub(cmd, 1, 9) == "UI_HELLO_" then
+    local b = string.sub(cmd, 10)
+    if tonumber(b) == PAGE_BUILD then
+      pcall(function() C4:UpdateProperty("Web Page Status", "Page build " .. b .. " OK") end)
+    else
+      pcall(function() C4:UpdateProperty("Web Page Status",
+        "PAGE IS STALE: page " .. b .. ", driver expects " .. PAGE_BUILD) end)
+    end
+    publishRemoteState(true)
+  else
+    logMsg(LOG_DEBUG, "Unhandled UI command %s", cmd)
+  end
+end
+
 function ExecuteCommand(strCommand, tParams)
   local ok, err = pcall(function()
-    tParams = tParams or {}
-    if strCommand == "SHIELD_REMOTE_KEY" then
-      remoteKey(tParams)
-    elseif strCommand == "SHIELD_REMOTE_REFRESH" then
-      publishRemoteState(true)
-    end
+    local cmd = tostring(strCommand or "")
+    if string.sub(cmd, 1, 3) == "UI_" then handleUi(cmd) end
   end)
   if not ok then logMsg(LOG_ERROR, "ExecuteCommand error: %s", tostring(err)) end
 end
@@ -1029,6 +1064,12 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
   local ok, err = pcall(function()
     tParams = tParams or {}
     local cmd = tostring(strCommand or "")
+
+    -- Shield Remote tile/page (uibutton 5003): UI_* commands act; SELECT and anything else only republish.
+    if tonumber(idBinding) == PROXY_REMOTE then
+      if string.sub(cmd, 1, 3) == "UI_" then handleUi(cmd) else publishRemoteState(true) end
+      return
+    end
 
     -- Mini app PASSTHROUGH: unwrap the inner remote key and handle it like a 5001 key.
     if cmd == "PASSTHROUGH" then
@@ -1184,8 +1225,8 @@ end
 
 function OnDriverInit()
   pcall(function() C4:UpdateProperty("Driver Version", DRIVER_VERSION) end)
-  -- Read by the Shield Remote web page driver (must stay visible so it can be watched).
-  pcall(function() C4:AddVariable("REMOTE_STATE", "{}", "STRING", true, false) end)
+  -- Snapshot for the Shield Remote page (must stay visible so the page can subscribe).
+  pcall(function() C4:AddVariable("UI_STATE", "", "STRING", true, false) end)
   applyLogSettings()
 end
 
