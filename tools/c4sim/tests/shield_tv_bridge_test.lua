@@ -396,13 +396,13 @@ end)
 
 t.test("UI_HELLO sets Web Page Status (OK and stale)", function()
   start(nil)
-  sim.exec("UI_HELLO_2", {})
-  t.eq(sim._store["Web Page Status"], "Page build 2 OK", "build 2 ok")
+  sim.exec("UI_HELLO_3", {})
+  t.eq(sim._store["Web Page Status"], "Page build 3 OK", "build 3 ok")
   sim.exec("UI_HELLO_1", {})
   t.ok(string.find(sim._store["Web Page Status"] or "", "PAGE IS STALE", 1, true) ~= nil, "stale flagged")
 end)
 
-t.test("inline art: ?w=320 thumbnail goes to the page as a data URI, not into the variable", function()
+t.test("inline art: ?w=320 thumbnail goes to the UI_ART variable as a data URI, not into UI_STATE", function()
   local sentUi
   C4.SendDataToUI = function(_, s) sentUi = s end
   local artUrls = {}
@@ -418,9 +418,12 @@ t.test("inline art: ?w=320 thumbnail goes to the page as a data URI, not into th
   C4.SendDataToUI = function(_, s) sentUi = s end
   sim.call("OnDriverLateInit")
   t.ok(artUrls[1] and string.find(artUrls[1], "/art/abc?w=320", 1, true) ~= nil, "thumbnail requested: " .. tostring(artUrls[1]))
-  t.ok(sentUi and string.find(sentUi, '"artData":"data:image/jpeg;base64,', 1, true) ~= nil, "artData sent to UI")
+  local art = sim.dvars["UI_ART"] or ""
+  t.ok(string.find(art, '"t":"shieldart"', 1, true) ~= nil, "UI_ART tagged")
+  t.ok(string.find(art, '"key":"/art/abc"', 1, true) ~= nil, "UI_ART key")
+  t.ok(string.find(art, '"data":"data:image/jpeg;base64,', 1, true) ~= nil, "UI_ART carries data URI")
   t.ok(sentUi and string.find(sentUi, '"artKey":"/art/abc"', 1, true) ~= nil, "artKey set")
-  t.ok(string.find(sim.dvars["UI_STATE"] or "", "artData", 1, true) == nil, "variable has no artData")
+  t.ok(string.find(sim.dvars["UI_STATE"] or "", "data:", 1, true) == nil, "UI_STATE has no art data")
 end)
 
 t.test("inline art too big (old bridge ignores ?w) is skipped, no error", function()
@@ -433,9 +436,17 @@ t.test("inline art too big (old bridge ignores ?w) is skipped, no error", functi
   start(nil)
   C4.SendDataToUI = function(_, s) sentUi = s end
   sim.exec("UI_REFRESH", {})
-  t.ok(sentUi and string.find(sentUi, '"artData":""', 1, true) ~= nil, "empty artData")
+  t.ok(string.find(sim.dvars["UI_ART"] or "", '"data":""', 1, true) ~= nil, "UI_ART data empty")
   t.ok(sentUi and string.find(sentUi, '"artKey":"/art/abc"', 1, true) ~= nil, "art handled (key set, not retried)")
   t.eq(#sim.errors, 0, "no driver error")
+end)
+
+t.test("page art reports set Web Page Status", function()
+  start(nil)
+  sim.exec("UI_ART_OK", {})
+  t.ok(string.find(sim._store["Web Page Status"] or "", "art shown", 1, true) ~= nil, "art shown")
+  sim.exec("UI_ART_NONE", {})
+  t.ok(string.find(sim._store["Web Page Status"] or "", "no art received", 1, true) ~= nil, "no art")
 end)
 
 t.test("room mute variable is watched and reaches UI_STATE", function()
@@ -449,9 +460,9 @@ t.test("room mute variable is watched and reaches UI_STATE", function()
   t.ok(string.find(v, '"vol":35', 1, true) ~= nil, "volume 35")
 end)
 
-t.test("Driver Version is 1.5.0", function()
+t.test("Driver Version is 1.5.1", function()
   start(nil)
-  t.eq(sim._store["Driver Version"], "1.5.0", "driver version property")
+  t.eq(sim._store["Driver Version"], "1.5.1", "driver version property")
 end)
 
 t.finish("shield-tv-bridge")

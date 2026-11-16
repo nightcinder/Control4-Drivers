@@ -1,12 +1,12 @@
 -- Shield TV Bridge - Control4 DriverWorks driver (Lua 5.1)
--- Version 1.5.0
+-- Version 1.5.1
 -- Controls an NVIDIA Shield TV through an HTTP/JSON bridge on a Linux host.
 -- Presents one media_service primary proxy (5001: keys, power, HDMI output, Navigator
 -- Now Playing), an avswitch proxy (5002) with 25 mini app slots (3051-3075), and a uibutton
 -- proxy (5003, "Shield Remote") that opens the phone remote web page www/remote1.html.
 -- The App N Package properties are fallbacks, used only when no mini app is bound to the slot.
 
-local DRIVER_VERSION = "1.5.0"
+local DRIVER_VERSION = "1.5.1"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -69,6 +69,13 @@ local lastAwake = nil
 local lastNowKey = nil
 local publishRemoteState   -- forward declaration (Shield Remote page, defined below)
 local fetchInlineArt       -- forward declaration
+local publishArt           -- forward declaration (sets the UI_ART variable)
+-- Art diagnostics the Shield Remote page reports back (shown in Web Page Status).
+local UI_ART_STATUS = {
+  UI_ART_OK = "art shown",
+  UI_ART_ERR = "art failed to load",
+  UI_ART_NONE = "no art received",
+}
 local artInline = { key = "", data = "" }   -- art path and its data: URI for the Shield Remote page
 local roomMuted = nil      -- room mute state for the page (nil = unknown)
 local roomVolume = nil
@@ -938,11 +945,11 @@ local function ensureRoomSelected(roomId)
 end
 
 -- ---------------------------------------------------------------- Shield Remote web page (1.5.0)
--- uibutton proxy 5003 opens www/remote2.html. The page sends parameter-free UI_* commands
+-- uibutton proxy 5003 opens www/remote3.html. The page sends parameter-free UI_* commands
 -- (UI_KEY_<KEY>, UI_VOL_UP/DOWN, UI_MUTE, UI_REFRESH, UI_HELLO_<build>) and reads the UI_STATE
 -- variable / SendDataToUI snapshot. Opening the page (SELECT on 5003) never sends a key.
 local PROXY_REMOTE = 5003
-local PAGE_BUILD = 2            -- must match PAGE_BUILD in www/remote2.html (file renamed per release)
+local PAGE_BUILD = 3            -- must match PAGE_BUILD in www/remote3.html (file renamed per release)
 local uiSeq = 0
 
 local REMOTE_KEYS = {
@@ -1002,19 +1009,31 @@ publishRemoteState = function(force)
     uiSeq = uiSeq + 1
     local head = string.format('{"t":"shieldremote","seq":%d,"build":%d,"linked":true,"np":%s,%s',
       uiSeq, PAGE_BUILD, text, extra)
-    -- The variable stays small; the inline art (about 30 KB) only goes out with SendDataToUI.
+    -- 1.5.1: the art no longer rides here; it has its own UI_ART variable (SendDataToUI never
+    -- reached the Navigator web view, so the 1.5.0 artData copy was never seen).
     pcall(function() C4:SetVariable("UI_STATE", head .. "}") end)
-    pcall(function() C4:SendDataToUI(head .. ',"artData":' .. jsonEsc(artInline.data or "") .. "}") end)
+    pcall(function() C4:SendDataToUI(head .. "}") end)
+  end
+end
+
+-- UI_ART variable: {"t":"shieldart","key":<art path>,"data":<data: URI or "">}, set only on change.
+local artVarText = nil
+publishArt = function(force)
+  local text = '{"t":"shieldart","key":' .. jsonEsc(artInline.key or "") ..
+    ',"data":' .. jsonEsc(artInline.data or "") .. "}"
+  if force or text ~= artVarText then
+    artVarText = text
+    pcall(function() C4:SetVariable("UI_ART", text) end)
   end
 end
 
 -- Inline art: the web view will not load http images, so fetch a small JPEG thumbnail from the
--- bridge (/art/<id>?w=320, bridge 0.4.3+) and send it to the page as a data: URI.
+-- bridge (/art/<id>?w=320, bridge 0.4.3+) and send it to the page as a data: URI in UI_ART.
 local ART_WIDTH = 320
 local ART_MAX_BYTES = 60000
 fetchInlineArt = function(path)
   if path == "" then
-    if artInline.key ~= "" then artInline = { key = "", data = "" }; publishRemoteState(false) end
+    if artInline.key ~= "" then artInline = { key = "", data = "" }; publishArt(false); publishRemoteState(false) end
     return
   end
   if path == artInline.key then return end
@@ -1040,6 +1059,7 @@ fetchInlineArt = function(path)
         logMsg(LOG_DEBUG, "Inline art skipped (code %s, %d bytes)", tostring(code), n)
         artInline = { key = path, data = "" }
       end
+      publishArt(false)
       publishRemoteState(false)
     end)
   end)
@@ -1126,7 +1146,10 @@ local function handleUi(cmd)
       publishRemoteState(false)
     end
   elseif cmd == "UI_REFRESH" then
+    publishArt(true)
     publishRemoteState(true)
+  elseif UI_ART_STATUS[cmd] then
+    pcall(function() C4:UpdateProperty("Web Page Status", "Page build " .. PAGE_BUILD .. " OK, " .. UI_ART_STATUS[cmd]) end)
   elseif string.sub(cmd, 1, 9) == "UI_HELLO_" then
     local b = string.sub(cmd, 10)
     if tonumber(b) == PAGE_BUILD then
@@ -1135,6 +1158,7 @@ local function handleUi(cmd)
       pcall(function() C4:UpdateProperty("Web Page Status",
         "PAGE IS STALE: page " .. b .. ", driver expects " .. PAGE_BUILD) end)
     end
+    publishArt(true)
     publishRemoteState(true)
   else
     logMsg(LOG_DEBUG, "Unhandled UI command %s", cmd)
@@ -1324,6 +1348,7 @@ function OnDriverInit()
   pcall(function() C4:UpdateProperty("Driver Version", DRIVER_VERSION) end)
   -- Snapshot for the Shield Remote page (must stay visible so the page can subscribe).
   pcall(function() C4:AddVariable("UI_STATE", "", "STRING", true, false) end)
+  pcall(function() C4:AddVariable("UI_ART", "", "STRING", true, false) end)
   applyLogSettings()
 end
 
