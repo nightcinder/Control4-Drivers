@@ -313,7 +313,7 @@
       <type>5</type>
       <connectionname>MiniApp 1</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -325,7 +325,7 @@
       <type>5</type>
       <connectionname>MiniApp 2</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -337,7 +337,7 @@
       <type>5</type>
       <connectionname>MiniApp 3</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -349,7 +349,7 @@
       <type>5</type>
       <connectionname>MiniApp 4</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -361,7 +361,7 @@
       <type>5</type>
       <connectionname>MiniApp 5</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -373,7 +373,7 @@
       <type>5</type>
       <connectionname>MiniApp 6</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -385,7 +385,7 @@
       <type>5</type>
       <connectionname>MiniApp 7</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -397,7 +397,7 @@
       <type>5</type>
       <connectionname>MiniApp 8</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -409,7 +409,7 @@
       <type>5</type>
       <connectionname>MiniApp 9</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -421,7 +421,7 @@
       <type>5</type>
       <connectionname>MiniApp 10</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -433,7 +433,7 @@
       <type>5</type>
       <connectionname>MiniApp 11</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -445,7 +445,7 @@
       <type>5</type>
       <connectionname>MiniApp 12</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -457,7 +457,7 @@
       <type>5</type>
       <connectionname>MiniApp 13</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -469,7 +469,7 @@
       <type>5</type>
       <connectionname>MiniApp 14</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -481,7 +481,7 @@
       <type>5</type>
       <connectionname>MiniApp 15</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -493,7 +493,7 @@
       <type>5</type>
       <connectionname>MiniApp 16</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -505,7 +505,7 @@
       <type>5</type>
       <connectionname>MiniApp 17</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -517,7 +517,7 @@
       <type>5</type>
       <connectionname>MiniApp 18</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -529,7 +529,7 @@
       <type>5</type>
       <connectionname>MiniApp 19</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -541,7 +541,7 @@
       <type>5</type>
       <connectionname>MiniApp 20</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -553,7 +553,7 @@
       <type>5</type>
       <connectionname>MiniApp 21</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -565,7 +565,7 @@
       <type>5</type>
       <connectionname>MiniApp 22</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -577,7 +577,7 @@
       <type>5</type>
       <connectionname>MiniApp 23</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -589,7 +589,7 @@
       <type>5</type>
       <connectionname>MiniApp 24</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -601,7 +601,7 @@
       <type>5</type>
       <connectionname>MiniApp 25</connectionname>
       <consumer>True</consumer>
-      <linelevel>True</linelevel>
+      <linelevel>False</linelevel>
       <classes>
         <class>
           <classname>RF_MINI_APP</classname>
@@ -615,7 +615,13 @@
       <property>
         <name>Driver Version</name>
         <type>STRING</type>
-        <default>1.3.1</default>
+        <default>1.4.0</default>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Bound Apps</name>
+        <type>STRING</type>
+        <default>none</default>
         <readonly>true</readonly>
       </property>
       <property>
