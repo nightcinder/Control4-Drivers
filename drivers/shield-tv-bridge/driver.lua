@@ -66,6 +66,7 @@ local connectedSent = nil
 local lastApp = nil
 local lastAwake = nil
 local lastNowKey = nil
+local publishRemoteState   -- forward declaration (Shield Remote companion, defined below)
 
 -- ---------------------------------------------------------------- helpers
 
@@ -121,6 +122,20 @@ end
 
 -- ---------------------------------------------------------------- JSON (flat, no library)
 
+-- Code point to UTF-8 bytes (Lua 5.1 has no utf8 library). Bad or lone surrogate codes give "?".
+local function utf8char(code)
+  if not code or code < 0 or (code >= 0xD800 and code <= 0xDFFF) or code > 0x10FFFF then return "?" end
+  if code < 0x80 then return string.char(code) end
+  if code < 0x800 then
+    return string.char(0xC0 + math.floor(code / 0x40), 0x80 + code % 0x40)
+  end
+  if code < 0x10000 then
+    return string.char(0xE0 + math.floor(code / 0x1000), 0x80 + math.floor(code / 0x40) % 0x40, 0x80 + code % 0x40)
+  end
+  return string.char(0xF0 + math.floor(code / 0x40000), 0x80 + math.floor(code / 0x1000) % 0x40,
+    0x80 + math.floor(code / 0x40) % 0x40, 0x80 + code % 0x40)
+end
+
 -- startPos is the index of the opening quote. Returns decoded text and the
 -- index of the closing quote.
 local function parseJsonString(s, startPos)
@@ -138,12 +153,16 @@ local function parseJsonString(s, startPos)
       elseif nx == "r" then
         out[#out + 1] = "\r"
       elseif nx == "u" then
+        -- \uXXXX to UTF-8 (surrogate pairs joined); 1.5.0: was "?" for anything non-ASCII.
         local code = tonumber(s:sub(i + 2, i + 5), 16)
-        if code and code < 128 then
-          out[#out + 1] = string.char(code)
-        else
-          out[#out + 1] = "?"
+        if code and code >= 0xD800 and code <= 0xDBFF and s:sub(i + 6, i + 7) == "\\u" then
+          local lo = tonumber(s:sub(i + 8, i + 11), 16)
+          if lo and lo >= 0xDC00 and lo <= 0xDFFF then
+            code = 0x10000 + (code - 0xD800) * 0x400 + (lo - 0xDC00)
+            i = i + 6
+          end
         end
+        out[#out + 1] = utf8char(code)
         i = i + 4
       else
         out[#out + 1] = nx
@@ -491,6 +510,7 @@ local function npPublishAll()
   npSendMediaInfo()
   npSendQueue()
   npSendDashboard()
+  if publishRemoteState then publishRemoteState(false) end
 end
 
 local function npStopTimer()
@@ -863,18 +883,33 @@ local function buildRemoteListXml()
   return table.concat(parts)
 end
 
+-- Display name of a bound mini app device, or nil.
+local function miniAppName(input)
+  local dev = boundMiniApp(input)
+  if not dev or not C4.GetDeviceDisplayName then return nil end
+  local ok, name = pcall(function() return C4:GetDeviceDisplayName(tonumber(dev)) end)
+  if ok and type(name) == "string" and trim(name) ~= "" then return trim(name) end
+  return nil
+end
+
+-- 1.5.0: the Watch page is Apps only (the Remote key list is gone; the D-pad lives in the
+-- Shield Remote web page driver). Lists bound mini apps first-class, App N Package as fallback.
 local function buildAppsListXml()
-  local parts = { "<List>", navListItemXml(nil, "Apps", nil, true) }
-  local count = 0
+  local parts = { "<List>",
+    navListItemXml("__nowplaying__", "Now Playing", "Open playback controls", false, "RemotePress"),
+    navListItemXml(nil, "Apps", nil, true) }
+  local count, seen = 0, {}
   for slot = 1, 25 do
-    local pkg = trim(prop("App " .. slot .. " Package"))
-    if pkg ~= "" and string.match(pkg, "^[%w_%.]+$") then
+    local input = 3050 + slot
+    local pkg = packageForInput(input)
+    if pkg and not seen[pkg] then
+      seen[pkg] = true
       count = count + 1
-      parts[#parts + 1] = navListItemXml(pkg, appLabel(pkg), pkg, false, "AppLaunchUI")
+      parts[#parts + 1] = navListItemXml(pkg, miniAppName(input) or appLabel(pkg), nil, false, "AppLaunchUI")
     end
   end
   if count == 0 then
-    parts[#parts + 1] = navListItemXml(nil, "No apps configured", "Set App Package properties in Composer", false)
+    parts[#parts + 1] = navListItemXml(nil, "No apps configured", "Bind mini apps or set App N Package in Composer", false)
   end
   parts[#parts + 1] = "</List>"
   return table.concat(parts)
@@ -897,9 +932,93 @@ local function ensureRoomSelected(roomId)
   npStartTimer()
 end
 
+-- ---------------------------------------------------------------- Shield Remote companion (1.5.0)
+-- The Shield Remote web page driver sends SHIELD_REMOTE_KEY / SHIELD_REMOTE_REFRESH here with
+-- C4:SendToDevice, and reads the REMOTE_STATE variable (JSON) for its Now Playing strip.
+
+local REMOTE_KEYS = {
+  DPAD_UP = true, DPAD_DOWN = true, DPAD_LEFT = true, DPAD_RIGHT = true, DPAD_CENTER = true,
+  BACK = true, HOME = true, MENU = true,
+  MEDIA_PLAY = true, MEDIA_PAUSE = true, MEDIA_PLAY_PAUSE = true, MEDIA_NEXT = true,
+  MEDIA_PREVIOUS = true, MEDIA_REWIND = true, MEDIA_FAST_FORWARD = true,
+}
+
+local function myProxyId()
+  if not C4.GetBoundConsumerDevices then return nil end
+  local ok, devs = pcall(function() return C4:GetBoundConsumerDevices(C4:GetDeviceID(), PROXY_NOWPLAYING) end)
+  return (ok and type(devs) == "table") and tonumber((next(devs))) or nil
+end
+
+-- True when the room's current video/watch source is this Shield.
+local function roomIsOnMe(roomId)
+  local pid = myProxyId()
+  if not pid then return true end   -- unknown: do not force a source change
+  local ok, v = pcall(function() return C4:GetDeviceVariable(tonumber(roomId), VAR_CURRENT_SELECTED_DEVICE) end)
+  return ok and tonumber(v) == pid
+end
+
+local function jsonEsc(s)
+  s = tostring(s or "")
+  s = string.gsub(s, '[%c"\\]', function(c)
+    if c == '"' then return '\\"' end
+    if c == "\\" then return "\\\\" end
+    return string.format("\\u%04x", string.byte(c))
+  end)
+  return '"' .. s .. '"'
+end
+
+local remoteStateText = nil
+
+publishRemoteState = function(force)
+  local it = npCurrent or {}
+  local awake = "null"
+  if lastAwake == true then awake = "true" elseif lastAwake == false then awake = "false" end
+  local text = "{" .. table.concat({
+    '"title":' .. jsonEsc(it.title),
+    '"artist":' .. jsonEsc(it.artist),
+    '"album":' .. jsonEsc(it.album),
+    '"state":' .. jsonEsc(it.state),
+    '"art":' .. jsonEsc(artUrl(it.art, true)),
+    '"app":' .. jsonEsc(appLabel(lastApp)),
+    '"awake":' .. awake,
+  }, ",") .. "}"
+  if force or text ~= remoteStateText then
+    remoteStateText = text
+    pcall(function() C4:SetVariable("REMOTE_STATE", text) end)
+  end
+end
+
+local function remoteKey(tParams)
+  local key = trim(tParams.KEY or "")
+  if not REMOTE_KEYS[key] then
+    logMsg(LOG_WARN, "Shield Remote key %s not allowed", key)
+    return
+  end
+  local rid = tonumber(tParams.ROOMID or "")
+  if rid and not roomIsOnMe(rid) then
+    -- First press with the room on another source (or off): select the Shield and wake it, drop the key.
+    logMsg(LOG_INFO, "Shield Remote: selecting Shield in room %d (key %s dropped)", rid, key)
+    ensureRoomSelected(rid)
+    return
+  end
+  if lastAwake == false then httpPost("/v1/wake", nil, nil) end
+  enqueueKey(key)
+end
+
+function ExecuteCommand(strCommand, tParams)
+  local ok, err = pcall(function()
+    tParams = tParams or {}
+    if strCommand == "SHIELD_REMOTE_KEY" then
+      remoteKey(tParams)
+    elseif strCommand == "SHIELD_REMOTE_REFRESH" then
+      publishRemoteState(true)
+    end
+  end)
+  if not ok then logMsg(LOG_ERROR, "ExecuteCommand error: %s", tostring(err)) end
+end
+
 local NAV_TABS_XML = table.concat({
   "<Tabs>",
-  "<Tab><Id>Remote</Id><Name>Remote</Name><IconId>device</IconId><ScreenId>RemoteScreen</ScreenId></Tab>",
   "<Tab><Id>Apps</Id><Name>Apps</Name><IconId>device</IconId><ScreenId>AppsScreen</ScreenId></Tab>",
   "</Tabs>",
 })
@@ -1065,6 +1184,8 @@ end
 
 function OnDriverInit()
   pcall(function() C4:UpdateProperty("Driver Version", DRIVER_VERSION) end)
+  -- Read by the Shield Remote web page driver (must stay visible so it can be watched).
+  pcall(function() C4:AddVariable("REMOTE_STATE", "{}", "STRING", true, false) end)
   applyLogSettings()
 end
 

@@ -65,7 +65,7 @@ t.test("TabsCommand returns Remote and Apps tabs via DATA_RECEIVED", function()
   t.eq(reply.id, 5001, "binding 5001")
   t.eq(reply.params.NAVID, "nav-1", "NAVID preserved")
   t.eq(reply.params.SEQ, 42, "SEQ preserved")
-  t.ok(string.find(reply.params.DATA, "<ScreenId>RemoteScreen</ScreenId>", 1, true) ~= nil, "Remote tab present")
+  t.ok(string.find(reply.params.DATA, "<ScreenId>RemoteScreen</ScreenId>", 1, true) == nil, "Remote tab removed (1.5.0)")
   t.ok(string.find(reply.params.DATA, "<ScreenId>AppsScreen</ScreenId>", 1, true) ~= nil, "Apps tab present")
   t.ok(not has_unknown_log("TabsCommand"), "no Unknown command log")
   t.eq(#sim.errors, 0, "no driver error")
@@ -288,6 +288,80 @@ t.test("binding change outside 3051-3075 is ignored", function()
   sim.call("OnBindingChanged", 2000, "HDMI", true)
   t.eq(sim._store["Bound Apps"], "none", "value unchanged")
   t.eq(#sim.errors, 0, "no driver error logged")
+end)
+
+-- ---- 1.5.0: UTF-8, Apps tab, Shield Remote companion hook
+
+local STATUS_EPISODE = '{"awake":true,"app":"com.plexapp.android","art":"/art/abc",'
+  .. '"now_playing":{"state":"playing","title":"Supernatural","artist":"S12E14 \\u2013 The Raid","album":"Season 12",'
+  .. '"app":"com.plexapp.android"}}'
+
+-- The driver calls C4:urlGet(url, headers, false, cb) with a DriverWorks-shape callback
+-- (ticket, data, code, headers, err); the shared sim stub uses another argument order, so
+-- answer /v1/status directly here.
+local function feed_status(body)
+  C4.urlGet = function(_, url, headers, async, cb)
+    if string.find(url, "/v1/status", 1, true) and type(cb) == "function" then cb(1, body, 200, {}, nil) end
+  end
+  sim.call("OnDriverLateInit")
+end
+
+t.test("\\u2013 in bridge JSON becomes a real en dash, not ?", function()
+  start(nil)
+  feed_status(STATUS_EPISODE)
+  local np = sim._store["Now Playing"] or ""
+  t.ok(string.find(np, "S12E14 \226\128\147 The Raid", 1, true) ~= nil, "en dash decoded: " .. np)
+  t.ok(string.find(np, "?", 1, true) == nil, "no ? in Now Playing")
+end)
+
+t.test("Apps tab lists a bound mini app by package and has a Now Playing entry", function()
+  start(function(s)
+    s.bind(C4:GetDeviceID(), 3051, MINI)
+    s.set_device_vars(MINI, named({ { "UM_NV_SHIELD", "com.netflix.ninja" } }))
+  end)
+  sim.call("ReceivedFromProxy", 5001, "GetAppsScreen", { NAVID = "nav-1", SEQ = 50 })
+  local reply = sent_proxy("DATA_RECEIVED")
+  t.ok(string.find(reply.params.DATA, "<id>com.netflix.ninja</id>", 1, true) ~= nil, "mini app listed")
+  t.ok(string.find(reply.params.DATA, "<id>__nowplaying__</id>", 1, true) ~= nil, "Now Playing entry")
+end)
+
+t.test("REMOTE_STATE variable carries now playing JSON", function()
+  start(nil)
+  feed_status(STATUS_EPISODE)
+  local v = sim.dvars["REMOTE_STATE"] or ""
+  t.ok(string.find(v, '"title":"Supernatural"', 1, true) ~= nil, "title in REMOTE_STATE: " .. v)
+  t.ok(string.find(v, '"state":"playing"', 1, true) ~= nil, "state in REMOTE_STATE")
+  t.ok(string.find(v, '"art":"http://bridge.test:8080/art/abc"', 1, true) ~= nil, "plain art url")
+  t.ok(string.find(v, '"awake":true', 1, true) ~= nil, "awake true")
+end)
+
+t.test("SHIELD_REMOTE_KEY posts an allowed key when the room is on the Shield", function()
+  start(nil)
+  C4.GetBoundConsumerDevices = function() return { [900] = "SHIELD TV" } end
+  sim.set_var(77, 1000, "900")
+  sim.exec("SHIELD_REMOTE_KEY", { KEY = "DPAD_LEFT", ROOMID = "77" })
+  t.ok(any_url_has("name=DPAD_LEFT"), "DPAD_LEFT posted")
+  local sel = sim.last_sent("SELECT_VIDEO_DEVICE")
+  t.ok(sel == nil, "no source change")
+end)
+
+t.test("SHIELD_REMOTE_KEY with the room elsewhere selects the Shield and drops the key", function()
+  start(nil)
+  C4.GetBoundConsumerDevices = function() return { [900] = "SHIELD TV" } end
+  sim.set_var(77, 1000, "0")
+  sim.exec("SHIELD_REMOTE_KEY", { KEY = "DPAD_LEFT", ROOMID = "77" })
+  local sel = sim.last_sent("SELECT_VIDEO_DEVICE")
+  t.ok(sel ~= nil and sel.id == 77 and sel.params.deviceid == 900, "SELECT_VIDEO_DEVICE to room 77")
+  t.ok(not any_url_has("name=DPAD_LEFT"), "key dropped on the selecting press")
+end)
+
+t.test("SHIELD_REMOTE_KEY refuses keys outside the allow list", function()
+  start(nil)
+  sim.exec("SHIELD_REMOTE_KEY", { KEY = "POWER" })
+  sim.exec("SHIELD_REMOTE_KEY", { KEY = "DPAD_UP&x=1" })
+  t.ok(not any_url_has("name=POWER"), "POWER not sent")
+  t.ok(not any_url_has("x=1"), "injection not sent")
+  t.eq(#sim.errors, 0, "no driver error")
 end)
 
 t.test("Driver Version is 1.5.0", function()
