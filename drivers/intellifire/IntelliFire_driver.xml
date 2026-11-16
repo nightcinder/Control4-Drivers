@@ -5,8 +5,8 @@
 	<name>IntelliFire_driver</name>
 	<model>IntelliFire Fireplace</model>
 	<created>08/15/2026 12:00 PM</created>
-	<modified>11/12/2026 8:55 PM</modified>
-	<version>211</version>
+	<modified>11/16/2026 02:58 PM</modified>
+	<version>212</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -18,6 +18,7 @@
 	</search_types>
 
 	<!--
+		v212 - command descriptions show device name and parameter values in Composer programming.
 		v203 - controls stay usable while a command is in flight: no greying out, 700 ms double-tap guard only,
 		Sending... hint. Flame taps during ignition are queued (last tap wins) and applied once power is
 		confirmed; other flame taps are debounced to one send. Page is www/fireplace3.html (page build 3). (UNTESTED)
@@ -175,7 +176,7 @@
 		<commands>
 			<command>
 				<name>Set Pilot</name>
-				<description>Turn the standing pilot on or off (independent of main flame)</description>
+				<description>Set the standing pilot on NAME to PARAM1</description>
 				<params>
 					<param>
 						<name>State</name>
@@ -189,11 +190,11 @@
 			</command>
 			<command>
 				<name>Fireplace On</name>
-				<description>Turn the main flame on</description>
+				<description>Turn on the main flame of NAME</description>
 			</command>
 			<command>
 				<name>Fireplace Off</name>
-				<description>Turn the main flame off</description>
+				<description>Turn off the main flame of NAME</description>
 			</command>
 		</commands>
 
@@ -229,7 +230,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default></default>
+				<default>212</default>
 			</property>
 			<property>
 				<name>Web Page Status</name>
