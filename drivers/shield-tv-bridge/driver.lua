@@ -67,7 +67,11 @@ local connectedSent = nil
 local lastApp = nil
 local lastAwake = nil
 local lastNowKey = nil
-local publishRemoteState   -- forward declaration (Shield Remote companion, defined below)
+local publishRemoteState   -- forward declaration (Shield Remote page, defined below)
+local fetchInlineArt       -- forward declaration
+local artInline = { key = "", data = "" }   -- art path and its data: URI for the Shield Remote page
+local roomMuted = nil      -- room mute state for the page (nil = unknown)
+local roomVolume = nil
 
 -- ---------------------------------------------------------------- helpers
 
@@ -934,11 +938,11 @@ local function ensureRoomSelected(roomId)
 end
 
 -- ---------------------------------------------------------------- Shield Remote web page (1.5.0)
--- uibutton proxy 5003 opens www/remote1.html. The page sends parameter-free UI_* commands
+-- uibutton proxy 5003 opens www/remote2.html. The page sends parameter-free UI_* commands
 -- (UI_KEY_<KEY>, UI_VOL_UP/DOWN, UI_MUTE, UI_REFRESH, UI_HELLO_<build>) and reads the UI_STATE
 -- variable / SendDataToUI snapshot. Opening the page (SELECT on 5003) never sends a key.
 local PROXY_REMOTE = 5003
-local PAGE_BUILD = 1            -- must match PAGE_BUILD in www/remote1.html (file renamed per release)
+local PAGE_BUILD = 2            -- must match PAGE_BUILD in www/remote2.html (file renamed per release)
 local uiSeq = 0
 
 local REMOTE_KEYS = {
@@ -976,6 +980,7 @@ local remoteStateText = nil
 
 publishRemoteState = function(force)
   local it = npCurrent or {}
+  if fetchInlineArt then fetchInlineArt(it.art or "") end
   local awake = "null"
   if lastAwake == true then awake = "true" elseif lastAwake == false then awake = "false" end
   local text = "{" .. table.concat({
@@ -987,14 +992,57 @@ publishRemoteState = function(force)
     '"app":' .. jsonEsc(appLabel(lastApp)),
     '"awake":' .. awake,
   }, ",") .. "}"
-  if force or text ~= remoteStateText then
-    remoteStateText = text
+  local extra = string.format('"muted":%s,"vol":%s,"artKey":%s',
+    roomMuted == nil and "null" or tostring(roomMuted),
+    roomVolume and tostring(roomVolume) or "null",
+    jsonEsc(artInline.key or ""))
+  local fullText = text .. extra
+  if force or fullText ~= remoteStateText then
+    remoteStateText = fullText
     uiSeq = uiSeq + 1
-    local snap = string.format('{"t":"shieldremote","seq":%d,"build":%d,"linked":true,"np":%s}',
-      uiSeq, PAGE_BUILD, text)
-    pcall(function() C4:SetVariable("UI_STATE", snap) end)
-    pcall(function() C4:SendDataToUI(snap) end)
+    local head = string.format('{"t":"shieldremote","seq":%d,"build":%d,"linked":true,"np":%s,%s',
+      uiSeq, PAGE_BUILD, text, extra)
+    -- The variable stays small; the inline art (about 30 KB) only goes out with SendDataToUI.
+    pcall(function() C4:SetVariable("UI_STATE", head .. "}") end)
+    pcall(function() C4:SendDataToUI(head .. ',"artData":' .. jsonEsc(artInline.data or "") .. "}") end)
   end
+end
+
+-- Inline art: the web view will not load http images, so fetch a small JPEG thumbnail from the
+-- bridge (/art/<id>?w=320, bridge 0.4.3+) and send it to the page as a data: URI.
+local ART_WIDTH = 320
+local ART_MAX_BYTES = 60000
+fetchInlineArt = function(path)
+  if path == "" then
+    if artInline.key ~= "" then artInline = { key = "", data = "" }; publishRemoteState(false) end
+    return
+  end
+  if path == artInline.key then return end
+  -- A request that never called back is retried after 15 s.
+  if path == artInline.pending and os.time() - (artInline.pendingAt or 0) < 15 then return end
+  artInline.pending = path
+  artInline.pendingAt = os.time()
+  local base = string.gsub(trim(prop("Bridge URL")), "/+$", "")
+  pcall(function()
+    C4:urlGet(base .. path .. "?w=" .. ART_WIDTH, {}, false, function(ticket, data, code, headers, err)
+      if artInline.pending ~= path then return end
+      artInline.pending = nil
+      local n = data and #data or 0
+      if tonumber(code) == 200 and n > 0 and n <= ART_MAX_BYTES then
+        local ctype = "image/jpeg"
+        if type(headers) == "table" then
+          for k, v in pairs(headers) do
+            if string.lower(tostring(k)) == "content-type" then ctype = tostring(v) end
+          end
+        end
+        artInline = { key = path, data = "data:" .. ctype .. ";base64," .. C4:Base64Encode(data) }
+      else
+        logMsg(LOG_DEBUG, "Inline art skipped (code %s, %d bytes)", tostring(code), n)
+        artInline = { key = path, data = "" }
+      end
+      publishRemoteState(false)
+    end)
+  end)
 end
 
 local function remoteKey(tParams)
@@ -1021,6 +1069,50 @@ local function myRoomId()
   return ok and tonumber(r) or nil
 end
 
+-- Room mute/volume state for the page: find the room's variables by name and watch them.
+local roomAudio = { room = nil, mute = nil, vol = nil }
+
+local function truthy(v)
+  local s = string.lower(trim(tostring(v or "")))
+  return s == "1" or s == "true" or s == "on"
+end
+
+local function watchRoomAudio()
+  local rid = myRoomId()
+  if not rid then return end
+  local ok, vars = pcall(function() return C4:GetDeviceVariables(rid) end)
+  if not ok or type(vars) ~= "table" then return end
+  local names = {}
+  for id, v in pairs(vars) do
+    if type(v) == "table" and type(v.name) == "string" then
+      local n = string.upper(v.name)
+      names[#names + 1] = v.name .. "=" .. tostring(id)
+      if not roomAudio.mute and string.find(n, "MUTE", 1, true) then
+        roomAudio.mute = tonumber(id); roomMuted = truthy(v.value)
+      elseif n == "CURRENT_VOLUME" or (not roomAudio.vol and string.find(n, "VOLUME", 1, true)
+          and not string.find(n, "DEVICE", 1, true) and tonumber(v.value)) then
+        roomAudio.vol = tonumber(id); roomVolume = tonumber(v.value)
+      end
+    end
+  end
+  roomAudio.room = rid
+  logMsg(LOG_DEBUG, "Room %d variables: %s", rid, table.concat(names, ", "))
+  for _, id in ipairs({ roomAudio.mute, roomAudio.vol }) do
+    pcall(function() C4:RegisterVariableListener(rid, id) end)
+  end
+end
+
+function OnWatchedVariableChanged(idDevice, idVariable, strValue)
+  local ok, err = pcall(function()
+    local dev, var = tonumber(idDevice), tonumber(idVariable)
+    if var == VAR_CURRENT_SELECTED_DEVICE then npRefreshSelection() end
+    if dev ~= roomAudio.room then return end
+    if var == roomAudio.mute then roomMuted = truthy(strValue); publishRemoteState(false)
+    elseif var == roomAudio.vol then roomVolume = tonumber(strValue); publishRemoteState(false) end
+  end)
+  if not ok then logMsg(LOG_ERROR, "OnWatchedVariableChanged error: %s", tostring(err)) end
+end
+
 -- Handles one UI_* command from the Shield Remote page.
 local function handleUi(cmd)
   if string.sub(cmd, 1, 7) == "UI_KEY_" then
@@ -1028,6 +1120,11 @@ local function handleUi(cmd)
   elseif ROOM_VOLUME[cmd] then
     local rid = myRoomId()
     if rid then pcall(function() C4:SendToDevice(rid, ROOM_VOLUME[cmd], {}) end) end
+    if cmd == "UI_MUTE" and not roomAudio.mute then
+      -- No room mute variable to watch: flip our own idea of it so the icon still follows.
+      roomMuted = not (roomMuted == true)
+      publishRemoteState(false)
+    end
   elseif cmd == "UI_REFRESH" then
     publishRemoteState(true)
   elseif string.sub(cmd, 1, 9) == "UI_HELLO_" then
@@ -1237,6 +1334,7 @@ function OnDriverLateInit()
     npSetVars()
     npRegisterRooms()
     refreshBoundApps()
+    watchRoomAudio()
     refreshShieldList()
     startPolling()
     pollStatus()

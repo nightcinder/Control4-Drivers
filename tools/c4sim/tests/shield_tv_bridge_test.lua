@@ -1,4 +1,4 @@
-﻿-- Shield TV Bridge tests: Navigator tabs/screens, keys, mini app launch, PASSTHROUGH, Bound Apps.
+-- Shield TV Bridge tests: Navigator tabs/screens, keys, mini app launch, PASSTHROUGH, Bound Apps.
 local sim = require("c4sim")
 local t = require("t")
 
@@ -396,10 +396,57 @@ end)
 
 t.test("UI_HELLO sets Web Page Status (OK and stale)", function()
   start(nil)
+  sim.exec("UI_HELLO_2", {})
+  t.eq(sim._store["Web Page Status"], "Page build 2 OK", "build 2 ok")
   sim.exec("UI_HELLO_1", {})
-  t.eq(sim._store["Web Page Status"], "Page build 1 OK", "build 1 ok")
-  sim.exec("UI_HELLO_0", {})
   t.ok(string.find(sim._store["Web Page Status"] or "", "PAGE IS STALE", 1, true) ~= nil, "stale flagged")
+end)
+
+t.test("inline art: ?w=320 thumbnail goes to the page as a data URI, not into the variable", function()
+  local sentUi
+  C4.SendDataToUI = function(_, s) sentUi = s end
+  local artUrls = {}
+  C4.urlGet = function(_, url, headers, async, cb)
+    if type(cb) ~= "function" then return end
+    if string.find(url, "/v1/status", 1, true) then cb(1, STATUS_EPISODE, 200, {}, nil)
+    elseif string.find(url, "/art/abc", 1, true) then
+      artUrls[#artUrls + 1] = url
+      cb(2, "JPEGBYTES", 200, { ["Content-Type"] = "image/jpeg" }, nil)
+    end
+  end
+  start(nil)
+  C4.SendDataToUI = function(_, s) sentUi = s end
+  sim.call("OnDriverLateInit")
+  t.ok(artUrls[1] and string.find(artUrls[1], "/art/abc?w=320", 1, true) ~= nil, "thumbnail requested: " .. tostring(artUrls[1]))
+  t.ok(sentUi and string.find(sentUi, '"artData":"data:image/jpeg;base64,', 1, true) ~= nil, "artData sent to UI")
+  t.ok(sentUi and string.find(sentUi, '"artKey":"/art/abc"', 1, true) ~= nil, "artKey set")
+  t.ok(string.find(sim.dvars["UI_STATE"] or "", "artData", 1, true) == nil, "variable has no artData")
+end)
+
+t.test("inline art too big (old bridge ignores ?w) is skipped, no error", function()
+  C4.urlGet = function(_, url, headers, async, cb)
+    if type(cb) ~= "function" then return end
+    if string.find(url, "/v1/status", 1, true) then cb(1, STATUS_EPISODE, 200, {}, nil)
+    elseif string.find(url, "/art/", 1, true) then cb(2, string.rep("x", 70000), 200, {}, nil) end
+  end
+  local sentUi
+  start(nil)
+  C4.SendDataToUI = function(_, s) sentUi = s end
+  sim.exec("UI_REFRESH", {})
+  t.ok(sentUi and string.find(sentUi, '"artData":""', 1, true) ~= nil, "empty artData")
+  t.ok(sentUi and string.find(sentUi, '"artKey":"/art/abc"', 1, true) ~= nil, "art handled (key set, not retried)")
+  t.eq(#sim.errors, 0, "no driver error")
+end)
+
+t.test("room mute variable is watched and reaches UI_STATE", function()
+  start(nil)
+  remote_room(true)
+  sim.set_device_vars(77, { [1012] = { name = "IS_MUTED", value = "0" }, [1011] = { name = "CURRENT_VOLUME", value = "35" } })
+  sim.call("OnDriverLateInit")
+  sim.call("OnWatchedVariableChanged", 77, 1012, "1")
+  local v = sim.dvars["UI_STATE"] or ""
+  t.ok(string.find(v, '"muted":true', 1, true) ~= nil, "muted true: " .. v)
+  t.ok(string.find(v, '"vol":35', 1, true) ~= nil, "volume 35")
 end)
 
 t.test("Driver Version is 1.5.0", function()
