@@ -1,7 +1,8 @@
 --[[
-  Room Light Helper v1.4.0 (Control4 DriverWorks, OS 3.x)
+  Room Light Helper v1.4.1 (Control4 DriverWorks, OS 3.x)
   One instance per room. Laundry is the first room.
   Changelog:
+    1.4.1 - command descriptions show device name and parameter values in Composer programming.
     1.4.0 - Fade In (sec) property (default 5) sets the turn-on ramp time (was fixed 1500 ms).
            Fade Out (sec) property (default 30, 0 = plain OFF) ramps the light to 0 on the last
            release. A Request On during that fade reclaims the light with a normal ramp.
@@ -44,7 +45,7 @@
   Not in v1: keypad holds, away mode, DLS integration. Max Level is a plain property.
 ]]
 
-local DRIVER_VERSION = "1.4.0"
+local DRIVER_VERSION = "1.4.1"
 local CHECK_FAST_MS = 10000   -- check timer while the light listener is not registered
 local CHECK_SLOW_MS = 60000   -- check timer once the listener is registered
 local LIGHT_LEVEL_VAR = 1001          -- light proxy LIGHT_LEVEL variable id

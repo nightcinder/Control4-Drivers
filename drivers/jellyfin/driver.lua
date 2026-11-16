@@ -1,6 +1,7 @@
 --[[
   Media Server Now Playing: Jellyfin and Plex together (Control4 DriverWorks, OS 3.x)
-  Version: 0.3.0  (UNTESTED on real Composer/Director)
+  Version: 0.3.1  (UNTESTED on real Composer/Director)
+  0.3.1: descriptions show device name and parameter values in Composer programming.
 
   Each enabled backend is polled on its own timer, with its own URL, key, status and last result.
   Jellyfin: GET {Jellyfin URL}/Sessions, POST {base}/Sessions/{SessionId}/Playing/{Cmd}.
@@ -11,7 +12,7 @@
   They are never written to the log. Plex artwork URLs contain the token, so the Artwork URL variable carries it too.
 ]]
 
-local DRIVER_VERSION = "0.3.0"
+local DRIVER_VERSION = "0.3.1"
 local TICKS_PER_SECOND = 10000000
 local WATCHDOG_SECONDS = 20
 local DEFAULT_POLL_SECONDS = 4

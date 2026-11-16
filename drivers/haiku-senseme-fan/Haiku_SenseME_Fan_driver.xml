@@ -5,8 +5,8 @@
 	<name>Haiku SenseME Fan</name>
 	<model>Haiku / Haiku H / Haiku L / Haiku C / i6</model>
 	<created>08/14/2026 12:00 PM</created>
-	<modified>11/11/2026 04:00 PM</modified>
-	<version>401</version>
+	<modified>11/16/2026 02:57 PM</modified>
+	<version>402</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -113,11 +113,11 @@
 		<commands>
 			<command>
 				<name>Rediscover Fan</name>
-				<description>Force a clean TCP reconnect to the configured Fan IP Address and refresh all properties</description>
+				<description>Force a clean TCP reconnect to NAME and refresh all of its properties</description>
 			</command>
 			<command>
 				<name>Set Whoosh Mode</name>
-				<description>Turn Whoosh (natural breeze) mode on or off</description>
+				<description>Set Whoosh (natural breeze) mode on NAME to PARAM1</description>
 				<params>
 					<param>
 						<name>State</name>
@@ -131,7 +131,7 @@
 			</command>
 			<command>
 				<name>Set Fan Direction</name>
-				<description>Set fan rotation direction (seasonal reverse)</description>
+				<description>Set the rotation direction of NAME to PARAM1</description>
 				<params>
 					<param>
 						<name>Direction</name>
@@ -169,7 +169,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default></default>
+				<default>402</default>
 			</property>
 			<property>
 				<name>Fan IP Address</name>

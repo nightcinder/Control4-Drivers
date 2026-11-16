@@ -2,11 +2,12 @@
 	<copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with LIFX or Control4</copyright>
 	<creator>Custom Driver Project</creator>
 	<manufacturer>LIFX</manufacturer>
+	<!-- 1.0.7: descriptions show device name and parameter values in Composer programming -->
 	<name>LIFX Bulb</name>
 	<model>LIFX Wi-Fi LED Bulb (LAN Protocol)</model>
 	<created>08/16/2026 12:00 PM</created>
-	<modified>08/17/2026 7:55 PM</modified>
-	<version>107</version>
+	<modified>11/16/2026 02:56 PM</modified>
+	<version>108</version>
 	<small image_source="c4z">icons/lifx_sm.png</small>
 	<large image_source="c4z">icons/lifx_lg.png</large>
 	<control>lua_gen</control>
@@ -112,23 +113,23 @@
 		<commands>
 			<command>
 				<name>Discover Bulbs</name>
-				<description>Broadcast a LIFX discovery request (GetService) on the local subnet</description>
+				<description>Run a LIFX discovery broadcast on the local subnet from NAME</description>
 			</command>
 			<command>
 				<name>Re-resolve IP</name>
-				<description>Run a timer-driven unicast sweep of the subnet to re-learn this bulb's IP address (fallback for when broadcast discovery cannot recover the sender's address)</description>
+				<description>Re-learn the IP address of NAME with a subnet sweep</description>
 			</command>
 			<command>
 				<name>Identify (breathe)</name>
-				<description>Blink the bulb briefly so it can be visually identified</description>
+				<description>Blink NAME briefly so it can be identified</description>
 			</command>
 			<command>
 				<name>Refresh State</name>
-				<description>Immediately query the bulb's current color/power state</description>
+				<description>Refresh the color and power state of NAME now</description>
 			</command>
 			<command>
 				<name>Print Debug Info</name>
-				<description>Print current driver state to the debug console</description>
+				<description>Print the driver state of NAME to the debug console</description>
 			</command>
 		</commands>
 

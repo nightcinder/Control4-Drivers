@@ -1,7 +1,8 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.11.4
+  DRIVER_VERSION: 1.11.5
 
+  1.11.5: command descriptions show device name and parameter values in Composer programming.
   1.11.4: an on_daylight room's daylight trigger (and the date it fired) is saved in PersistData and restored after a restart or Rooms JSON save when still valid for the day cycle, so an off time after midnight is not sent early.
   1.11.3: manual off inside the on-window stays off until the next on edge (not the hold timer); a manual off at 8% or
   less sets a hold; a Rooms JSON save or restart inside the off window sends the pending off; on_daylight rooms with an
@@ -36,7 +37,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.11.4"
+DRIVER_VERSION = "1.11.5"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms

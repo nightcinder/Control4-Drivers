@@ -5,19 +5,20 @@
 	<name>Moen Smart Shower (U by Moen) - Standalone</name>
 	<model>TS3302 / TS3304 / S3102 / S3104 Digital Shower Valve + Controller</model>
 	<created>08/16/2026 12:00 PM</created>
-	<modified>11/07/2026 03:45 PM</modified>
-	<version>208</version>
+	<modified>11/16/2026 02:59 PM</modified>
+	<version>209</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
 	<controlmethod>ip</controlmethod>
 	<driver>DriverWorks</driver>
-	<templatedescription>Moen Smart Shower (U by Moen) - Local TCP bridge or direct cloud control, Thermostat + Extras proxy (v208)</templatedescription>
+	<templatedescription>Moen Smart Shower (U by Moen) - Local TCP bridge or direct cloud control, Thermostat + Extras proxy (v209)</templatedescription>
 	<search_types>
 		<type>Moen:shower:UbyMoen</type>
 	</search_types>
 
 	<!--
+		v209 - descriptions show device name and parameter values in Composer programming.
 		v208 - Bridge link moved to the Control4 TCPClient API. v206-v207 used
 		C4:SendToNetwork on dynamic binding 7001: the socket connected and state
 		lines arrived, but nothing the driver sent reached the bridge. Binding
@@ -255,15 +256,15 @@
 		<commands>
 			<command>
 				<name>Shower On</name>
-				<description>Turn the shower on (resumes the active preset if one is paused, otherwise a plain on with no preset)</description>
+				<description>Turn NAME on, resuming any preset that is paused</description>
 			</command>
 			<command>
 				<name>Shower Off</name>
-				<description>Turn the shower off</description>
+				<description>Turn NAME off</description>
 			</command>
 			<command>
 				<name>Set Temperature</name>
-				<description>Set the target temperature (F) while the shower is running</description>
+				<description>Set NAME target temperature to PARAM1 F</description>
 				<params>
 					<param>
 						<name>Temperature</name>
@@ -273,7 +274,7 @@
 			</command>
 			<command>
 				<name>Activate Preset</name>
-				<description>Activate a saved Moen shower preset by its position number</description>
+				<description>Activate preset PARAM1 on NAME</description>
 				<params>
 					<param>
 						<name>Position</name>
@@ -289,11 +290,11 @@
 			</command>
 			<command>
 				<name>Resume Paused Shower</name>
-				<description>Resume water flow after a preset paused it at temperature (mode = paused-by-preset)</description>
+				<description>Resume water flow on NAME after a preset paused it at temperature</description>
 			</command>
 			<command>
 				<name>Refresh Status</name>
-				<description>Poll Moen's cloud immediately instead of waiting for the next scheduled poll</description>
+				<description>Poll for the latest status of NAME now</description>
 			</command>
 			<!--
 				Outlets are no longer exposed in Navigator (Phase 1 UI goal),
@@ -303,7 +304,7 @@
 			-->
 			<command>
 				<name>Set Outlet</name>
-				<description>Turn a single outlet on/off directly (bypasses presets) - for Composer programming use, not exposed in Navigator</description>
+				<description>Turn outlet PARAM1 on NAME to PARAM2</description>
 				<params>
 					<param>
 						<name>Outlet</name>
@@ -371,7 +372,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default></default>
+				<default>209</default>
 			</property>
 			<property>
 				<name>Moen Account Email</name>

@@ -1,11 +1,11 @@
 <devicedata>
-  <version>14</version>
+  <version>15</version>
   <manufacturer>Nick Adamany</manufacturer>
   <name>Daylight Lighting Scheduler</name>
   <model>DLS</model>
   <creator>Nick Adamany</creator>
   <created>10/19/2026 7:30 PM</created>
-  <modified>11/15/2026 11:55 AM</modified>
+  <modified>11/16/2026 02:57 PM</modified>
   <control>lua_gen</control>
   <controlmethod>other</controlmethod>
   <driver>DriverWorks</driver>
@@ -18,7 +18,7 @@
       <property>
         <name>Driver Version</name>
         <type>STRING</type>
-        <default>1.11.4</default>
+        <default>1.11.5</default>
         <readonly>true</readonly>
       </property>
       <property>
@@ -203,14 +203,14 @@
     <commands>
       <command>
         <name>SetPresence</name>
-        <description>Set PRESENT to Home or Away</description>
+        <description>Set the presence of NAME to PARAM1</description>
         <params>
           <param><name>PRESENT</name><type>STRING</type></param>
         </params>
       </command>
       <command>
         <name>ApplyScene</name>
-        <description>Apply SCENE in ROOM and hold the room off the schedule</description>
+        <description>Apply scene PARAM2 in room PARAM1 on NAME and hold that room off the schedule</description>
         <params>
           <param><name>ROOM</name><type>STRING</type></param>
           <param><name>SCENE</name><type>STRING</type></param>
@@ -218,7 +218,7 @@
       </command>
       <command>
         <name>Release Room Override</name>
-        <description>Resume automatic control of ROOM</description>
+        <description>Resume automatic control of PARAM1 from NAME</description>
         <params>
           <param><name>ROOM</name><type>STRING</type></param>
         </params>
