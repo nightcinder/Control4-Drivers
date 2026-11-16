@@ -1,6 +1,7 @@
 --[[
   Haiku SenseME Light (child) driver for Control4 (OS 3.4.x)
-  Version: 403
+  Version: 404
+  404: command descriptions show device name and parameter values in Composer programming.
   One instance = the light kit of one Big Ass Fans Haiku / i6 fan. It has no network settings: bind its
   "Haiku Fan" connection to the "Light Kit Link" connection of that fan's "Haiku SenseME Fan" driver.
 
@@ -9,7 +10,7 @@
     from fan: HK_LIGHT {POWER, LEVEL, HASLIGHT, ONLINE, FANNAME}, HK_HELLO
 ]]
 
-local DRIVER_VERSION = "403"
+local DRIVER_VERSION = "404"
 local PROXY_BINDING = 5001
 local FAN_LINK = 1
 

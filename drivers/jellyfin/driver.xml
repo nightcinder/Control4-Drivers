@@ -5,8 +5,8 @@
 	<name>Media Server (Jellyfin and Plex)</name>
 	<model>Media Server (Jellyfin and Plex)</model>
 	<created>11/12/2026 7:00 AM</created>
-	<modified>11/12/2026 9:25 AM</modified>
-	<version>5</version>
+	<modified>11/16/2026 12:00 PM</modified>
+	<version>6</version>
 	<control>lua_gen</control>
 	<controlmethod>other</controlmethod>
 	<driver>DriverWorks</driver>
@@ -14,6 +14,7 @@
 	<proxies />
 	<capabilities />
 	<templatedescription>Media Server now playing for Jellyfin and Plex at the same time. Polls each enabled server, shows the active session and exposes now-playing variables and transport commands. UNTESTED.</templatedescription>
+	<!-- v0.3.1 - descriptions show device name and parameter values in Composer programming -->
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 
@@ -27,31 +28,31 @@
 		<commands>
 			<command>
 				<name>Play/Pause</name>
-				<description>Toggle play or pause on the active session</description>
+				<description>Toggle play or pause on NAME</description>
 			</command>
 			<command>
 				<name>Play</name>
-				<description>Resume playback on the active session</description>
+				<description>Resume playback on NAME</description>
 			</command>
 			<command>
 				<name>Pause</name>
-				<description>Pause playback on the active session</description>
+				<description>Pause playback on NAME</description>
 			</command>
 			<command>
 				<name>Stop</name>
-				<description>Stop playback on the active session</description>
+				<description>Stop playback on NAME</description>
 			</command>
 			<command>
 				<name>Next</name>
-				<description>Next track on the active session</description>
+				<description>Send NAME to the next track</description>
 			</command>
 			<command>
 				<name>Previous</name>
-				<description>Previous track on the active session</description>
+				<description>Send NAME to the previous track</description>
 			</command>
 			<command>
 				<name>Seek To Percent</name>
-				<description>Seek the active session to a percentage of the item runtime</description>
+				<description>Seek NAME to PARAM1 percent of the runtime</description>
 				<params>
 					<param>
 						<name>Percent</name>
@@ -198,7 +199,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>0.3.0</default>
+				<default>0.3.1</default>
 			</property>
 		</properties>
 	</config>

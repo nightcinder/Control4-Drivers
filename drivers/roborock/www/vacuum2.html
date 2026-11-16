@@ -38,6 +38,9 @@
   .meta { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
   .meta > span { display:flex; flex-direction:column; gap:4px; min-width:0; }
   .meta .val2 { font-size:15px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .meta .wide { grid-column:1 / -1; }
+  .mode-card h2 { font-size:11px; font-weight:500; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--muted); margin:0 0 12px; }
   .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
   button { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;
     min-height:72px; padding:12px 8px; margin:0; background:transparent; border:1px solid var(--line-strong); border-radius:14px;
@@ -96,8 +99,19 @@
   <div class="meta">
     <span><span class="lbl">Room</span> <span id="room" class="val2">--</span></span>
     <span><span class="lbl">Progress</span> <span id="progress" class="val2">n/a</span></span>
+    <span class="wide"><span class="lbl">Mode</span> <span id="mode" class="val2">--</span></span>
   </div>
   <p id="err" class="err">No errors</p>
+</div>
+
+<div id="modecard" class="card mode-card" style="display:none">
+  <h2>Mode for the next clean</h2>
+  <div id="modes" class="rooms">
+    <label class="room"><input type="radio" name="jobmode" value="" checked> Device setting</label>
+    <label class="room"><input type="radio" name="jobmode" value="VACUUM"> Vacuum only</label>
+    <label class="room"><input type="radio" name="jobmode" value="VACMOP"> Vacuum and mop</label>
+    <label class="room"><input type="radio" name="jobmode" value="MOP"> Mop only</label>
+  </div>
 </div>
 
 <div class="grid">
@@ -114,20 +128,37 @@
   <button id="clean" class="clean-btn" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10-6.5z"/></svg>Clean Selected</button>
 </div>
 
-<footer>Page build 3 - driver 0.6.2 - UNTESTED</footer>
+<footer>Page build 4 - driver 0.7.1</footer>
 
 <script>
 (function () {
   "use strict";
-  var PAGE_BUILD = "3";              // must match UI_BUILD in driver.lua
+  var PAGE_BUILD = "4";              // must match UI_BUILD in driver.lua
   var S = null, lastSeq = null, gotState = false, startLockUntil = 0;
   var roomsKey = "", selected = {};  // room checkbox state, keyed by room id
   var hasC4 = !!(window.C4 && typeof window.C4.sendCommand === "function");
   var LABELS = { cleaning: "Cleaning", zoned_cleaning: "Cleaning (zoned)", segment_cleaning: "Cleaning (room)",
     spot_cleaning: "Spot cleaning", docked: "Docked", charging: "Charging", paused: "Paused", idle: "Idle",
-    returning: "Returning to dock", error: "Error" };
+    returning: "Returning to dock", error: "Error",
+    returning_home: "Returning to dock", docking: "Docking", charging_complete: "Charged",
+    charging_problem: "Charging problem", segment_mopping: "Mopping (room)", zoned_mopping: "Mopping (zoned)",
+    robot_status_mopping: "Mopping", emptying_the_bin: "Emptying the bin", washing_the_mop: "Washing the mop",
+    washing_the_mop_2: "Washing the mop", going_to_wash_the_mop: "Going to wash the mop" };
   function $(id) { return document.getElementById(id); }
-  function label(s) { if (!s) return "Unknown"; return LABELS[s] || String(s).replace(/_/g, " "); }
+  function label(s) {
+    if (!s) return "Unknown";
+    if (LABELS[s]) return LABELS[s];
+    var t = String(s).replace(/_/g, " ");
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  }
+
+  // Mode for the next clean: "" (the vacuum's own setting), VACUUM, VACMOP or MOP. It applies to
+  // one job; the bridge puts the vacuum's own setting back when the job has ended.
+  function jobMode() {
+    if (!(S && S.modeOk)) return "";
+    var el = document.querySelector('input[name="jobmode"]:checked');
+    return el ? el.value : "";
+  }
 
   function send(cmd) {
     if (hasC4) { try { window.C4.sendCommand(cmd, "{}", false, true); } catch (e) {} }
@@ -136,7 +167,8 @@
   // Clean All and Clean Selected are locked for 3 s after a tap so they cannot fire twice.
   // Pause, Dock and Stop are not locked.
   function tap(cmd) {
-    var locks = cmd === "UI_START" || cmd.indexOf("UI_CLEAN_ROOMS_") === 0;
+    if (cmd === "UI_START" && jobMode()) cmd = "UI_RUN_" + jobMode() + "_START";
+    var locks = cmd === "UI_START" || cmd.indexOf("UI_CLEAN_ROOMS_") === 0 || cmd.indexOf("UI_RUN_") === 0;
     if (locks) {
       if (Date.now() < startLockUntil) return;
       startLockUntil = Date.now() + 3000;
@@ -240,7 +272,17 @@
     $("bar").style.width = b == null ? "0%" : Math.max(0, Math.min(100, b)) + "%";
     $("bar").className = "fill" + (b != null && b <= 20 ? " low" : "");
     $("room").textContent = S ? (S.activeRoom || "Unknown") : "--";
-    $("progress").textContent = (S && typeof S.roomProgress === "number") ? Math.round(S.roomProgress) + "%" : "n/a";
+    // Room percent when the bridge has one, else the whole-job percent. "~" marks an estimate
+    // (cleaned area against the last same job), not a number from the vacuum.
+    var prog = "n/a";
+    if (S && typeof S.roomProgress === "number") prog = Math.round(S.roomProgress) + "%";
+    else if (S && typeof S.runProgress === "number") {
+      prog = (S.progressSource === "estimate" ? "~" : "") + Math.round(S.runProgress) + "%" +
+        (S.progressSource === "estimate" ? " est." : "");
+    }
+    $("progress").textContent = prog;
+    $("mode").textContent = S ? (S.modeLabel || "Unknown") : "--";
+    $("modecard").style.display = (S && S.modeOk) ? "block" : "none";
     var e = S ? (S.lastError || (S.error && S.error !== "none" ? S.error : "")) : "";
     $("err").textContent = e && e !== "none" ? "Last error: " + e : "No errors";
     ["pause", "dock", "stop"].forEach(function (id) { $(id).disabled = !online; });
@@ -263,7 +305,7 @@
   $("clean").addEventListener("click", function () {
     var ids = selectedIds();
     if (!ids.length) return;
-    tap("UI_CLEAN_ROOMS_" + ids.join("_"));
+    tap((jobMode() ? "UI_RUN_" + jobMode() + "_ROOMS_" : "UI_CLEAN_ROOMS_") + ids.join("_"));
     // Clear the ticks once the command is sent; the list is rebuilt unticked.
     selected = {};
     roomsKey = "";

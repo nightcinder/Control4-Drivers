@@ -5,8 +5,8 @@
 	<name>roborock</name>
 	<model>Roborock Vacuum (LAN Bridge)</model>
 	<created>11/12/2026 12:00 PM</created>
-	<modified>11/16/2026 12:15 AM</modified>
-	<version>18</version>
+	<modified>11/16/2026 03:02 PM</modified>
+	<version>21</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -75,7 +75,7 @@
 			</display_icons>
 		</navigator_display_option>
 	</capabilities>
-	<templatedescription>Roborock vacuum status and control through a LAN HTTP bridge, with a Navigator web view (state, battery, Start / Pause / Dock / Stop) and state-based tile icons. UNTESTED.</templatedescription>
+	<templatedescription>Roborock vacuum status and control through a LAN HTTP bridge, with a Navigator web view (state, battery, job progress, cleaning mode, Start / Pause / Dock / Stop, room clean) and state-based tile icons.</templatedescription>
 
 	<!--
 		v5 (0.5.0) - Active Room and Room Progress properties; web page vacuum2.html, build 3 (UNTESTED on hardware and in Composer)
@@ -90,24 +90,26 @@
 		Commands, actions, events, variables and properties from v1 are unchanged.
 		v5.1 (0.5.1) - events moved to devicedata level so Composer lists them
 		v5.2 (0.6.0) - Room field shows Docked when docked or charging and the target room (e.g. "Laundry (target)") while a room job runs; events 8 Laundry Room Clean Started and 9 Laundry Room Clean Finished (UNTESTED on hardware and in Composer)
-		v5.4 (0.6.3) - accept Composer command names + ReceivedFromProxy in ExecuteCommand
 		v5.3 (0.6.2) - Laundry Room Clean Started fires as soon as the bridge accepts a clean job that includes the Laundry Room ID; adaptive polling (5 s while cleaning, Poll Interval otherwise; default 15, minimum 5) (UNTESTED on hardware and in Composer)
+		v5.4 (0.6.3) - accept Composer command names + ReceivedFromProxy in ExecuteCommand
+		v6 (0.7.0) - per-job cleaning mode (Mode on Clean Rooms and the new Start Full Clean; needs bridge 0.2.3), Set Cleaning Mode, Run Progress, events 10 Docked and 11 Error Cleared, error text and code variables, Activity property and VACUUM_ACTIVITY variable, python-roborock state names (returning_home, charging_complete and the like), events fired by name, Dock skipped when already docked; web page vacuum2.html build 4 (file name kept). Events 1-9 keep their ids. New features UNTESTED on hardware and in Composer
+		v6.1 (0.7.1) - command descriptions show device name and parameter values in Composer programming
 	-->
 	<events>
 		<event>
 			<id>1</id>
 			<name>Cleaning Started</name>
-			<description>Fires when the vacuum enters a cleaning state</description>
+			<description>Fires once when a cleaning job starts (the vacuum enters a cleaning state; not again after a pause)</description>
 		</event>
 		<event>
 			<id>2</id>
 			<name>Cleaning Finished</name>
-			<description>Fires when cleaning ends and the vacuum returns to docked or charging</description>
+			<description>Fires when a cleaning job has ended and the vacuum is back on the dock (charging or charging complete)</description>
 		</event>
 		<event>
 			<id>3</id>
 			<name>Error Raised</name>
-			<description>Fires when the bridge reports a new vacuum error</description>
+			<description>Fires when the bridge reports a new vacuum error. VACUUM_ERROR_TEXT and VACUUM_ERROR_CODE are set before it fires</description>
 		</event>
 		<event>
 			<id>4</id>
@@ -139,6 +141,16 @@
 			<name>Laundry Room Clean Finished</name>
 			<description>Fires when a clean job that included the Laundry Room ID ends (docked, charging or idle; not on pause)</description>
 		</event>
+		<event>
+			<id>10</id>
+			<name>Docked</name>
+			<description>Fires when the robot arrives on the dock (charging, charging complete, emptying the bin or washing the mop) from anywhere else</description>
+		</event>
+		<event>
+			<id>11</id>
+			<name>Error Cleared</name>
+			<description>Fires when the vacuum error goes back to none after Error Raised</description>
+		</event>
 	</events>
 	<config>
 		<power_management_method>AlwaysOn</power_management_method>
@@ -151,31 +163,81 @@
 			<command>
 				<name>Start</name>
 				<command>START</command>
-				<description>Start cleaning</description>
+				<description>Start cleaning on NAME</description>
 			</command>
 			<command>
 				<name>Stop</name>
 				<command>STOP</command>
-				<description>Stop the current cleaning job</description>
+				<description>Stop the current cleaning job on NAME</description>
 			</command>
 			<command>
 				<name>Pause</name>
 				<command>PAUSE</command>
-				<description>Pause cleaning</description>
+				<description>Pause cleaning on NAME</description>
 			</command>
 			<command>
 				<name>Dock</name>
 				<command>DOCK</command>
-				<description>Send the vacuum back to its dock</description>
+				<description>Send NAME back to its dock</description>
 			</command>
 			<command>
 				<name>Clean Rooms</name>
 				<command>CLEAN_ROOMS</command>
-				<description>Clean the listed room ids</description>
+				<description>Clean rooms PARAM1 on NAME with cleaning mode PARAM2</description>
 				<params>
 					<param>
 						<name>Rooms</name>
 						<type>STRING</type>
+					</param>
+					<param>
+						<name>Mode</name>
+						<type>LIST</type>
+						<items>
+							<item>Device Setting</item>
+							<item>Vacuum Only</item>
+							<item>Vacuum and Mop</item>
+							<item>Mop Only</item>
+						</items>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>Start Full Clean</name>
+				<command>START_FULL_CLEAN</command>
+				<description>Start a full clean on NAME with cleaning mode PARAM1, skipping if cleaned within PARAM2 hours (0 means no skip)</description>
+				<params>
+					<param>
+						<name>Mode</name>
+						<type>LIST</type>
+						<items>
+							<item>Device Setting</item>
+							<item>Vacuum Only</item>
+							<item>Vacuum and Mop</item>
+							<item>Mop Only</item>
+						</items>
+					</param>
+					<param>
+						<name>Skip If Cleaned Within Hours</name>
+						<type>RANGED_INTEGER</type>
+						<minimum>0</minimum>
+						<maximum>168</maximum>
+						<default>0</default>
+					</param>
+				</params>
+			</command>
+			<command>
+				<name>Set Cleaning Mode</name>
+				<command>SET_CLEANING_MODE</command>
+				<description>Set the cleaning mode of NAME to PARAM1</description>
+				<params>
+					<param>
+						<name>Mode</name>
+						<type>LIST</type>
+						<items>
+							<item>Vacuum Only</item>
+							<item>Vacuum and Mop</item>
+							<item>Mop Only</item>
+						</items>
 					</param>
 				</params>
 			</command>
@@ -252,6 +314,12 @@
 				<default></default>
 			</property>
 			<property>
+				<name>Activity</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
 				<name>Battery</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
@@ -267,7 +335,55 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>0.6.3</default>
+				<default>0.7.1</default>
+			</property>
+			<property>
+				<name>Bridge Version</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Last Command</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default></default>
+			</property>
+			<property>
+				<name>Vacuum Error</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>None</default>
+			</property>
+			<property>
+				<name>Cleaning Mode</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Unknown</default>
+			</property>
+			<property>
+				<name>Run Progress</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>n/a</default>
+			</property>
+			<property>
+				<name>Cleaned Area</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>n/a</default>
+			</property>
+			<property>
+				<name>Clean Time</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>n/a</default>
+			</property>
+			<property>
+				<name>Last Full Clean</name>
+				<type>STRING</type>
+				<readonly>true</readonly>
+				<default>Not seen yet</default>
 			</property>
 			<property>
 				<name>Active Room</name>
@@ -281,7 +397,7 @@
 				<readonly>true</readonly>
 				<default>n/a</default>
 			</property>
-					<property>
+			<property>
 				<name>Web Page Status</name>
 				<type>STRING</type>
 				<readonly>true</readonly>

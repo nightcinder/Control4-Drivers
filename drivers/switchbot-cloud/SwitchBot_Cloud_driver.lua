@@ -1,6 +1,7 @@
 --[[
   SwitchBot Cloud (parent) driver for Control4 (OS 3.4.x)
-  Version: 2.1.0
+  Version: 2.1.1
+  Changelog 2.1.1: descriptions show device name and parameter values in Composer programming
   Holds the SwitchBot Token and Secret, talks to the cloud API v1.1, polls status, and serves any number of
   "SwitchBot Curtain" child drivers bound to its SWITCHBOT_CLOUD connection. Never log Token or Secret.
 
@@ -9,7 +10,7 @@
     parent -> child: SB_STATUS {DEVICE_ID, POSITION, MOVING, BATTERY}, SB_PARENT_STATUS {TEXT}, SB_HELLO
 ]]
 
-local DRIVER_VERSION = "2.1.0"
+local DRIVER_VERSION = "2.1.1"
 local API_BASE = "https://api.switch-bot.com/v1.1"
 local CLOUD_BINDING = 1
 local SUPPORTED_TYPES = { ["Curtain"] = true, ["Curtain3"] = true, ["Blind Tilt"] = true }

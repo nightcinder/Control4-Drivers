@@ -1,5 +1,6 @@
 --[[==============================================================================
 	Big Ass Fans - Haiku / i6 (BAF i6 protocol) - Control4 Driver
+	v402 - command descriptions show device name and parameter values in Composer programming.
 	Unofficial / community driver. Not affiliated with or supported by
 	Big Ass Fans or Control4.
 
@@ -87,7 +88,7 @@ PF_IP_ADDRESS                = 120 -- string
 
 -- Root2 / Commit / Query / QueryResult field numbers
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION    = "401"
+DRIVER_VERSION    = "402"
 
 RF_ROOT2          = 2
 R2F_COMMIT        = 2

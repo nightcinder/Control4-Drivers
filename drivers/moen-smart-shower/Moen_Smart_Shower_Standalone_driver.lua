@@ -1,6 +1,7 @@
 --[[==============================================================================
 	Moen Smart Shower / U by Moen Digital Shower Valve - Control4 Driver
 	STANDALONE VERSION - no external Python bridge required.
+	v209: descriptions show device name and parameter values in Composer programming.
 	Unofficial / community driver. Not affiliated with or supported by
 	Moen, Fortune Brands, or Control4.
 
@@ -160,7 +161,7 @@ WebSocket = require ('drivers-common-public.module.websocket')
 
 -- ===================== Constants ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "208"
+DRIVER_VERSION = "209"
 API_BASE_URL       = 'https://www.moen-iot.com'
 API_AUTHENTICATE   = '/v2/authenticate'
 API_CREDENTIALS    = '/v3/credentials'
