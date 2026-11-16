@@ -678,22 +678,79 @@ local function slotFromInput(v)
   return n - 3050
 end
 
+-- Mini app variables checked in order; the first valid value wins.
+local MINIAPP_VARS = { "UM_NV_SHIELD", "UM_SUNBRITE_TV", "UM_AMAZON" }
+
+-- Returns a trimmed package name that is safe to put in a launch url, or nil.
+local function safePackage(s)
+  if type(s) ~= "string" then return nil end
+  local p = trim(s)
+  if p == "" then return nil end
+  if not string.match(p, "^[%w_%.]+$") then return nil end
+  return p
+end
+
+-- vars is { [id] = { name = ..., value = ... } } or a plain { NAME = "value" } map.
+local function miniAppPackage(vars)
+  if type(vars) ~= "table" then return nil end
+  local byName = {}
+  for k, v in pairs(vars) do
+    if type(v) == "table" then
+      if type(v.name) == "string" then byName[v.name] = v.value end
+    elseif type(k) == "string" then
+      byName[k] = v
+    end
+  end
+  for _, name in ipairs(MINIAPP_VARS) do
+    local pkg = safePackage(byName[name])
+    if pkg then return pkg end
+  end
+  return nil
+end
+
+-- Device id of the mini app bound to this input, or nil.
+local function boundMiniApp(input)
+  local n = tonumber(input)
+  if not n then return nil end
+  local ok, dev = pcall(function() return C4:GetBoundProviderDevice(C4:GetDeviceID(), n) end)
+  if not ok or dev == nil or dev == 0 or dev == "" then return nil end
+  return dev
+end
+
+-- Package to launch for an input, and where it came from ("miniapp", "property" or nil).
+local function packageForInput(input)
+  local slot = slotFromInput(input)
+  if not slot then return nil, nil end
+  local dev = boundMiniApp(input)
+  if dev then
+    local ok, vars = pcall(function() return C4:GetDeviceVariables(dev) end)
+    if ok then
+      local pkg = miniAppPackage(vars)
+      if pkg then return pkg, "miniapp" end
+    end
+  end
+  local raw = trim(prop("App " .. slot .. " Package"))
+  if raw == "" then return nil, nil end
+  local pkg = safePackage(raw)
+  if not pkg then
+    logMsg(LOG_WARN, "App slot %d package has disallowed characters", slot)
+    return nil, nil
+  end
+  return pkg, "property"
+end
+
 local function switchToInput(input, output)
   local slot = slotFromInput(input)
   if not slot then
     logMsg(LOG_WARN, "Input %s is not an app slot", tostring(input))
     return
   end
-  local pkg = trim(prop("App " .. slot .. " Package"))
-  if pkg == "" then
+  local pkg, source = packageForInput(input)
+  if not pkg then
     logMsg(LOG_WARN, "App slot %d has no package set", slot)
     return
   end
-  if not string.match(pkg, "^[%w_%.]+$") then
-    logMsg(LOG_WARN, "App slot %d package has disallowed characters", slot)
-    return
-  end
-  logMsg(LOG_INFO, "Launching app slot %d (%s)", slot, pkg)
+  logMsg(LOG_INFO, "Launching app slot %d (%s, from %s)", slot, pkg, source)
   if lastAwake == false then
     httpPost("/v1/wake", nil, nil)
   end
