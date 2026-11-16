@@ -5,8 +5,8 @@
 	<name>litter-robot</name>
 	<model>Whisker Litter-Robot 4 (LAN Bridge)</model>
 	<created>11/15/2026 09:00 AM</created>
-	<modified>11/16/2026 12:03 AM</modified>
-	<version>4</version>
+	<modified>11/16/2026 02:58 PM</modified>
+	<version>5</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -37,6 +37,7 @@
 	<templatedescription>Whisker Litter-Robot 4 cat visit counter through a LAN HTTP bridge. Fires Visit Threshold Reached once after the set number of cat visits and a settle time with the box ready, then resets the bridge counter. UNTESTED.</templatedescription>
 
 	<!--
+		v4 (1.0.4) - descriptions show device name and parameter values in Composer programming.
 		v3 (1.0.3) - accept Composer command names + ReceivedFromProxy in ExecuteCommand.
 		v2 (1.0.2) - fix C4:FireEvent to pass event name string instead of numeric id so Composer events fire.
 		v1 (1.0.1) - first release: cat visit counting, visit threshold with settle time, drawer full and bridge unreachable events. UNTESTED on hardware and in Composer.
@@ -75,17 +76,17 @@
 			<command>
 				<name>Reset Visit Counter</name>
 				<command>RESET_VISITS</command>
-				<description>Set the bridge visit counter back to zero</description>
+				<description>Set the visit counter on NAME back to zero</description>
 			</command>
 			<command>
 				<name>Refresh Now</name>
 				<command>REFRESH</command>
-				<description>Poll the bridge now</description>
+				<description>Poll NAME now for the latest status</description>
 			</command>
 			<command>
 				<name>Fire Test Threshold</name>
 				<command>FIRE_TEST_THRESHOLD</command>
-				<description>Fire Visit Threshold Reached for testing without changing the bridge counter</description>
+				<description>Fire the Visit Threshold Reached event on NAME for testing without changing its counter</description>
 			</command>
 		</commands>
 
@@ -174,7 +175,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>1.0.3</default>
+				<default>1.0.4</default>
 			</property>
 		</properties>
 	</config>

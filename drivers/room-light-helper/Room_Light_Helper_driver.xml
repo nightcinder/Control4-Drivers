@@ -3,10 +3,10 @@
 	<creator>Custom Driver Project</creator>
 	<manufacturer>Custom Driver Project</manufacturer>
 	<name>Room Light Helper</name>
-	<model>Room Light Helper v1.4.0 (one instance per room)</model>
+	<model>Room Light Helper v1.4.1 (one instance per room)</model>
 	<created>11/12/2026 10:00 PM</created>
-	<modified>11/13/2026 10:23 PM</modified>
-	<version>14</version>
+	<modified>11/16/2026 02:57 PM</modified>
+	<version>15</version>
 	<control>lua_gen</control>
 	<controlmethod>none</controlmethod>
 	<driver>DriverWorks</driver>
@@ -36,7 +36,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>1.4.0</default>
+				<default>1.4.1</default>
 			</property>
 			<property>
 				<name>Status</name>
@@ -165,7 +165,7 @@
 		<commands>
 			<command>
 				<name>REQUEST_ON</name>
-				<description>Request On: turn the room light on for Source</description>
+				<description>Request NAME to turn the room light on for PARAM1</description>
 				<params>
 					<param>
 						<name>Source</name>
@@ -175,7 +175,7 @@
 			</command>
 			<command>
 				<name>RELEASE</name>
-				<description>Release: release Source from the room light</description>
+				<description>Release PARAM1 from the room light on NAME</description>
 				<params>
 					<param>
 						<name>Source</name>
@@ -185,11 +185,11 @@
 			</command>
 			<command>
 				<name>RELEASE_ALL</name>
-				<description>Release All: release every source from the room light</description>
+				<description>Release every source from the room light on NAME</description>
 			</command>
 			<command>
 				<name>SET_LUX</name>
-				<description>Set Lux: report the current lux reading for the room</description>
+				<description>Set the lux reading on NAME to PARAM1 lux</description>
 				<params>
 					<param>
 						<name>Lux</name>

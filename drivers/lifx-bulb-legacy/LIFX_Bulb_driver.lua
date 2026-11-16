@@ -1,5 +1,6 @@
 --[[==============================================================================
 	LIFX (LAN Protocol) - Control4 Driver
+	Changelog 1.0.7: descriptions show device name and parameter values in Composer programming
 	Unofficial / community driver. Not affiliated with or supported by
 	LIFX or Control4. Local-network control only - no LIFX Cloud dependency.
 
@@ -44,7 +45,7 @@
 	test plan.
 ================================================================================]]
 
-DRIVER_VERSION = "1.0.6"
+DRIVER_VERSION = "1.0.7"
 
 -- ===================== Bindings / constants ============================
 LIGHT_BINDING = 5001
