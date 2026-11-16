@@ -1,10 +1,11 @@
 -- Shield TV Bridge - Control4 DriverWorks driver (Lua 5.1)
--- Version 1.3.5
+-- Version 1.5.0
 -- Controls an NVIDIA Shield TV through an HTTP/JSON bridge on a Linux host.
 -- Presents one media_service primary proxy (5001: keys, power, HDMI output, Navigator
--- Now Playing) and an avswitch proxy (5002) with 25 app slots.
+-- Now Playing) and an avswitch proxy (5002) with 25 mini app slots (3051-3075).
+-- The App N Package properties are fallbacks, used only when no mini app is bound to the slot.
 
-local DRIVER_VERSION = "1.3.5"
+local DRIVER_VERSION = "1.5.0"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -678,22 +679,94 @@ local function slotFromInput(v)
   return n - 3050
 end
 
+-- Mini app variables checked in order; the first valid value wins.
+local MINIAPP_VARS = { "UM_NV_SHIELD", "UM_SUNBRITE_TV", "UM_AMAZON" }
+
+-- Returns a trimmed package name that is safe to put in a launch url, or nil.
+local function safePackage(s)
+  if type(s) ~= "string" then return nil end
+  local p = trim(s)
+  if p == "" then return nil end
+  if not string.match(p, "^[%w_%.]+$") then return nil end
+  return p
+end
+
+-- vars is { [id] = { name = ..., value = ... } } or a plain { NAME = "value" } map.
+local function miniAppPackage(vars)
+  if type(vars) ~= "table" then return nil end
+  local byName = {}
+  for k, v in pairs(vars) do
+    if type(v) == "table" then
+      if type(v.name) == "string" then byName[v.name] = v.value end
+    elseif type(k) == "string" then
+      byName[k] = v
+    end
+  end
+  for _, name in ipairs(MINIAPP_VARS) do
+    local pkg = safePackage(byName[name])
+    if pkg then return pkg end
+  end
+  return nil
+end
+
+-- Device id of the mini app bound to this input, or nil.
+local function boundMiniApp(input)
+  local n = tonumber(input)
+  if not n then return nil end
+  local ok, dev = pcall(function() return C4:GetBoundProviderDevice(C4:GetDeviceID(), n) end)
+  if not ok or dev == nil or dev == 0 or dev == "" then return nil end
+  return dev
+end
+
+-- Package to launch for an input, and where it came from ("miniapp", "property" or nil).
+local function packageForInput(input)
+  local slot = slotFromInput(input)
+  if not slot then return nil, nil end
+  local dev = boundMiniApp(input)
+  if dev then
+    local ok, vars = pcall(function() return C4:GetDeviceVariables(dev) end)
+    if ok then
+      local pkg = miniAppPackage(vars)
+      if pkg then return pkg, "miniapp" end
+    end
+  end
+  local raw = trim(prop("App " .. slot .. " Package"))
+  if raw == "" then return nil, nil end
+  local pkg = safePackage(raw)
+  if not pkg then
+    logMsg(LOG_WARN, "App slot %d package has disallowed characters", slot)
+    return nil, nil
+  end
+  return pkg, "property"
+end
+
+-- Writes "Bound Apps": each MiniApp slot with a usable mini app value, or "none".
+local function refreshBoundApps()
+  local parts = {}
+  for slot = 1, 25 do
+    local dev = boundMiniApp(3050 + slot)
+    if dev then
+      local ok, vars = pcall(function() return C4:GetDeviceVariables(dev) end)
+      local pkg = ok and miniAppPackage(vars) or nil
+      if pkg then parts[#parts + 1] = "MiniApp " .. slot .. "=" .. pkg end
+    end
+  end
+  local text = (#parts > 0) and table.concat(parts, "; ") or "none"
+  pcall(function() C4:UpdateProperty("Bound Apps", text) end)
+end
+
 local function switchToInput(input, output)
   local slot = slotFromInput(input)
   if not slot then
     logMsg(LOG_WARN, "Input %s is not an app slot", tostring(input))
     return
   end
-  local pkg = trim(prop("App " .. slot .. " Package"))
-  if pkg == "" then
+  local pkg, source = packageForInput(input)
+  if not pkg then
     logMsg(LOG_WARN, "App slot %d has no package set", slot)
     return
   end
-  if not string.match(pkg, "^[%w_%.]+$") then
-    logMsg(LOG_WARN, "App slot %d package has disallowed characters", slot)
-    return
-  end
-  logMsg(LOG_INFO, "Launching app slot %d (%s)", slot, pkg)
+  logMsg(LOG_INFO, "Launching app slot %d (%s, from %s)", slot, pkg, source)
   if lastAwake == false then
     httpPost("/v1/wake", nil, nil)
   end
@@ -837,6 +910,17 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
   local ok, err = pcall(function()
     tParams = tParams or {}
     local cmd = tostring(strCommand or "")
+
+    -- Mini app PASSTHROUGH: unwrap the inner remote key and handle it like a 5001 key.
+    if cmd == "PASSTHROUGH" then
+      local inner = tostring(tParams.PASSTHROUGH_COMMAND or "")
+      if inner == "" then
+        logMsg(LOG_DEBUG, "PASSTHROUGH without a command (dropped)")
+        return
+      end
+      cmd = inner
+      idBinding = PROXY_MEDIA
+    end
 
     if INPUT_COMMANDS[cmd] and tParams.INPUT ~= nil then
       switchToInput(tParams.INPUT, tParams.OUTPUT)
@@ -990,11 +1074,19 @@ function OnDriverLateInit()
     C4:UpdateProperty("Connected To Bridge", "false")
     npSetVars()
     npRegisterRooms()
+    refreshBoundApps()
     refreshShieldList()
     startPolling()
     pollStatus()
   end)
   if not ok then logMsg(LOG_ERROR, "Late init error: %s", tostring(err)) end
+end
+
+function OnBindingChanged(idBinding, strClass, bIsBound)
+  local n = tonumber(idBinding)
+  if not n or n < INPUT_MIN or n > INPUT_MAX then return end
+  local ok, err = pcall(refreshBoundApps)
+  if not ok then logMsg(LOG_ERROR, "Binding change error: %s", tostring(err)) end
 end
 
 function OnPropertyChanged(strProperty)
