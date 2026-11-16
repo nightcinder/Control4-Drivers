@@ -1,10 +1,11 @@
 -- Shield TV Bridge - Control4 DriverWorks driver (Lua 5.1)
--- Version 1.3.1
+-- Version 1.4.0
 -- Controls an NVIDIA Shield TV through an HTTP/JSON bridge on a Linux host.
 -- Presents one media_service primary proxy (5001: keys, power, HDMI output, Navigator
--- Now Playing) and an avswitch proxy (5002) with 25 app slots.
+-- Now Playing) and an avswitch proxy (5002) with 25 mini app slots (3051-3075).
+-- The App N Package properties are fallbacks, used only when no mini app is bound to the slot.
 
-local DRIVER_VERSION = "1.3.1"
+local DRIVER_VERSION = "1.4.0"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -739,6 +740,21 @@ local function packageForInput(input)
   return pkg, "property"
 end
 
+-- Writes "Bound Apps": each MiniApp slot with a usable mini app value, or "none".
+local function refreshBoundApps()
+  local parts = {}
+  for slot = 1, 25 do
+    local dev = boundMiniApp(3050 + slot)
+    if dev then
+      local ok, vars = pcall(function() return C4:GetDeviceVariables(dev) end)
+      local pkg = ok and miniAppPackage(vars) or nil
+      if pkg then parts[#parts + 1] = "MiniApp " .. slot .. "=" .. pkg end
+    end
+  end
+  local text = (#parts > 0) and table.concat(parts, "; ") or "none"
+  pcall(function() C4:UpdateProperty("Bound Apps", text) end)
+end
+
 local function switchToInput(input, output)
   local slot = slotFromInput(input)
   if not slot then
@@ -880,11 +896,19 @@ function OnDriverLateInit()
     C4:UpdateProperty("Connected To Bridge", "false")
     npSetVars()
     npRegisterRooms()
+    refreshBoundApps()
     refreshShieldList()
     startPolling()
     pollStatus()
   end)
   if not ok then logMsg(LOG_ERROR, "Late init error: %s", tostring(err)) end
+end
+
+function OnBindingChanged(idBinding, strClass, bIsBound)
+  local n = tonumber(idBinding)
+  if not n or n < INPUT_MIN or n > INPUT_MAX then return end
+  local ok, err = pcall(refreshBoundApps)
+  if not ok then logMsg(LOG_ERROR, "Binding change error: %s", tostring(err)) end
 end
 
 function OnPropertyChanged(strProperty)
