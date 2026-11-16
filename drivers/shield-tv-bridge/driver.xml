@@ -6,9 +6,9 @@
   <control>lua_gen</control>
   <controlmethod>ip</controlmethod>
   <driver>DriverWorks</driver>
-  <version>26</version>
+  <version>28</version>
   <created>11/13/2026 08:00 PM</created>
-  <modified>11/16/2026 03:33 PM</modified>
+  <modified>11/16/2026 03:44 PM</modified>
   <proxies qty="3">
     <proxy proxybindingid="5001" name="SHIELD TV" primary="True" large_image="icons/device_lg.png" small_image="icons/device_sm.png">media_service</proxy>
     <proxy proxybindingid="5002" name="SHIELD App Switcher">avswitch</proxy>
@@ -37,8 +37,8 @@
     <digital_audio_support>False</digital_audio_support>
     <list_nowplaying_non_c4>True</list_nowplaying_non_c4>
     <!-- Shield Remote web page (uibutton proxy 5003). The page file is renamed every page release
-         (remote1, remote2, ...); now remote2; web_view_url, PAGE_FILE / PAGE_BUILD in driver.lua and the file in www/ must agree. -->
-    <web_view_url proxybindingid="5003">controller://driver/shield-tv-bridge/remote2.html</web_view_url>
+         (remote1, remote2, ...); now remote3; web_view_url, PAGE_FILE / PAGE_BUILD in driver.lua and the file in www/ must agree. -->
+    <web_view_url proxybindingid="5003">controller://driver/shield-tv-bridge/remote3.html</web_view_url>
     <mobile_web_view_enabled>true</mobile_web_view_enabled>
     <navigator_display_option proxybindingid="5003">
       <display_icons>
@@ -775,7 +775,7 @@
       <property>
         <name>Driver Version</name>
         <type>STRING</type>
-        <default>1.5.0</default>
+        <default>1.5.1</default>
         <readonly>true</readonly>
       </property>
       <property>

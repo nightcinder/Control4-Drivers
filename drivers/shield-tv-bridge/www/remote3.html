@@ -25,12 +25,12 @@
     background:linear-gradient(180deg, rgba(10,13,19,.15) 0%, rgba(10,13,19,.55) 45%, rgba(10,13,19,.92) 72%, var(--bg) 100%); }
 
   .app { position:relative; height:100%; display:flex; flex-direction:column; align-items:center;
-    padding:max(14px, env(safe-area-inset-top)) 20px max(14px, env(safe-area-inset-bottom)); gap:14px; }
+    padding:max(18px, env(safe-area-inset-top)) 18px max(16px, env(safe-area-inset-bottom)); gap:14px; }
 
   /* Now Playing hero */
   .hero { flex:3 1 0; min-height:0; width:100%; display:flex; flex-direction:column;
     align-items:center; justify-content:center; gap:14px; }
-  .art { position:relative; width:min(74vw, 40vh, 340px); aspect-ratio:1; border-radius:22px;
+  .art { position:relative; width:220px; height:220px;  /* sized by fitArt() */ border-radius:22px;
     overflow:hidden; flex:0 0 auto; background:linear-gradient(145deg,#1d2533,#121722);
     box-shadow:0 24px 60px rgba(0,0,0,.55), 0 0 0 1px var(--line) inset; }
   .art img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0;
@@ -90,17 +90,17 @@
 <body>
 <div id="bg"></div><div id="shade"></div>
 <div class="app">
-  <section class="hero">
-    <div class="art">
+  <section class="hero" id="hero">
+    <div class="art" id="artbox">
       <div class="ph"><svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg></div>
       <img id="art" alt="">
     </div>
-    <div class="meta">
+    <div class="meta" id="meta">
       <div class="title" id="title">Shield TV</div>
       <div class="sub" id="sub"></div>
       <div class="chip" id="chip"></div>
     </div>
-    <div class="transport">
+    <div class="transport" id="transport">
       <button class="ghost" data-cmd="UI_KEY_MEDIA_PREVIOUS" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg></button>
       <button class="ghost" data-cmd="UI_KEY_MEDIA_REWIND" aria-label="Rewind"><svg viewBox="0 0 24 24"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6 8.5 6V6l-8.5 6z"/></svg></button>
       <button class="play" data-cmd="UI_KEY_MEDIA_PLAY_PAUSE" aria-label="Play or pause">
@@ -136,7 +136,7 @@
 <script>
 (function () {
   "use strict";
-  var PAGE_BUILD = 2;                    // must match PAGE_BUILD in driver.lua
+  var PAGE_BUILD = 3;                    // must match PAGE_BUILD in driver.lua
   var S = null, lastSeq = null, gotState = false;
   var artCache = { key: "", data: "" }, shownArt = null, muteGuessUntil = 0, muteGuess = null;
   var hasC4 = !!(window.C4 && typeof window.C4.sendCommand === "function");
@@ -207,6 +207,7 @@
     }
     if (typeof x === "object") {
       if (x.t === "shieldremote" && x.seq != null) return x;
+      if (x.t === "shieldart") return x;
       for (var k in x) {
         if (Object.prototype.hasOwnProperty.call(x, k)) {
           var r = findState(x[k], depth + 1);
@@ -220,8 +221,11 @@
     for (var i = 0; i < arguments.length; i++) {
       var st = findState(arguments[i], 0);
       if (!st) continue;
-      // Art only travels with SendDataToUI; keep it when the variable copy (no artData) arrives.
-      if (typeof st.artData === "string") artCache = { key: st.artKey || "", data: st.artData };
+      // Art travels in its own UI_ART variable: {"t":"shieldart","key":...,"data":...}.
+      if (st.t === "shieldart") {
+        artCache = { key: st.key || "", data: typeof st.data === "string" ? st.data : "" };
+        renderArt(); return;
+      }
       if (st.seq === lastSeq) { renderArt(); return; }
       lastSeq = st.seq; gotState = true; S = st;
       render();
@@ -233,15 +237,30 @@
   });
 
   // ---- Rendering ----
+  // Report art results once per art key so the driver's Web Page Status shows what happened.
+  var artReported = {}, artWaitKey = null, artWaitTimer = null;
+  function reportArt(key, cmd) {
+    if (!key || artReported[key]) return;
+    artReported[key] = cmd; send(cmd);
+  }
+  function watchArt(key) {
+    if (key === artWaitKey) return;
+    artWaitKey = key; clearTimeout(artWaitTimer);
+    if (!key || !hasC4) return;
+    artWaitTimer = setTimeout(function () {
+      if (artCache.key !== key || !artCache.data) reportArt(key, "UI_ART_NONE");
+    }, 6000);
+  }
   function renderArt() {
     var key = S && S.artKey ? S.artKey : "";
+    watchArt(key);
     var data = key && artCache.key === key ? artCache.data : "";
     if (data === shownArt) return;
     shownArt = data;
     var img = $("art"), bg = $("bg");
     if (!data) { img.classList.remove("on"); bg.classList.remove("on"); return; }
-    img.onload = function () { img.classList.add("on"); };
-    img.onerror = function () { img.classList.remove("on"); bg.classList.remove("on"); };
+    img.onload = function () { img.classList.add("on"); reportArt(key, "UI_ART_OK"); };
+    img.onerror = function () { img.classList.remove("on"); bg.classList.remove("on"); reportArt(key, "UI_ART_ERR"); };
     img.src = data;
     bg.style.backgroundImage = "url('" + data + "')";
     bg.classList.add("on");
@@ -276,6 +295,16 @@
     if (S && S.muted != null && muteGuess !== null && S.muted === muteGuess) muteGuess = null;
     renderMute();
     renderArt();
+    fitArt();
+  }
+
+  // Size the art to the space the hero actually has, so nothing is clipped under the header.
+  function fitArt() {
+    var hero = $("hero"), box = $("artbox");
+    if (!hero || !box) return;
+    var avail = hero.clientHeight - $("meta").offsetHeight - $("transport").offsetHeight - 2 * 14;
+    var size = Math.max(120, Math.min(avail, hero.clientWidth * 0.78, 340));
+    box.style.width = box.style.height = Math.floor(size) + "px";
   }
 
   // ---- Connect / preview ----
@@ -287,6 +316,7 @@
       render(); return;
     }
     try { window.C4.subscribeToVariable("UI_STATE", true); } catch (e) {}
+    try { window.C4.subscribeToVariable("UI_ART", true); } catch (e) {}
     try { window.C4.subscribeToDataToUi(true); } catch (e) {}
     send("UI_HELLO_" + PAGE_BUILD);
     setTimeout(function () { if (!gotState) send("UI_REFRESH"); }, 5000);
@@ -299,6 +329,8 @@
       bind(n, n.getAttribute("data-cmd"), n.getAttribute("data-rep") === "1");
     });
     render();
+    window.addEventListener("resize", fitArt);
+    setTimeout(fitArt, 300);
     connect();
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
