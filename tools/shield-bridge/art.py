@@ -34,7 +34,7 @@ APP_LABELS = {
 PNG_RE = re.compile(r"^res/.*(banner|ic_launcher|app_icon|icon).*\.png$", re.I)
 PLEX_PACKAGE = "com.plexapp.android"
 LAUNCHER_PACKAGE = "com.google.android.tvlauncher"  # Shield home screen: never pull an APK for it
-ICON_CACHE_VERSION = "v2"  # bump when the fallback art changes so old cached icons are ignored
+ICON_CACHE_VERSION = "v3"  # bump when the fallback art changes so old cached icons are ignored
 SHIELD_BG = (28, 28, 30)
 FALLBACK_TTL = 15  # seconds a fallback (app icon) answer is reused before Plex/iTunes are tried again
 
@@ -81,29 +81,45 @@ def generated_tile(package: str) -> bytes:
 
 
 def shield_image(size: int, background: tuple[int, int, int, int], ss: int = 4) -> Any:
-    """A generic black streaming box (no logo, no text) on a background, drawn at ss x and downsampled."""
-    from PIL import Image, ImageDraw
+    """A drawing of a Shield TV Pro style set-top box (flat black slab, green light) on a background."""
+    from PIL import Image, ImageDraw, ImageFilter
 
     big = size * ss
+
+    def pt(x: float, y: float) -> tuple[int, int]:
+        return (int(x * big), int(y * big))
+
     canvas = Image.new("RGBA", (big, big), background)
-    w, h = int(big * 0.44), int(big * 0.66)
-    x0, y0 = (big - w) // 2, (big - h) // 2
-    x1, y1 = x0 + w, y0 + h
-    radius = int(w * 0.42)
+    shadow = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).ellipse((pt(0.08, 0.68), pt(0.94, 0.80)), fill=(0, 0, 0, 120))
+    canvas.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(big * 0.012)))
+    draw = ImageDraw.Draw(canvas)
+    front = [pt(0.10, 0.58), pt(0.90, 0.58), pt(0.90, 0.69), pt(0.86, 0.72), pt(0.14, 0.72), pt(0.10, 0.69)]
+    draw.polygon(front, fill=(14, 14, 16, 255))
+    top = [pt(0.10, 0.58), pt(0.90, 0.58), pt(0.78, 0.30), pt(0.22, 0.30)]
     mask = Image.new("L", (big, big), 0)
-    ImageDraw.Draw(mask).rounded_rectangle((x0, y0, x1, y1), radius=radius, fill=255)
-    grad = Image.new("RGBA", (big, big), (0, 0, 0, 255))
+    ImageDraw.Draw(mask).polygon(top, fill=255)
+    grad = Image.new("RGBA", (big, big), (0, 0, 0, 0))
     gdraw = ImageDraw.Draw(grad)
+    y0, y1 = int(0.30 * big), int(0.58 * big)
     for y in range(y0, y1):
-        t = (y - y0) / max(1, h - 1)
-        c = int(66 - 52 * t)  # slightly lighter at the top, near black at the bottom
+        t = (y - y0) / max(1, y1 - y0)
+        c = int(64 - 36 * t)  # lighter at the back edge, darker toward the front
         gdraw.line((0, y, big, y), fill=(c, c, c + 3, 255))
     canvas.paste(grad, (0, 0), mask)
     draw = ImageDraw.Draw(canvas)
-    draw.rounded_rectangle((x0, y0, x1, y1), radius=radius, outline=(92, 92, 98, 255), width=3 * ss)
-    dot = int(w * 0.035)
-    cx, cy = x0 + w // 2, y1 - int(h * 0.12)
-    draw.ellipse((cx - dot, cy - dot, cx + dot, cy + dot), fill=(60, 200, 90, 255))
+    edge = (104, 104, 110, 255)
+    draw.line([pt(0.10, 0.58), pt(0.22, 0.30), pt(0.78, 0.30), pt(0.90, 0.58), pt(0.10, 0.58)], fill=edge, width=max(2, 2 * ss))
+    draw.line([pt(0.10, 0.60), pt(0.90, 0.60)], fill=(70, 70, 76, 255), width=max(1, ss))
+    draw.line([pt(0.34, 0.575), pt(0.40, 0.31)], fill=(46, 46, 52, 255), width=max(1, ss))  # facet line
+    cx, cy = int(0.50 * big), int(0.45 * big)
+    rx, ry = int(0.060 * big), int(0.030 * big)
+    glow = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse((cx - rx * 2, cy - ry * 2, cx + rx * 2, cy + ry * 2), fill=(118, 185, 0, 90))
+    canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(big * 0.015)))
+    draw = ImageDraw.Draw(canvas)
+    draw.ellipse((cx - rx, cy - ry, cx + rx, cy + ry), fill=(118, 185, 0, 255))
+    draw.ellipse((cx - rx // 2, cy - ry // 2, cx + rx // 2, cy + ry // 2), fill=(10, 14, 6, 255))
     return canvas.resize((size, size), Image.LANCZOS)
 
 

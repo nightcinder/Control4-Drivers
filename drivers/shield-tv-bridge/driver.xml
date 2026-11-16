@@ -6,9 +6,9 @@
   <control>lua_gen</control>
   <controlmethod>ip</controlmethod>
   <driver>DriverWorks</driver>
-  <version>16</version>
+  <version>17</version>
   <created>11/13/2026 08:00 PM</created>
-  <modified>11/15/2026 01:26 PM</modified>
+  <modified>11/16/2026 11:28 AM</modified>
   <proxies qty="2">
     <proxy proxybindingid="5001" name="SHIELD TV" primary="True" large_image="icons/device_lg.png" small_image="icons/device_sm.png">media_service</proxy>
     <proxy proxybindingid="5002" name="SHIELD App Switcher">avswitch</proxy>
@@ -45,7 +45,23 @@
       </display_icons>
     </navigator_display_option>
     <UI xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" proxybindingid="5001">
+<DeviceIcon>device</DeviceIcon>
+<BrandingIcon>branding</BrandingIcon>
 <Icons>
+      <IconGroup id="branding">
+        <Icon width="70" height="70">controller://driver/shield-tv-bridge/icons/device/experience_70.png</Icon>
+        <Icon width="90" height="90">controller://driver/shield-tv-bridge/icons/device/experience_90.png</Icon>
+        <Icon width="300" height="300">controller://driver/shield-tv-bridge/icons/device/experience_300.png</Icon>
+        <Icon width="512" height="512">controller://driver/shield-tv-bridge/icons/device/experience_512.png</Icon>
+        <Icon width="1024" height="1024">controller://driver/shield-tv-bridge/icons/device/experience_1024.png</Icon>
+      </IconGroup>
+      <IconGroup id="device">
+        <Icon width="70" height="70">controller://driver/shield-tv-bridge/icons/device/experience_70.png</Icon>
+        <Icon width="90" height="90">controller://driver/shield-tv-bridge/icons/device/experience_90.png</Icon>
+        <Icon width="300" height="300">controller://driver/shield-tv-bridge/icons/device/experience_300.png</Icon>
+        <Icon width="512" height="512">controller://driver/shield-tv-bridge/icons/device/experience_512.png</Icon>
+        <Icon width="1024" height="1024">controller://driver/shield-tv-bridge/icons/device/experience_1024.png</Icon>
+      </IconGroup>
 <IconGroup id="amt_rew">
 <Icon width="20" height="20">controller://driver/shield-tv-bridge/icons/amt_rew/amt_rew_20.png</Icon>
 <Icon width="30" height="30">controller://driver/shield-tv-bridge/icons/amt_rew/amt_rew_30.png</Icon>
@@ -77,6 +93,12 @@
 <Icon width="140" height="140">controller://driver/shield-tv-bridge/icons/amt_ff/amt_ff_140.png</Icon>
 </IconGroup>
 </Icons>
+    <Tabs>
+      <Command>
+        <Name>TabsCommand</Name>
+        <Type>PROTOCOL</Type>
+      </Command>
+    </Tabs>
 <NowPlaying>
 <ActionIds>Shuffle Repeat</ActionIds>
 <List>
@@ -615,7 +637,7 @@
       <property>
         <name>Driver Version</name>
         <type>STRING</type>
-        <default>1.3.1</default>
+        <default>1.3.2</default>
         <readonly>true</readonly>
       </property>
       <property>

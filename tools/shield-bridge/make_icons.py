@@ -15,7 +15,7 @@ from PIL import Image
 from art import shield_image
 
 ICON_DIR = Path(__file__).resolve().parents[2] / "drivers" / "shield-tv-bridge" / "www" / "icons"
-NAMES = ("device_lg.png", "device_sm.png")
+NAMES = ("device_lg.png", "device_sm.png") + tuple(f"device/experience_{n}.png" for n in (70, 90, 300, 512, 1024))
 
 
 def main() -> None:

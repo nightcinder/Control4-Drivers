@@ -274,7 +274,7 @@ class ArtResolverTests(unittest.IsolatedAsyncioTestCase):
             resolver = art.ArtResolver({}, Path(td), pull)
             icon = await resolver._app_icon("com.example.unknownapp")
             self.assertEqual(icon, art.shield_tile())
-            self.assertTrue((Path(td) / "com.example.unknownapp.v2.png").exists())
+            self.assertTrue((Path(td) / "com.example.unknownapp.v3.png").exists())
 
     async def test_launcher_returns_shield_tile_without_apk_pull(self) -> None:
         with tempfile.TemporaryDirectory() as td:
