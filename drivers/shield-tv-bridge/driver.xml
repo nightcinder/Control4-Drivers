@@ -1,14 +1,14 @@
 <devicedata>
-  <name>Shield TV Bridge</name>
+  <name>shield-tv-bridge</name>
   <model>SHIELD-TV-BRIDGE</model>
   <manufacturer>Custom</manufacturer>
   <creator>Custom</creator>
   <control>lua_gen</control>
   <controlmethod>ip</controlmethod>
   <driver>DriverWorks</driver>
-  <version>24</version>
+  <version>25</version>
   <created>11/13/2026 08:00 PM</created>
-  <modified>11/16/2026 03:07 PM</modified>
+  <modified>11/16/2026 03:11 PM</modified>
   <proxies qty="3">
     <proxy proxybindingid="5001" name="SHIELD TV" primary="True" large_image="icons/device_lg.png" small_image="icons/device_sm.png">media_service</proxy>
     <proxy proxybindingid="5002" name="SHIELD App Switcher">avswitch</proxy>
