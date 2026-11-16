@@ -1,6 +1,6 @@
 --[[
   Roborock Vacuum via LAN HTTP bridge (Control4 DriverWorks, OS 3.4.x)
-  Version: 0.6.2  (UNTESTED on real Composer/Director; see docs/roborock.md)
+  Version: 0.6.3  (see docs/roborock.md)
   v0.6.2 fires Laundry Room Clean Started as soon as the bridge accepts a clean_rooms command that includes
   the Laundry Room ID (no state edge needed, so a job sent while the robot is already cleaning fires). The
   poll-based start is a backup only. Adaptive polling: 5 s while cleaning or returning, otherwise the
@@ -20,7 +20,7 @@
   The state fields are read with simple key patterns (the bridge sends flat scalar fields).
 ]]
 
-local DRIVER_VERSION = "0.6.2"
+local DRIVER_VERSION = "0.6.3"
 local PROXY_BINDING = 5001          -- uibutton proxy (tile, icon and web view)
 local UI_BUILD = "3"                -- must match PAGE_BUILD in www/vacuum2.html
 local DEFAULT_HOST = "172.21.1.157"
@@ -535,28 +535,40 @@ end
 
 function ExecuteCommand(strCommand, tParams)
   tParams = tParams or {}
+  if strCommand == "LUA_ACTION" and tParams.ACTION then
+    strCommand = tParams.ACTION
+  end
   if tostring(strCommand):sub(1, 3) == "UI_" then
     handleUi(tostring(strCommand))
     return
   end
-  if strCommand == "START" then
+  if strCommand == "START" or strCommand == "Start" then
     sendCommand("start")
-  elseif strCommand == "STOP" then
+  elseif strCommand == "STOP" or strCommand == "Stop" then
     sendCommand("stop")
-  elseif strCommand == "PAUSE" then
+  elseif strCommand == "PAUSE" or strCommand == "Pause" then
     sendCommand("pause")
-  elseif strCommand == "DOCK" then
+  elseif strCommand == "DOCK" or strCommand == "Dock" then
     sendCommand("dock")
-  elseif strCommand == "CLEAN_ROOMS" then
+  elseif strCommand == "CLEAN_ROOMS" or strCommand == "Clean Rooms" then
     local rooms = parseRooms(tParams["Rooms"] or "")
     if #rooms == 0 then
       logmsg("Clean Rooms called with no room ids")
       return
     end
     sendCommand("clean_rooms", rooms)
-  elseif strCommand == "REFRESH" then
+  elseif strCommand == "REFRESH" or strCommand == "Refresh Now" then
     schedule(1)
+  else
+    logmsg("unhandled command: " .. tostring(strCommand))
   end
+end
+
+function ReceivedFromProxy(idBinding, strCommand, tParams)
+  if strCommand == "GET_CONNECTED_STATE" or strCommand == "SELECT" then
+    return
+  end
+  ExecuteCommand(strCommand, tParams)
 end
 
 -- ============================================================================
