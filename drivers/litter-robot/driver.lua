@@ -1,6 +1,6 @@
 --[[
   Whisker Litter-Robot 4 cat visit counter via LAN HTTP bridge (Control4 DriverWorks, OS 3.4.x)
-  Version: 1.0.2  (UNTESTED on real Composer/Director)
+  Version: 1.0.3  (UNTESTED on real Composer/Director)
 
   Polls GET /status on litter-bridge every Poll Interval seconds (5 s minimum).
   The bridge counts cat visits. When visits_since_reset >= Visits Before Clean AND the box is
@@ -9,7 +9,7 @@
   retried without firing the event again.
 ]]
 
-local DRIVER_VERSION = "1.0.2"
+local DRIVER_VERSION = "1.0.3"
 local DEFAULT_HOST = "172.21.1.157"
 local DEFAULT_PORT = "8793"
 local DEFAULT_POLL = 15
@@ -279,15 +279,25 @@ end
 -- ============================================================================
 function ExecuteCommand(strCommand, tParams)
   tParams = tParams or {}
-  if strCommand == "RESET_VISITS" then
+  if strCommand == "LUA_ACTION" and tParams.ACTION then
+    strCommand = tParams.ACTION
+  end
+  if strCommand == "RESET_VISITS" or strCommand == "Reset Visit Counter" then
     logmsg("manual reset requested")
     sendReset()
-  elseif strCommand == "REFRESH" then
+  elseif strCommand == "REFRESH" or strCommand == "Refresh Now" then
     schedule(1)
-  elseif strCommand == "FIRE_TEST_THRESHOLD" then
+  elseif strCommand == "FIRE_TEST_THRESHOLD" or strCommand == "Fire Test Threshold" then
     logmsg("test threshold fired (bridge counter unchanged)")
     fire(EVT_THRESHOLD)
   end
+end
+
+function ReceivedFromProxy(idBinding, strCommand, tParams)
+  if strCommand == "GET_CONNECTED_STATE" or strCommand == "SELECT" then
+    return
+  end
+  ExecuteCommand(strCommand, tParams)
 end
 
 -- ============================================================================
