@@ -94,4 +94,14 @@ t.test("pairs over Properties works under Lua 5.4", function()
   end
 end)
 
+t.test("GetDeviceVariables returns what set_device_vars stored", function()
+  sim.reset()
+  sim.set_device_vars(300, { [1] = { name = "UM_NV_SHIELD", value = "a.b" } })
+  t.eq(C4:GetDeviceVariables(300)[1].value, "a.b", "stored value")
+  t.eq(C4:GetDeviceVariables(301), nil, "unknown device is nil")
+  sim.set_device_vars(302, "error")
+  local ok = pcall(C4.GetDeviceVariables, C4, 302)
+  t.eq(ok, false, "error value raises")
+end)
+
 t.finish("stubs")
