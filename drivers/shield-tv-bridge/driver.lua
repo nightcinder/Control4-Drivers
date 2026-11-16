@@ -1,10 +1,10 @@
 -- Shield TV Bridge - Control4 DriverWorks driver (Lua 5.1)
--- Version 1.3.3
+-- Version 1.3.4
 -- Controls an NVIDIA Shield TV through an HTTP/JSON bridge on a Linux host.
 -- Presents one media_service primary proxy (5001: keys, power, HDMI output, Navigator
 -- Now Playing) and an avswitch proxy (5002) with 25 app slots.
 
-local DRIVER_VERSION = "1.3.3"
+local DRIVER_VERSION = "1.3.4"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -703,6 +703,131 @@ end
 
 local BUTTON_LABEL_KEY = BUTTON_VALUES
 
+-- ---------------------------------------------------------------- Navigator UI (Tabs & Screens)
+
+local function xmlUnesc(s)
+  s = tostring(s or "")
+  s = string.gsub(s, "&quot;", '"')
+  s = string.gsub(s, "&apos;", "'")
+  s = string.gsub(s, "&lt;", "<")
+  s = string.gsub(s, "&gt;", ">")
+  s = string.gsub(s, "&amp;", "&")
+  return s
+end
+
+local function parseNavArgs(tParams)
+  local args = {}
+  local raw = tParams and tParams.ARGS
+  if type(raw) ~= "string" or raw == "" then return args end
+  if C4 and C4.ParseXml then
+    local ok, parsed = pcall(function() return C4:ParseXml(raw) end)
+    if ok and type(parsed) == "table" and type(parsed.ChildNodes) == "table" then
+      for _, node in pairs(parsed.ChildNodes) do
+        if node.Attributes and node.Attributes.name then
+          args[node.Attributes.name] = node.Value or ""
+        end
+      end
+      return args
+    end
+  end
+  for k, v in string.gmatch(raw, '<arg%s+name=["\']([^"\']+)["\'][^>]*>(.-)</arg>') do
+    args[k] = xmlUnesc(v)
+  end
+  return args
+end
+
+local function sendNavData(tParams, data)
+  if tParams and tParams.NAVID and tParams.SEQ then
+    C4:SendToProxy(PROXY_NOWPLAYING, "DATA_RECEIVED", {
+      NAVID = tParams.NAVID,
+      SEQ = tParams.SEQ,
+      DATA = data or "",
+    })
+  end
+end
+
+local function navListItemXml(id, title, subtitle, isHeader)
+  local out = { "<item>" }
+  if id and id ~= "" then
+    out[#out + 1] = "<id>" .. xmlEsc(id) .. "</id>"
+  end
+  out[#out + 1] = "<title>" .. xmlEsc(title or "") .. "</title>"
+  if subtitle and subtitle ~= "" then
+    out[#out + 1] = "<subtitle>" .. xmlEsc(subtitle) .. "</subtitle>"
+  end
+  if isHeader then
+    out[#out + 1] = "<isHeader>true</isHeader>"
+  end
+  out[#out + 1] = "</item>"
+  return table.concat(out)
+end
+
+local REMOTE_UI_ITEMS = {
+  { header = true, title = "Navigation" },
+  { id = "DPAD_CENTER", title = "Select (OK)" },
+  { id = "DPAD_UP", title = "Up" },
+  { id = "DPAD_DOWN", title = "Down" },
+  { id = "DPAD_LEFT", title = "Left" },
+  { id = "DPAD_RIGHT", title = "Right" },
+  { id = "HOME", title = "Home" },
+  { id = "BACK", title = "Back" },
+  { id = "MENU", title = "Menu" },
+  { header = true, title = "Playback" },
+  { id = "MEDIA_PLAY", title = "Play" },
+  { id = "MEDIA_PAUSE", title = "Pause" },
+  { id = "__nowplaying__", title = "Now Playing", subtitle = "Open playback controls" },
+}
+
+local function buildRemoteListXml()
+  local parts = { "<List>" }
+  for _, it in ipairs(REMOTE_UI_ITEMS) do
+    parts[#parts + 1] = navListItemXml(it.id, it.title, it.subtitle, it.header)
+  end
+  parts[#parts + 1] = "</List>"
+  return table.concat(parts)
+end
+
+local function buildAppsListXml()
+  local parts = { "<List>", navListItemXml(nil, "Apps", nil, true) }
+  local count = 0
+  for slot = 1, 25 do
+    local pkg = trim(prop("App " .. slot .. " Package"))
+    if pkg ~= "" and string.match(pkg, "^[%w_%.]+$") then
+      count = count + 1
+      parts[#parts + 1] = navListItemXml(pkg, appLabel(pkg), pkg, false)
+    end
+  end
+  if count == 0 then
+    parts[#parts + 1] = navListItemXml(nil, "No apps configured", "Set App Package properties in Composer", false)
+  end
+  parts[#parts + 1] = "</List>"
+  return table.concat(parts)
+end
+
+local function ensureRoomSelected(roomId)
+  local rid = tonumber(roomId)
+  if rid and C4.GetBoundConsumerDevices then
+    local ok, devs = pcall(function() return C4:GetBoundConsumerDevices(C4:GetDeviceID(), PROXY_NOWPLAYING) end)
+    local proxyId = (ok and type(devs) == "table") and next(devs) or nil
+    if proxyId and C4.SendToDevice then
+      pcall(function() C4:SendToDevice(rid, "SELECT_VIDEO_DEVICE", { deviceid = proxyId }) end)
+    end
+  end
+  if lastAwake == false then
+    httpPost("/v1/wake", nil, nil)
+  end
+  npSelected = true
+  npPublishAll()
+  npStartTimer()
+end
+
+local NAV_TABS_XML = table.concat({
+  "<Tabs>",
+  "<Tab><Id>Remote</Id><Name>Remote</Name><IconId>device</IconId><ScreenId>RemoteScreen</ScreenId></Tab>",
+  "<Tab><Id>Apps</Id><Name>Apps</Name><IconId>device</IconId><ScreenId>AppsScreen</ScreenId></Tab>",
+  "</Tabs>",
+})
+
 -- ---------------------------------------------------------------- proxy commands
 
 function ReceivedFromProxy(idBinding, strCommand, tParams)
@@ -732,12 +857,42 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
         end
         return ""
       elseif cmd == "TabsCommand" then
-        if tParams.NAVID and tParams.SEQ then
-          C4:SendToProxy(PROXY_NOWPLAYING, "DATA_RECEIVED", {
-            NAVID = tParams.NAVID,
-            SEQ = tParams.SEQ,
-            DATA = "<Tabs></Tabs>",
-          })
+        logMsg(LOG_DEBUG, "TabsCommand (nav=%s)", tostring(tParams.NAVID or ""))
+        sendNavData(tParams, NAV_TABS_XML)
+        return
+      elseif cmd == "GetRemoteScreen" then
+        logMsg(LOG_DEBUG, "GetRemoteScreen (nav=%s)", tostring(tParams.NAVID or ""))
+        sendNavData(tParams, buildRemoteListXml())
+        return
+      elseif cmd == "GetAppsScreen" then
+        logMsg(LOG_DEBUG, "GetAppsScreen (nav=%s)", tostring(tParams.NAVID or ""))
+        sendNavData(tParams, buildAppsListXml())
+        return
+      elseif cmd == "RemotePress" then
+        local args = parseNavArgs(tParams)
+        local key = trim(args.id or "")
+        logMsg(LOG_DEBUG, "RemotePress id=%s", key)
+        if key == "__nowplaying__" then
+          ensureRoomSelected(tParams.ROOMID)
+          sendNavData(tParams, "<NextScreen>#nowplaying</NextScreen>")
+        elseif key ~= "" then
+          if lastAwake == false then httpPost("/v1/wake", nil, nil) end
+          enqueueKey(key)
+          sendNavData(tParams, "")
+        else
+          sendNavData(tParams, "")
+        end
+        return
+      elseif cmd == "AppLaunchUI" then
+        local args = parseNavArgs(tParams)
+        local pkg = trim(args.id or "")
+        logMsg(LOG_INFO, "AppLaunchUI package=%s", pkg)
+        if pkg ~= "" and string.match(pkg, "^[%w_%.]+$") then
+          ensureRoomSelected(tParams.ROOMID)
+          httpPost("/v1/launch", "package=" .. pkg, nil)
+          sendNavData(tParams, "<NextScreen>#nowplaying</NextScreen>")
+        else
+          sendNavData(tParams, "")
         end
         return
       elseif cmd == "DESTROY_NAV" or cmd == "DESTROY_NAVIGATOR" then
