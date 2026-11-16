@@ -1,10 +1,10 @@
 -- Shield TV Bridge - Control4 DriverWorks driver (Lua 5.1)
--- Version 1.3.4
+-- Version 1.3.5
 -- Controls an NVIDIA Shield TV through an HTTP/JSON bridge on a Linux host.
 -- Presents one media_service primary proxy (5001: keys, power, HDMI output, Navigator
 -- Now Playing) and an avswitch proxy (5002) with 25 app slots.
 
-local DRIVER_VERSION = "1.3.4"
+local DRIVER_VERSION = "1.3.5"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -746,7 +746,7 @@ local function sendNavData(tParams, data)
   end
 end
 
-local function navListItemXml(id, title, subtitle, isHeader)
+local function navListItemXml(id, title, subtitle, isHeader, actionId)
   local out = { "<item>" }
   if id and id ~= "" then
     out[#out + 1] = "<id>" .. xmlEsc(id) .. "</id>"
@@ -757,6 +757,9 @@ local function navListItemXml(id, title, subtitle, isHeader)
   end
   if isHeader then
     out[#out + 1] = "<isHeader>true</isHeader>"
+  elseif actionId and actionId ~= "" then
+    out[#out + 1] = "<default_action>" .. xmlEsc(actionId) .. "</default_action>"
+    out[#out + 1] = "<actions_list>" .. xmlEsc(actionId) .. "</actions_list>"
   end
   out[#out + 1] = "</item>"
   return table.concat(out)
@@ -781,7 +784,7 @@ local REMOTE_UI_ITEMS = {
 local function buildRemoteListXml()
   local parts = { "<List>" }
   for _, it in ipairs(REMOTE_UI_ITEMS) do
-    parts[#parts + 1] = navListItemXml(it.id, it.title, it.subtitle, it.header)
+    parts[#parts + 1] = navListItemXml(it.id, it.title, it.subtitle, it.header, "RemotePress")
   end
   parts[#parts + 1] = "</List>"
   return table.concat(parts)
@@ -794,7 +797,7 @@ local function buildAppsListXml()
     local pkg = trim(prop("App " .. slot .. " Package"))
     if pkg ~= "" and string.match(pkg, "^[%w_%.]+$") then
       count = count + 1
-      parts[#parts + 1] = navListItemXml(pkg, appLabel(pkg), pkg, false)
+      parts[#parts + 1] = navListItemXml(pkg, appLabel(pkg), pkg, false, "AppLaunchUI")
     end
   end
   if count == 0 then
@@ -898,6 +901,9 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
       elseif cmd == "DESTROY_NAV" or cmd == "DESTROY_NAVIGATOR" then
         logMsg(LOG_DEBUG, "%s (nav=%s)", cmd, tostring(tParams.NAVID or ""))
         return
+      elseif cmd == "SELECT_SOURCE" or cmd == "RESELECT_SOURCE" then
+        npPublishAll()
+        return
       elseif cmd == "DEVICE_DESELECTED" then
         logMsg(LOG_DEBUG, "DEVICE_DESELECTED (no action)")
         return
@@ -956,6 +962,11 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
     local mapped = KEY_MAP[cmd]
     if mapped then
       enqueueKey(mapped)
+      return
+    end
+
+    if string.sub(cmd, 1, 4) == "END_" then
+      logMsg(LOG_TRACE, "Ignoring key release %s", cmd)
       return
     end
 
