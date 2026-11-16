@@ -1,16 +1,14 @@
-# Roborock Vacuum (LAN Bridge) 0.5.1
+# Roborock Vacuum (LAN Bridge) 0.7.0
 
-Status: UNTESTED. Written against the Control4 OS 3.4.x Lua API but not run on a real Composer or Director.
+Status: the driver logic is tested in c4sim (`tools/c4sim/tests/roborock_test.lua`). Room clean from Control4 was checked on the vacuum with 0.6.2. Everything new in 0.7.0 (cleaning mode, progress, the new events and commands) is NOT yet checked on the vacuum or in Composer.
 
-0.5.1: events moved to devicedata level so Composer lists them. The 7 custom events are now a direct child of devicedata (not inside config), matching the moenshower driver.
-
-Talks to a Roborock LAN HTTP bridge (already running on liesa). The driver polls the bridge and sends commands. Version 0.2.0 adds a Navigator web view and state-based tile icons (see Web view below).
+The driver talks to the Roborock LAN HTTP bridge in `tools/roborock-bridge` (runs on liesa, port 8788). It polls the bridge and sends commands. The per-job cleaning mode and the progress fields need bridge 0.2.3. With an older bridge the driver still works; mode commands are refused and progress shows n/a.
 
 ## Bridge
 
 - Base URL: `http://172.21.1.157:8788` (set with the Bridge Host and Bridge Port properties)
-- `GET /state` returns `state`, `battery`, `error`, `rooms`, `last_error`, `last_success_age_s`
-- `POST /command` with `{"action": "start|stop|pause|dock|clean_rooms", "rooms": [ids]}`
+- `GET /state` returns `state`, `battery`, `error`, `rooms`, `current_room`, `last_error`, and with bridge 0.2.3 also `error_code`, `cleaning_mode`, `water_mode`, `fan_speed`, `clean_area_m2`, `clean_time_s`, `run_progress_pct`, `mode_restore_pending`, `bridge_version`
+- `POST /command` with `{"action": "start|stop|pause|dock|clean_rooms|set_mode", "rooms": [ids], "mode": "vacuum|vac_and_mop|mop"}`
 
 ## Properties
 
@@ -18,86 +16,166 @@ Talks to a Roborock LAN HTTP bridge (already running on liesa). The driver polls
 |---|---|---|---|
 | Bridge Host | string | 172.21.1.157 | Bridge address |
 | Bridge Port | 1-65535 | 8788 | Bridge port |
-| Poll Interval | 30-3600 s | 60 | Minimum is 30 |
+| Poll Interval | 5-3600 s | 15 | The driver polls every 5 s while the robot is cleaning, returning or busy at the dock |
+| Laundry Room ID | 0-9999 | 0 | Room id for the laundry events (21 in this home); 0 turns them off |
 | Low Battery Threshold | 1-100 % | 20 | Battery Low fires at or below this value |
 | Log Mode | Off, Print, Log, Print and Log | Off | Print goes to the console, Log goes to the error log |
-| Status | read-only | | Connected, Bridge unreachable, or the last command sent |
+| Status | read-only | | Connected, Bridge unreachable, or the last command for a few seconds |
 | State | read-only | | Bridge state string |
+| Activity | read-only | | 0.7.0: one word for the state: cleaning, paused, returning, docked, idle, error, offline or other (see State names) |
 | Battery | read-only | | Battery percent |
-| Last Error | read-only | | Last error or last_error from the bridge |
-| Active Room | read-only | Unknown | v0.5.0: name of the room under the robot (bridge current_room); Unknown when the bridge reports null |
-| Room Progress | read-only | n/a | v0.5.0: room_progress_pct from the bridge; n/a in bridge 0.2.0 (always null) |
-| Driver Version | read-only | 0.5.1 | |
+| Last Error | read-only | | Bridge poll error, or the vacuum error name |
+| Driver Version | read-only | 0.7.0 | |
+| Bridge Version | read-only | | 0.7.0: from /state; "older than 0.2.3" when the bridge does not send it |
+| Last Command | read-only | | 0.7.0: time and result of the last command (sent, skipped, rejected, not sent) |
+| Vacuum Error | read-only | None | 0.7.0: readable error and code, e.g. "Main brush jammed (code 5)" |
+| Cleaning Mode | read-only | Unknown | 0.7.0: the vacuum's current mode, suction and water level. "for this job only" is added while a per-job mode is waiting to be put back |
+| Run Progress | read-only | n/a | 0.7.0: whole-job percent while a job runs. "(device)" is the vacuum's own number; "(estimate)" is the driver's estimate (see Progress) |
+| Cleaned Area | read-only | n/a | 0.7.0: area of the current or last job |
+| Clean Time | read-only | n/a | 0.7.0: time of the current or last job |
+| Last Full Clean | read-only | Not seen yet | 0.7.0: when the last whole-home job finished on the dock (used by the Start Full Clean guard) |
+| Active Room | read-only | Unknown | Room under the robot; "Docked" on the dock; "<Room> (target)" during a room job |
+| Room Progress | read-only | n/a | Per-room percent. Always n/a: the library has no per-room data |
 | Web Page Status | read-only | Not opened yet | Set when the web view page reports its build |
 
 ## Variables
 
-- `VACUUM_STATE` (string)
-- `VACUUM_BATTERY` (number)
-- `VACUUM_ERROR` (string)
-- `UI_STATE` (string): JSON snapshot read by the web view page (added in 0.2.0; v0.5.0 adds `activeRoom` and `roomProgress`)
-- `ACTIVE_ROOM` (string): v0.5.0, room name under the robot, "" when unknown
-- `ROOM_PROGRESS` (number): v0.5.0, 0-100; 0 when the bridge reports null (see the Room Progress property)
+- `VACUUM_STATE` (string), `VACUUM_BATTERY` (number), `VACUUM_ERROR` (string, the error name, "none" when there is none)
+- `UI_STATE` (string): JSON snapshot read by the web view page
+- `ACTIVE_ROOM` (string), `ROOM_PROGRESS` (number, always 0)
+- 0.7.0: `RUN_PROGRESS` (number 0-100; 0 when there is no job or no figure)
+- 0.7.0: `CLEANING_MODE` (string: vacuum, vac_and_mop, mop, custom, smart_mode or empty)
+- 0.7.0: `VACUUM_ERROR_TEXT` (string, e.g. "Main brush jammed"; "None" when there is none)
+- 0.7.0: `VACUUM_ERROR_CODE` (number, 0 when there is none)
+- 0.7.0: `IS_CLEANING` (bool: the state is a cleaning state), `IS_DOCKED` (bool: on the dock), `JOB_ACTIVE` (bool: from cleaning start until docked or stopped, pause and returning included)
+
+- 0.7.0: `VACUUM_ACTIVITY` (string: cleaning, paused, returning, docked, idle, error, offline, other). Use this in conditionals; `VACUUM_STATE` has many more values
+
+The variables are created with `C4:AddVariable` and written with `C4:SetVariable` before an event fires, so a program on Error Raised can read `VACUUM_ERROR_TEXT`.
 
 ## Programming commands
 
-- Start, Stop, Pause, Dock
-- Clean Rooms, with a `Rooms` parameter: comma-separated room ids, for example `1,3,5`
+| Command | Parameters | Notes |
+|---|---|---|
+| Start | | Start or resume with the vacuum's own setting |
+| Start Full Clean | Mode; Skip If Cleaned Within Hours (0-168) | 0.7.0. Whole-home job. With hours above 0 the job is skipped when a full clean finished within that time, or when a job is already running |
+| Clean Rooms | Rooms; Mode | Rooms: ids (`16,17`) or room names from the vacuum's map (`Kitchen, Living room`). 0.7.0 adds Mode and names |
+| Set Cleaning Mode | Mode | 0.7.0. Lasting change of the vacuum's own setting |
+| Pause, Stop | | |
+| Dock | | Return to dock. 0.7.0: safe to call at any time. When the robot is already on the dock (and no job is running and no start was sent in the last 3 minutes) nothing is sent and Last Command shows "Dock skipped: already on the dock" |
+
+0.6.3: every command is accepted by its code (`START_FULL_CLEAN`) or its Composer name (`Start Full Clean`), also through `LUA_ACTION` and `ReceivedFromProxy`. An unknown command is logged as "unhandled command".
+
+Mode is Device Setting (no change), Vacuum Only, Vacuum and Mop, or Mop Only. On Start Full Clean and Clean Rooms it applies to that job only: the bridge saves the vacuum's setting, sets the mode, starts the job and puts the setting back when the job has ended. Mop Only needs a vacuum that can mop without suction; if the vacuum does not have the mode the command is rejected (see Last Command) and nothing starts.
 
 Refresh Now (action) re-reads the bridge state.
+
+Room ids in this home: Study 16, Living room 17, Kitchen 18, Hall 19, Lounge 20, Laundry 21.
 
 ## Events
 
 | ID | Event | Fires when |
 |---|---|---|
-| 1 | Cleaning Started | State moves into a cleaning state |
-| 2 | Cleaning Finished | State moves from a cleaning state to `docked` or `charging` |
+| 1 | Cleaning Started | A job starts (first cleaning state). Once per job, not again after a pause |
+| 2 | Cleaning Finished | A job has ended and the robot rests on the dock (charging, charging_complete) |
 | 3 | Error Raised | Bridge reports a new error (not `none`) |
 | 4 | Battery Low | Battery is at or below the threshold; fires once until the battery rises above it |
-| 5 | Bridge Unreachable | Bridge request fails or returns a non-2xx code; fires once per outage |
-| 6 | Laundry Room Entered | v0.5.0: while cleaning, the bridge's current room becomes the Laundry Room ID. If current_room is null, the v0.4.0 rule applies (cleaning starts on a run targeting only that ID) |
-| 7 | Laundry Room Left | v0.5.0: while cleaning, the current room changes away from the Laundry Room ID, or cleaning ends (docked, charging or idle; not on pause) |
+| 5 | Bridge Unreachable | Bridge request fails or returns a 5xx code; fires once per outage |
+| 6 | Laundry Room Entered | While cleaning, the bridge's current room becomes the Laundry Room ID. If current_room is null: cleaning starts on a run targeting only that ID |
+| 7 | Laundry Room Left | While cleaning, the current room changes away from the Laundry Room ID, or the job ends |
+| 8 | Laundry Room Clean Started | The bridge accepts a clean job that includes the Laundry Room ID |
+| 9 | Laundry Room Clean Finished | That job ends (on the dock, or stopped) |
+| 10 | Docked | 0.7.0: the robot arrives on the dock from anywhere else |
+| 11 | Error Cleared | 0.7.0: the error goes back to `none` |
 
-## Build
+0.7.0 fires every event by its name (`C4:FireEvent("Cleaning Started")`). Before 0.7.0 the driver passed the id number, which does not fire the event in Composer (the same fault as litter-robot before 1.0.2). The ids and names of events 1-9 are unchanged, so existing programs stay.
 
-Package with `tools/build_c4z.py` (the folder is `drivers/roborock`). Not built in this change.
+## State names
 
-## Web view and tile icons (0.2.0, UNTESTED)
+The bridge sends python-roborock's state names in lower case with underscores. The driver also accepts upper case and spaces or hyphens.
 
-- Proxy: uibutton on binding 5001 (no network connection; the driver calls the bridge over HTTP itself).
-- Web view: `www/vacuum2.html` (v0.5.0; was vacuum1), opened from `controller://driver/roborock/vacuum2.html`. Dark theme, no external libraries or fonts.
-- The page shows the bridge state, battery percent with a bar, last error, and a Connected / Bridge unreachable pill.
-- Buttons: Start, Pause, Dock, Stop (large touch targets). Start is disabled for 3 seconds after a tap so it cannot fire twice. Dock and Stop need no confirmation.
-- The page sends `UI_START`, `UI_PAUSE`, `UI_DOCK`, `UI_STOP`, `UI_REFRESH` and `UI_HELLO_<build>` through `ExecuteCommand`. Each call that changes or reads state publishes a new `UI_STATE` snapshot (`{"t":"rbrock","seq":...}`).
-- Tile icon states: Default (idle, returning or unknown), Cleaning (any cleaning state), Docked (docked or charging), Error (bridge error code other than none). The icon is sent with `ICON_CHANGED` on binding 5001 only when it changes. While the bridge is unreachable the icon falls back to Default.
-- Icons are simple original vector-style drawings made for this driver (no brand artwork). Sizes 70, 90, 300, 512 and 1024 under `www/icons/device/<state>/`, plus `icons/device_sm.png` and `icons/device_lg.png`.
+- Cleaning: any name with `clean` or `mopping` in it (`cleaning`, `segment_cleaning`, `zoned_cleaning`, `spot_cleaning`, `segment_mopping`, `zoned_mopping`, `clean_mop_cleaning`, ...)
+- Returning: `returning_home`, `returning`, `docking`, `going_to_wash_the_mop`, `back_to_dock_washing_duster`
+- Docked (resting): `charging`, `charging_complete`, `charging_problem`, `air_drying_stopping`, `docked`, `fully_charged`
+- At the dock but busy: `emptying_the_bin`, `washing_the_mop`, `washing_the_mop_2`, `attaching_the_mop`, `detaching_the_mop`. Docked fires, the job is not finished yet
+- Stopped: `idle` ends the job without Cleaning Finished
+- `paused` and `error` keep the job open
+- Recharge in the middle of a job: `charging` with `in_cleaning` above 0 and the battery below 100 keeps the job open (Docked fires, Cleaning Finished does not). `charging_complete` or a full battery always ends the job
 
-### Installing 0.2.0 in Composer
+Activity (property) and `VACUUM_ACTIVITY` (variable) put all 43 python-roborock state names into eight words:
 
-1. Delete the existing Roborock device. A changed proxy is only applied when the device is added again.
-2. Run "Add or Update Driver" with `c4z/roborock.c4z`. The package name is unchanged, so the driver updates in place.
-3. Add the device again and set Bridge Host and Bridge Port.
-4. Open the tile. The page build check should show "Page build 1 OK" in Web Page Status.
+| Activity | States |
+|---|---|
+| error | `error`, or any state while the vacuum reports an error code |
+| cleaning | `cleaning`, `spot_cleaning`, `zoned_cleaning`, `segment_cleaning`, and every `..._mopping` and `clean_mop_...` state |
+| paused | `paused` |
+| returning | `returning_home`, `docking`, `going_to_wash_the_mop`, `back_to_dock_washing_duster` |
+| docked | `charging`, `charging_complete`, `charging_problem`, `air_drying_stopping`, `emptying_the_bin`, `washing_the_mop`, `washing_the_mop_2`, `attaching_the_mop`, `detaching_the_mop` |
+| idle | `idle`, `charger_disconnected` |
+| offline | `device_offline` |
+| other | `starting`, `going_to_target`, `mapping`, `manual_mode`, `remote_control_active`, `updating`, `shutting_down`, `in_call`, `egg_attack`, `patrol`, `locked`, `unknown`, and any new name |
 
-If the page shows "PAGE IS STALE", the page file and the driver build do not match. Bump both the page file name and `UI_BUILD` together.
+Seen on the live bridge (0.2.2, read on 2026-11-16, robot on the dock): `"state": "charging"`, `"error": "none"`, battery 100. No other state has been logged from a real run yet.
 
-### Page file names
+Before 0.7.0 the driver looked for `returning` and `docked`, which the bridge never sends. Cleaning Finished only fired when one poll went straight from cleaning to charging, and Laundry Room Clean Finished fired when the robot started for home. Both now fire on the dock.
 
-The page file name changes with each page release (vacuum1, vacuum2, ...) because Navigator caches `controller://` pages. `web_view_url` in driver.xml, `UI_BUILD` in driver.lua and the file in `www/` must match.
+These names come from reading python-roborock 7.22.0 (`RoborockStateCode`), not from a logged run. To confirm in a real run: `segment_cleaning` for a room job, `cleaning` for a whole-home job, `returning_home`, `charging` and `charging_complete` on the dock, the state after Stop (`idle` expected), and whether this dock reports `emptying_the_bin`. The State property shows the exact text.
 
-## v0.5.0 notes (2026-11-12)
+## Progress
 
-- Active room: the bridge (0.2.0) reads `MapData.vacuum_room` from python-roborock's parsed map and returns it as `current_room`. The driver shows it as the Active Room property, the ACTIVE_ROOM variable, and the "Room" value on the web page (page is now vacuum2.html, build 3).
-- Room Progress: not implemented. The library exposes no per-room cleaned data for v1 vacuums, so the bridge returns null and the page shows n/a. A real estimate needs a per-room pixel count from the map image, which is not done yet.
-- Laundry Room Entered / Left now follow the current room while it is known. The v0.4.0 run-target rule is still the fallback when current_room is null.
-- Fixed in this release: `isLaundryOnlyRun` was called in `applyState` before its `local function` declaration, so the call would have hit a nil global on every cleaning start. It is now forward-declared.
-- Installing: delete and re-add the device in Composer only if the proxy or web view changed (it did: vacuum2.html). Run "Add or Update Driver" with `c4z/roborock.c4z`.
-- Bridge: image `roborock-bridge:0.2.0`. In the Portainer stack (stack id 21), change the roborock-bridge image line to `roborock-bridge:0.2.0` and redeploy the stack (or recreate that service). Build the image on liesa first with `docker build -t roborock-bridge:0.2.0 /home/liesa/automation-pollers/roborock-bridge`.
-- Untested on hardware. Syntax checks: `python -m py_compile` on app.py and `luac -p` on driver.lua both pass.
+- Room Progress stays n/a. python-roborock has no per-room cleaned data.
+- Run Progress with "(device)": the vacuum's own `clean_percent`. Only some models report it. To be confirmed on this vacuum.
+- Run Progress with "(estimate)": cleaned area of this job divided by the cleaned area of the last finished job of the same kind (whole home, or the same room list). It is capped at 99. The first job of each kind shows n/a because there is nothing to compare with. Jobs that were stopped or sent home early are not used as a reference. The web page marks an estimate with "~" and "est.".
 
-## v0.4.0 notes (2026-11-12)
+## Web view and tile icons
 
-- Mop option: NOT added. The bridge sends clean_rooms through APP_SEGMENT_CLEAN with no mode field. python-roborock 7.22.0 can set fan power and water mode (StatusTrait.set_cleaning_mode), but those are persistent device settings, not per-run options. Restoring them after a run is untested, so no mode field was added.
-- Active room: NOT available. The v1 status and rooms traits expose the room list and the raw robot position, with no current segment, so /state has no current_room and the driver has no ACTIVE_ROOM variable.
-- Laundry fallback (driver only, bridge unchanged): set the Laundry Room ID property to the laundry room segment id. Laundry Room Entered (event 6) fires on cleaning start when the run targets only that id. Laundry Room Left (event 7) fires when that run ends (docked, charging or idle; not on pause or returning). Other runs fire nothing. Untested on hardware.
-- Battery and error were checked: Battery Low, Error Raised and the page's battery and last-error text are correct. No change.
+- Proxy: uibutton on binding 5001. Page: `www/vacuum2.html`, build 4 (file name kept from build 3, so the device does not need to be added again).
+- 0.7.0 adds a Mode line, a "Mode for the next clean" selector (shown with bridge 0.2.3) and the job percent in the Progress field.
+- The page sends `UI_START`, `UI_PAUSE`, `UI_DOCK`, `UI_STOP`, `UI_CLEAN_ROOMS_<ids>`, `UI_REFRESH`, `UI_HELLO_<build>`, and with a mode `UI_RUN_<VACUUM|VACMOP|MOP>_START` or `UI_RUN_<mode>_ROOMS_<ids>`.
+- If Web Page Status shows "PAGE IS STALE: page 3", Navigator is still showing the cached old page. The old page keeps working with this driver. If it does not refresh, rename the page to vacuum3.html (file, `web_view_url` and the Lua header) in a later release.
+- Tile icon states: Default, Cleaning, Docked (any dock state), Error.
+
+## Composer programs (outlines)
+
+Start on Away:
+
+    When <house goes to Away>:
+      Roborock -> Start Full Clean (Mode: Vacuum Only, Skip If Cleaned Within Hours: 20)
+
+    For rooms only:  Roborock -> Clean Rooms (Rooms: Kitchen, Hall; Mode: Vacuum and Mop)
+
+Dock on arrival:
+
+    When <someone arrives / house goes to Home>:
+      Roborock -> Dock          (no condition needed: it does nothing when the robot is already docked)
+
+    When Roborock event Docked fires:   (optional: tell someone, turn a light off)
+
+Error alert:
+
+    When Roborock event Error Raised fires:
+      Send push "Vacuum: " + Roborock VACUUM_ERROR_TEXT      (VACUUM_ERROR_CODE has the number)
+
+    When Roborock event Error Cleared fires:   (optional)
+      Send push "Vacuum error cleared"
+
+    When Roborock event Bridge Unreachable fires:   (optional)
+
+## Installing 0.7.0
+
+1. Build and start bridge 0.2.3 on liesa first (see `tools/roborock-bridge/README.md`).
+2. In Composer run "Add or Update Driver" with `c4z/roborock.c4z`. The proxy and web view URL are unchanged, so the device stays.
+3. Check Driver Version 0.7.0, Bridge Version 0.2.3, Cleaning Mode not "Unknown".
+4. Existing programs on Start, Stop, Pause, Dock and Clean Rooms keep working. Clean Rooms without a Mode behaves as before.
+
+## History
+
+- 0.7.0 (2026-11-16): per-job cleaning mode, Run Progress, state names fixed, events 10 and 11, Start Full Clean, Set Cleaning Mode, room names in Clean Rooms, error text and code, Last Command, Activity / VACUUM_ACTIVITY, events fired by name, Dock skipped when already docked, a recharge in the middle of a job no longer ends it. Bridge 0.2.3.
+- 0.6.3: Composer command names and LUA_ACTION accepted in ExecuteCommand; ReceivedFromProxy added.
+- 0.6.2: Laundry Room Clean Started fires when the bridge accepts the job. Adaptive polling.
+- 0.6.0: Room field shows Docked and the target room. Events 8 and 9.
+- 0.5.1: events moved to devicedata level so Composer lists them.
+- 0.5.0: Active Room from the bridge's parsed map (bridge 0.2.0). Page vacuum2.html.
+- 0.4.0: Laundry Room Entered and Left (run-target rule).
+- 0.3.0: rooms in the UI snapshot, UI_CLEAN_ROOMS.
+- 0.2.0: uibutton proxy, web view and tile icons. A changed proxy needs the device to be deleted and added again.
