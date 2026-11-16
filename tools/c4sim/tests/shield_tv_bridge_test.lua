@@ -1,4 +1,4 @@
--- Shield TV Bridge tests: Navigator tabs/screens, keys, mini app launch, PASSTHROUGH, Bound Apps.
+﻿-- Shield TV Bridge tests: Navigator tabs/screens, keys, mini app launch, PASSTHROUGH, Bound Apps.
 local sim = require("c4sim")
 local t = require("t")
 
@@ -325,43 +325,81 @@ t.test("Apps tab lists a bound mini app by package and has a Now Playing entry",
   t.ok(string.find(reply.params.DATA, "<id>__nowplaying__</id>", 1, true) ~= nil, "Now Playing entry")
 end)
 
-t.test("REMOTE_STATE variable carries now playing JSON", function()
+-- Shield Remote page on uibutton proxy 5003. Room 77; the Shield's media_service proxy is 900.
+local REMOTE = 5003
+local function remote_room(onShield)
+  C4.RoomGetId = function() return 77 end
+  C4.GetBoundConsumerDevices = function() return { [900] = "SHIELD TV" } end
+  sim.set_var(77, 1000, onShield and "900" or "0")
+end
+
+t.test("UI_STATE snapshot carries now playing JSON for the page", function()
   start(nil)
   feed_status(STATUS_EPISODE)
-  local v = sim.dvars["REMOTE_STATE"] or ""
-  t.ok(string.find(v, '"title":"Supernatural"', 1, true) ~= nil, "title in REMOTE_STATE: " .. v)
-  t.ok(string.find(v, '"state":"playing"', 1, true) ~= nil, "state in REMOTE_STATE")
+  local v = sim.dvars["UI_STATE"] or ""
+  t.ok(string.find(v, '"t":"shieldremote"', 1, true) ~= nil, "tag present: " .. v)
+  t.ok(string.find(v, '"title":"Supernatural"', 1, true) ~= nil, "title in np")
+  t.ok(string.find(v, '"state":"playing"', 1, true) ~= nil, "state in np")
   t.ok(string.find(v, '"art":"http://bridge.test:8080/art/abc"', 1, true) ~= nil, "plain art url")
   t.ok(string.find(v, '"awake":true', 1, true) ~= nil, "awake true")
 end)
 
-t.test("SHIELD_REMOTE_KEY posts an allowed key when the room is on the Shield", function()
+t.test("UI_KEY_* on 5003 posts the key when the room is on the Shield", function()
   start(nil)
-  C4.GetBoundConsumerDevices = function() return { [900] = "SHIELD TV" } end
-  sim.set_var(77, 1000, "900")
-  sim.exec("SHIELD_REMOTE_KEY", { KEY = "DPAD_LEFT", ROOMID = "77" })
-  t.ok(any_url_has("name=DPAD_LEFT"), "DPAD_LEFT posted")
-  local sel = sim.last_sent("SELECT_VIDEO_DEVICE")
-  t.ok(sel == nil, "no source change")
+  remote_room(true)
+  sim.call("ReceivedFromProxy", REMOTE, "UI_KEY_DPAD_LEFT", {})
+  sim.exec("UI_KEY_HOME", {})
+  t.ok(any_url_has("name=DPAD_LEFT"), "DPAD_LEFT posted via proxy")
+  sim.advance(500)
+  t.ok(any_url_has("name=HOME"), "HOME posted via ExecuteCommand")
+  t.ok(sim.last_sent("SELECT_VIDEO_DEVICE") == nil, "no source change")
 end)
 
-t.test("SHIELD_REMOTE_KEY with the room elsewhere selects the Shield and drops the key", function()
+t.test("UI_KEY_* with the room elsewhere selects the Shield and drops the key", function()
   start(nil)
-  C4.GetBoundConsumerDevices = function() return { [900] = "SHIELD TV" } end
-  sim.set_var(77, 1000, "0")
-  sim.exec("SHIELD_REMOTE_KEY", { KEY = "DPAD_LEFT", ROOMID = "77" })
+  remote_room(false)
+  sim.exec("UI_KEY_DPAD_LEFT", {})
   local sel = sim.last_sent("SELECT_VIDEO_DEVICE")
   t.ok(sel ~= nil and sel.id == 77 and sel.params.deviceid == 900, "SELECT_VIDEO_DEVICE to room 77")
   t.ok(not any_url_has("name=DPAD_LEFT"), "key dropped on the selecting press")
 end)
 
-t.test("SHIELD_REMOTE_KEY refuses keys outside the allow list", function()
+t.test("UI_KEY_* refuses keys outside the allow list", function()
   start(nil)
-  sim.exec("SHIELD_REMOTE_KEY", { KEY = "POWER" })
-  sim.exec("SHIELD_REMOTE_KEY", { KEY = "DPAD_UP&x=1" })
+  remote_room(true)
+  sim.exec("UI_KEY_POWER", {})
+  sim.exec("UI_KEY_DPAD_UP&x=1", {})
   t.ok(not any_url_has("name=POWER"), "POWER not sent")
   t.ok(not any_url_has("x=1"), "injection not sent")
   t.eq(#sim.errors, 0, "no driver error")
+end)
+
+t.test("opening the tile (SELECT on 5003) sends no key and no source change", function()
+  start(nil)
+  remote_room(false)
+  local before = #sim.http
+  sim.call("ReceivedFromProxy", REMOTE, "SELECT", {})
+  t.eq(#sim.http, before, "no http request")
+  t.ok(sim.last_sent("SELECT_VIDEO_DEVICE") == nil, "no source change")
+  t.ok(not has_unknown_log("SELECT"), "not treated as a key")
+end)
+
+t.test("UI_VOL_UP / UI_MUTE go to the room", function()
+  start(nil)
+  remote_room(true)
+  sim.exec("UI_VOL_UP", {})
+  local v = sim.last_sent("PULSE_VOL_UP")
+  t.ok(v ~= nil and v.id == 77, "PULSE_VOL_UP to room 77")
+  sim.exec("UI_MUTE", {})
+  t.ok(sim.last_sent("MUTE_TOGGLE") ~= nil, "MUTE_TOGGLE sent")
+end)
+
+t.test("UI_HELLO sets Web Page Status (OK and stale)", function()
+  start(nil)
+  sim.exec("UI_HELLO_1", {})
+  t.eq(sim._store["Web Page Status"], "Page build 1 OK", "build 1 ok")
+  sim.exec("UI_HELLO_0", {})
+  t.ok(string.find(sim._store["Web Page Status"] or "", "PAGE IS STALE", 1, true) ~= nil, "stale flagged")
 end)
 
 t.test("Driver Version is 1.5.0", function()
