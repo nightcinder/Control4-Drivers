@@ -128,7 +128,7 @@ end
 t.test("loads; version label and every updated property exist in driver.xml", function()
   start()
   step({ state = "charging" })
-  t.eq(P("Driver Version"), "0.7.0", "Driver Version")
+  t.eq(P("Driver Version"), "0.7.1", "Driver Version")
   t.eq(P("Status"), "Connected", "Status")
   local declared = {}
   for _, n in ipairs(sim.xml_names) do declared[n] = true end

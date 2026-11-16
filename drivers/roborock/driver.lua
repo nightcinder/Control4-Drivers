@@ -1,6 +1,7 @@
 --[[
   Roborock Vacuum via LAN HTTP bridge (Control4 DriverWorks, OS 3.4.x)
-  Version: 0.7.0  (logic tested in c4sim; the 0.7.0 features are UNTESTED on the vacuum; see docs/roborock.md)
+  Version: 0.7.1  (logic tested in c4sim; the 0.7.0 features are UNTESTED on the vacuum; see docs/roborock.md)
+  v0.7.1 command descriptions show device name and parameter values in Composer programming
   v0.7.0 per-run cleaning mode (Vacuum Only / Vacuum and Mop / Mop Only; needs bridge 0.2.3), Run Progress
   (the vacuum's own percent, or an estimate from cleaned area against the last same job), state names from
   python-roborock handled (returning_home, charging_complete, mopping states, dock service states), events
@@ -31,7 +32,7 @@
   The state fields are read with simple key patterns (the bridge sends flat scalar fields).
 ]]
 
-local DRIVER_VERSION = "0.7.0"
+local DRIVER_VERSION = "0.7.1"
 local PROXY_BINDING = 5001          -- uibutton proxy (tile, icon and web view)
 local UI_BUILD = "4"                -- must match PAGE_BUILD in www/vacuum2.html
 local DEFAULT_HOST = "172.21.1.157"
