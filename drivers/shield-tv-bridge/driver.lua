@@ -767,6 +767,17 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
     tParams = tParams or {}
     local cmd = tostring(strCommand or "")
 
+    -- Mini app PASSTHROUGH: unwrap the inner remote key and handle it like a 5001 key.
+    if cmd == "PASSTHROUGH" then
+      local inner = tostring(tParams.PASSTHROUGH_COMMAND or "")
+      if inner == "" then
+        logMsg(LOG_DEBUG, "PASSTHROUGH without a command (dropped)")
+        return
+      end
+      cmd = inner
+      idBinding = PROXY_MEDIA
+    end
+
     if INPUT_COMMANDS[cmd] and tParams.INPUT ~= nil then
       switchToInput(tParams.INPUT, tParams.OUTPUT)
       npSelected = true
