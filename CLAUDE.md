@@ -17,6 +17,7 @@ Custom Control4 Lua drivers. Source is in `drivers/<name>/`, built packages in `
 ## Rules
 - Never write into the Composer driver folder. The owner imports `.c4z` files into Composer himself.
 - Only free or self-built drivers. Never decrypt or modify encrypted vendor drivers.
+- Every `<command>` `<description>` uses `NAME` once and `PARAM1`..`PARAMn` once each (see `docs/composer-update-notes.md`; `check_c4z.py` check CD001 enforces it).
 - ESPHome drivers live in `C:\control4-esphome` and are a third-party release. Do not build, commit, recreate or review ESPHome driver copies unless asked.
 - Do not tell the owner to remove old drivers from Composer.
 - Do not touch Notion, Portainer, liesa or live hardware. The main session handles those.

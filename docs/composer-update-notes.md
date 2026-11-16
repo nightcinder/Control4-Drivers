@@ -66,3 +66,15 @@ Only one driver can hold the fan's TCP connection reliably, so remove the old in
     python tools/build_c4z.py --dry-run [<name> ...]
 
 `--dry-run` runs the bump plan and all checks, and reports what would be bumped and built. It writes nothing.
+
+## Command descriptions
+
+Composer shows each `<command>` `<description>` in the programming line. Each command under `<commands>` must follow these rules:
+
+- `NAME` appears exactly once. Composer replaces it with "Room->Device".
+- `PARAM1` to `PARAMn` each appear exactly once, where n is the number of `<param>` elements. The order in the sentence can vary.
+- Tokens must be separate words. `PARAM1F` or `xNAME` do not count.
+
+Example (Roborock, params Rooms and Mode): `Clean rooms PARAM1 on NAME with cleaning mode PARAM2`
+
+`tools/check_c4z.py` enforces this as check CD001 and fails the build. Tests: `uv run python tools\test_check_c4z.py`.

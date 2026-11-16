@@ -641,8 +641,59 @@ def check_binding(root, xml_rel, warn):
                          "a dimmer exposes LIGHT_V2 as a proxy binding, or use a DEVICE_SELECTOR property")
 
 
+NAME_TOKEN_RE = re.compile(r"\bNAME\b")
+PARAM_TOKEN_RE = re.compile(r"\bPARAM(\d+)\b")
+GLUED_TOKEN_RE = re.compile(r"[A-Za-z0-9_](?:NAME|PARAM\d+)|(?:NAME|PARAM\d+)[A-Za-z0-9_]")
+
+
+def check_command_descriptions(root, xml_rel, fail):
+    """CD001: every <command> under <commands> needs a <description> that uses NAME exactly once and
+    PARAM1..PARAMn exactly once each (n = number of <param> elements). Composer fills these in the programming line."""
+    commands = root.find("commands")
+    if commands is None:
+        return
+    for cmd in commands.findall("command"):
+        cname = (cmd.findtext("name") or "").strip() or "(no name)"
+        where = f"{xml_rel} command '{cname}'"
+        desc = (cmd.findtext("description") or "").strip()
+        if not desc:
+            fail("CD001", f"{where} has no <description>, or it is empty")
+            continue
+        glued = sorted(set(GLUED_TOKEN_RE.findall(desc)))
+        if glued:
+            fail("CD001", f"{where} glues a token to other text ({', '.join(repr(g) for g in glued)}); "
+                          "PARAMn and NAME must be separate words")
+        name_count = len(NAME_TOKEN_RE.findall(desc))
+        if name_count != 1:
+            fail("CD001", f"{where} uses NAME {name_count} times; it must use NAME exactly once")
+        nparams = len(cmd.findall("params/param"))
+        found = {}
+        for tok in PARAM_TOKEN_RE.findall(desc):
+            found[tok] = found.get(tok, 0) + 1
+        expected = [str(k) for k in range(1, nparams + 1)]
+        missing = [f"PARAM{k}" for k in expected if k not in found]
+        repeated = [f"PARAM{k}" for k, v in found.items() if v > 1]
+        extra = [f"PARAM{k}" for k in found if k not in expected]
+        if not (missing or repeated or extra):
+            continue
+        if nparams:
+            span = "PARAM1" if nparams == 1 else f"PARAM1..PARAM{nparams}"
+            rule = f"has {nparams} param(s), so {span} must each appear once in the description"
+        else:
+            rule = "has no params, so the description must not use any PARAM token"
+        detail = []
+        if missing:
+            detail.append("missing " + ", ".join(missing))
+        if repeated:
+            detail.append("repeated " + ", ".join(repeated))
+        if extra:
+            detail.append("unexpected " + ", ".join(extra))
+        fail("CD001", f"{where} {rule}; " + "; ".join(detail))
+
+
 def run_extra_checks(xml_rel, lua_rel, root, files, lua_text, fail, warn):
     check_property_xml(root, xml_rel, fail, warn)
+    check_command_descriptions(root, xml_rel, fail)
     check_unique(root, xml_rel, fail)
     check_cross_refs(root, xml_rel, lua_text, fail)
     check_lua_vs_xml(root, xml_rel, lua_rel, lua_text, fail, warn)
