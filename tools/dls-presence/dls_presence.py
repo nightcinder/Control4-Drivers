@@ -35,7 +35,7 @@ Env:  PROM_URL (default http://localhost:9090)  EA1_HOST  EA1_PORT (8730)  DLS_T
   GET /health  -> JSON per source: seconds since last successful poll, poll interval, stale flag.
                   HTTP 200 when all sources are fresh, 503 if any is stale (older than 3x its poll interval).
 """
-import json, math, os, re, smtplib, socket, sys, threading, time, urllib.parse, urllib.request
+import csv, json, math, os, re, smtplib, socket, sys, threading, time, urllib.parse, urllib.request
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -81,8 +81,17 @@ KEY_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 
 _warned = set()
 
+EVENT_LOG = os.environ.get("EVENT_LOG", "")  # optional CSV timeline: source transitions, state changes, arrival triggers
+_fresh_lock = threading.Lock()
 FRESH_PORT = int(os.environ.get("FRESH_PORT", "8731"))
 FRESH_BIND = os.environ.get("FRESH_BIND", "127.0.0.1")
+# Arrival endpoint: an external trigger (Tailwind garage door close, phone shortcut) forces HOME when the
+# household is currently away. The hold covers the phone's slow Wi-Fi association after Android Auto.
+ARRIVAL_TOKEN = os.environ.get("ARRIVAL_TOKEN", "").strip()
+FORCED_HOME_SEC = float(os.environ.get("FORCED_HOME_SEC", "900"))
+_force_home_until = 0.0
+_wake = threading.Event()
+_last_state = None
 _started = time.time()
 _last_ok = {"unifi": None, "life360": None}  # time of last successful poll per source
 _extra_health = {}  # name -> {"last_ok", "ok", "poll_s"}: ESPHome devices and the robot bridge
@@ -92,6 +101,33 @@ def warn_once(key, msg):
     if key not in _warned:
         _warned.add(key)
         print(msg, flush=True)
+
+
+def record(kind, person="", source="", value="", detail=""):
+    """Append one row to EVENT_LOG. Never raises: measurement must not break presence."""
+    if not EVENT_LOG:
+        return
+    try:
+        with _fresh_lock:
+            new = not os.path.exists(EVENT_LOG) or os.path.getsize(EVENT_LOG) == 0
+            with open(EVENT_LOG, "a", newline="", encoding="utf-8") as fh:
+                w = csv.writer(fh)
+                if new:
+                    w.writerow(["ts", "kind", "person", "source", "value", "detail"])
+                w.writerow([time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()), kind, person, source, value, detail])
+    except Exception as e:
+        warn_once("event-log", f"event log write failed: {type(e).__name__}: {e}")
+
+
+def record_sources(detail, prev):
+    """One row per source value that changed since the last poll; returns the new snapshot."""
+    for person, srcs in detail.items():
+        for src, val in srcs.items():
+            key = (person, src)
+            if key not in prev or prev[key] != val:
+                record("source", person, src, "" if val is None else str(val).lower())
+            prev[key] = val
+    return prev
 
 
 def people():
@@ -332,18 +368,62 @@ def freshness():
 
 
 class _FreshHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path.split("?")[0] not in ("/health", "/freshness"):
-            self.send_error(404)
-            return
-        srcs = freshness()
-        stale = any(s["stale"] for s in srcs.values())
-        body = json.dumps({"ok": not stale, "sources": srcs}).encode()
-        self.send_response(503 if stale else 200)
+    def _token_ok(self):
+        if not ARRIVAL_TOKEN:
+            return False
+        got = self.headers.get("X-Arrival-Token", "")
+        if not got:
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            got = (q.get("token") or [""])[0]
+        return got == ARRIVAL_TOKEN
+
+    def _json(self, code, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def do_GET(self):
+        path = self.path.split("?")[0]
+        if path in ("/health", "/freshness"):
+            srcs = freshness()
+            stale = any(s["stale"] for s in srcs.values())
+            self._json(503 if stale else 200, {"ok": not stale, "sources": srcs})
+            return
+        if path == "/state":
+            if not self._token_ok():
+                self._json(403, {"ok": False, "error": "forbidden"})
+                return
+            self._json(200, {"ok": True, "state": _last_state,
+                             "forced_until": _force_home_until if _force_home_until > time.time() else None})
+            return
+        self.send_error(404)
+
+    def do_POST(self):
+        global _force_home_until
+        if self.path.split("?")[0] != "/arrival":
+            self.send_error(404)
+            return
+        if not self._token_ok():
+            self._json(403, {"ok": False, "error": "forbidden"})
+            return
+        now = time.time()
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+        except Exception:
+            body = {}
+        if _last_state == "HOME":
+            record("trigger", source=self.client_address[0], value="noop", detail=json.dumps(body))
+            self._json(200, {"ok": True, "action": "noop", "state": "HOME"})
+            return
+        _force_home_until = now + FORCED_HOME_SEC
+        _wake.set()
+        print(time.strftime("%F %T"), f"arrival trigger: forced HOME for {FORCED_HOME_SEC:g}s", flush=True)
+        record("trigger", source=self.client_address[0], value="forced", detail=json.dumps(body))
+        self._json(200, {"ok": True, "action": "forced", "until": _force_home_until})
 
     def log_message(self, *args):
         pass
@@ -354,7 +434,7 @@ def start_freshness():
         return
     srv = ThreadingHTTPServer((FRESH_BIND, FRESH_PORT), _FreshHandler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    print(f"freshness endpoint: http://{FRESH_BIND}:{FRESH_PORT}/health", flush=True)
+    print(f"freshness endpoint: http://{FRESH_BIND}:{FRESH_PORT}/health  arrival: POST /arrival", flush=True)
 
 
 # ---------------------------------------------------------------- EA-1
@@ -820,14 +900,22 @@ class Poller:
 # ---------------------------------------------------------------- main
 def presence_loop(poller):
     """Household presence (v1.3.0 rules) on its own thread, so a slow Prometheus or Life360 call never delays OCC lines."""
+    global _force_home_until, _last_state
     last, away_since = None, None
+    prev_detail = {}
     while True:
         try:
-            here, detail = household()
+            now = time.time()
+            src_home, detail = household()
+            record_sources(detail, prev_detail)
+            forced = now < _force_home_until
+            if src_home is True:
+                _force_home_until = 0.0               # a real source agrees; drop the hold
+                forced = False
+            here = True if forced else src_home
             if here is None:
                 print("no presence source reachable:", detail, flush=True)
             else:
-                now = time.time()
                 if here:
                     away_since = None
                     want = "HOME"
@@ -838,9 +926,12 @@ def presence_loop(poller):
                     poller.set_presence(want)
                     print(time.strftime("%F %T"), "->", want, detail, flush=True)
                     last = want
+                    _last_state = want
+                    record("state", value=want, detail=json.dumps({"sources": detail, "forced": forced}))
         except Exception as e:
             print(f"presence loop: {type(e).__name__}: {e}", flush=True)
-        time.sleep(POLL)
+        _wake.wait(POLL)
+        _wake.clear()
 
 
 def run_rooms(rooms):
@@ -871,6 +962,58 @@ def discover():
         print(f"{len(seen)} matching client(s)")
 
 
+def esp_check():
+    """--esp-check: connect to every configured ESPHome device and print its binary_sensor object_ids and states."""
+    rooms = load_rooms(ROOMS_FILE)
+    devs = [(name, d) for name, c in rooms.items() for d in (c.esp or [])]
+    if not devs:
+        print(f"no esp devices configured in {ROOMS_FILE}")
+        return
+    import asyncio
+    try:
+        import aioesphomeapi  # noqa: F401
+    except ImportError:
+        print("aioesphomeapi is not installed: pip install -r requirements.txt")
+        return
+
+    async def one(name, d):
+        import aioesphomeapi
+        host = d["host"]
+        cli = aioesphomeapi.APIClient(host, ESPHOME_PORT, "", noise_psk=d.get("key") or None)
+        states = {}
+        try:
+            await cli.connect(login=True)
+            ents, _ = await cli.list_entities_services()
+            bins = [e for e in ents if type(e).__name__ == "BinarySensorInfo"]
+            print(f"{name} {host}: " + ", ".join(sorted(e.object_id for e in bins)))
+            want = {d.get("entity"), d.get("pir")} - {None}
+
+            def on_state(st):
+                oid = {e.key: e.object_id for e in bins}.get(getattr(st, "key", None))
+                if oid:
+                    states[oid] = getattr(st, "state", None) if not getattr(st, "missing_state", False) else None
+
+            res = cli.subscribe_states(on_state)
+            if asyncio.iscoroutine(res):
+                await res
+            await asyncio.sleep(2)
+            for oid in sorted(want):
+                print(f"  {oid}: {states.get(oid, 'no state received')}")
+        except Exception as e:
+            print(f"{name} {host}: {type(e).__name__}: {e}")
+        finally:
+            try:
+                await cli.disconnect()
+            except Exception:
+                pass
+
+    async def run():
+        for name, d in devs:
+            await one(name, d)
+
+    asyncio.run(run())
+
+
 def l360_report():
     if not L360_TOKEN:
         sys.exit("LIFE360_TOKEN not set")
@@ -890,6 +1033,8 @@ def main():
         return discover()
     if "--l360" in sys.argv:
         return l360_report()
+    if "--esp-check" in sys.argv:
+        return esp_check()
     if "--status" in sys.argv:
         here, detail = household()
         print("household:", {True: "HOME", False: "AWAY", None: "UNKNOWN"}[here], detail)
@@ -905,9 +1050,12 @@ def main():
         print(f"per-room occupancy: {len(rooms)} room(s) from {ROOMS_FILE}", flush=True)
         return run_rooms(rooms)
     print("no rooms file: household PRESENCE only (v1.3.0 behaviour)", flush=True)
+    global _last_state
     last_sent, away_since = None, None
+    prev_detail = {}
     while True:
         here, detail = household()
+        record_sources(detail, prev_detail)
         if here is None:
             print("no presence source reachable:", detail, flush=True)
             time.sleep(POLL)
@@ -923,6 +1071,8 @@ def main():
             try:
                 print(time.strftime("%F %T"), "->", want, send(want), detail, flush=True)
                 last_sent = want
+                _last_state = want
+                record("state", value=want, detail=json.dumps({"sources": detail}))
             except Exception as e:
                 print("EA-1 send failed, will retry:", e, flush=True)
         time.sleep(POLL)
