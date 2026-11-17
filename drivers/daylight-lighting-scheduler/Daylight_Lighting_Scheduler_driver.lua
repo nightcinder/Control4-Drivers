@@ -1,7 +1,12 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.11.5
+  DRIVER_VERSION: 1.11.6
 
+  1.11.6: per-light manual holds are saved in PersistData, so a driver reload (Composer import, project
+  refresh) no longer loses them and re-sends the scheduled off over a light the user just turned on.
+  Off enforcement holds a light that is on while DLS's last command to it was off (missed feedback)
+  instead of sending 0 again. The scheduled-off latch survives local midnight, so it can still retry
+  until the next on edge.
   1.11.5: command descriptions show device name and parameter values in Composer programming.
   1.11.4: an on_daylight room's daylight trigger (and the date it fired) is saved in PersistData and restored after a restart or Rooms JSON save when still valid for the day cycle, so an off time after midnight is not sent early.
   1.11.3: manual off inside the on-window stays off until the next on edge (not the hold timer); a manual off at 8% or
@@ -37,7 +42,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.11.5"
+DRIVER_VERSION = "1.11.6"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -366,6 +371,25 @@ local function presenceStatusPrefix()
   return s
 end
 
+-- 1.11.6: per-light manual holds survive a driver reload (Composer import or project refresh). Without this a
+-- reload forgot the hold and the first tick inside the off window (or off enforcement) turned the light off
+-- again straight after the user had turned it on by hand.
+local function saveHolds()
+  if not PersistData then return end
+  local t = {}
+  for _, room in ipairs(rooms) do
+    local rh = nil
+    for _, l in ipairs(room.lights) do
+      if l.overrideUntil or l.offHold then
+        rh = rh or {}
+        rh[tostring(l.id)] = { u = l.overrideUntil or 0, o = (l.offHold == true) }
+      end
+    end
+    if rh then t[room.name] = rh end
+  end
+  PersistData.holds = t
+end
+
 local function prSave()
   if not PersistData then return end
   local t = {}
@@ -377,6 +401,7 @@ local function prSave()
     end
   end
   PersistData.presence = t
+  saveHolds()                                  -- 1.11.6: keep per-light manual holds with it
 end
 
 -- T1/T2 window test: is the room inside its on window (section 6 uses the off window for night level)?
@@ -876,6 +901,7 @@ function Update()
 
   local lightsHeld = 0
   for _, room in ipairs(rooms) do
+    local holdsChanged = false
     if room.overrideUntil and now >= room.overrideUntil then
       room.overrideUntil = nil
       dbg("override expired", room.name)
@@ -883,17 +909,21 @@ function Update()
     for _, l in ipairs(room.lights) do
       if l.overrideUntil and now >= l.overrideUntil then
         l.overrideUntil = nil
+        holdsChanged = true
         dbg("light override expired", room.name, tostring(l.id))
       end
       if l.overrideUntil then lightsHeld = lightsHeld + 1 end
     end
+    if holdsChanged then saveHolds() end
     -- reset each morning; 1.11.3: an on_daylight room whose off time is after midnight keeps its trigger until that time
+    -- 1.11.6: the scheduled-off latch is cleared at the next on edge, not at midnight, so a light turned on again
+    -- after midnight is still put back off
     local keepWrap = false
     if room.on_daylight and room.off then
       local o = resolveTimeSpec(room.off, now, lat, lon)
       keepWrap = o ~= nil and o < noon and minNow < o
     end
-    if minNow < noon - 60 and not keepWrap then room.dayTriggered = false; room.offEnforce = nil end
+    if minNow < noon - 60 and not keepWrap then room.dayTriggered = false end
     local dayActive = dayOk(room.days, now)
 
     -- presence: lights go off once the room is confirmed vacant. A manual hold keeps them on unless
@@ -905,6 +935,7 @@ function Update()
         if Properties["Vacancy Overrides Manual Hold"] == "On" then l.overrideUntil = nil end
         if not l.overrideUntil and curLevel(l) > 0 then sendLevel(l, 0, rampMs) end
       end
+      saveHolds()
     end
 
     -- optional sunrise-based wake ramp (fixed event, off unless enabled)
@@ -999,19 +1030,28 @@ function Update()
           l.settled = true
           if curLevel(l) > OWN_BAND then
             l.overrideUntil = now + (tonumber(Properties["Override Hold (min)"]) or 120) * 60
+            saveHolds()
             dbg("light on after off ramp, holding", room.name, tostring(l.id))
           end
         end
       end
 
       -- off enforcement: lights whose hold expired (or whose off was dropped) are re-sent off,
-      -- at most once per 5 min per light, while the room is still off-window
+      -- at most once per 5 min per light, while the room is still off-window.
+      -- 1.11.6: if the light is on while DLS's own last command to it was off (a missed manual-on event),
+      -- hold it instead of sending 0 over the user again.
       if room.offEnforce and not presenceOn() and not (room.offFadeUntil and now < room.offFadeUntil) then
         for _, l in ipairs(room.lights) do
           if not l.overrideUntil and curLevel(l) > 0 and (not l.lastEnforce or now - l.lastEnforce >= 300) then
-            l.lastEnforce = now
-            sendLevel(l, 0, rampMs)
-            dbg("enforce off", room.name, tostring(l.id))
+            if (l.lastLevel or 0) <= OWN_BAND and not (l.rampEnd and now <= l.rampEnd + 60) then
+              l.overrideUntil = now + (tonumber(Properties["Override Hold (min)"]) or 120) * 60
+              saveHolds()
+              dbg("light on after DLS off, holding", room.name, tostring(l.id))
+            else
+              l.lastEnforce = now
+              sendLevel(l, 0, rampMs)
+              dbg("enforce off", room.name, tostring(l.id))
+            end
           end
         end
       end
@@ -1113,6 +1153,7 @@ function OnWatchedVariableChanged(idDevice, idVariable, strValue)
   elseif v > 0 then light.offHold = nil end
   local holdSec = (tonumber(Properties["Override Hold (min)"]) or 120) * 60
   light.overrideUntil = math.max(light.overrideUntil or 0, now + holdSec)   -- per light; never shorten a hold
+  saveHolds()
   dbg("manual change detected, holding light", tostring(light.id), room.name, "for min", tostring(holdSec / 60))
 end
 
@@ -1181,10 +1222,18 @@ local function loadRooms(closeGate)
       } or nil,
       lights = {},
     }
+    local savedHolds = (type(PersistData) == "table" and type(PersistData.holds) == "table")
+      and PersistData.holds[room.name] or nil
     for _, l in ipairs(r.lights or {}) do
       local id = tonumber(l.id) or 0
       if id > 0 then
         local light = { id = id, kind = l.kind or "lutron", scale = clamp(tonumber(l.scale) or 1, 0.05, 1), max_level = tonumber(l.max_level), window_gain = tonumber(l.window_gain), facing_deg = tonumber(l.facing_deg), windows = parseWindows(l.windows), cct_min = tonumber(l.cct_min) or 1500, cct_max = tonumber(l.cct_max) or 4000 }
+        local sh = type(savedHolds) == "table" and savedHolds[tostring(id)] or nil
+        if type(sh) == "table" then
+          local u = tonumber(sh.u)
+          if u and u > os.time() then light.overrideUntil = u end   -- 1.11.6: the hold had not expired when the driver reloaded
+          if sh.o == true then light.offHold = true end
+        end
         table.insert(room.lights, light)
         lightIndex[id] = room
         C4:UnregisterVariableListener(id, LIGHT_LEVEL_VAR)
@@ -1334,6 +1383,7 @@ local function releaseAll()
   for _, r in ipairs(rooms) do
     if r.pr and r.pr.state == PR_HOLD then r.pr.state = r.pr.occIn and PR_OCCUPIED or PR_VACANT end
   end
+  saveHolds()
 end
 
 local function setPresence(state)
