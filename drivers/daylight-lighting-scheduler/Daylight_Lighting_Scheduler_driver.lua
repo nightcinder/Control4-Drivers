@@ -1,7 +1,10 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.11.9
+  DRIVER_VERSION: 1.11.10
 
+  1.11.10: a room with min_level 0 can go fully off in strong daylight: the in-window and follow targets may
+  reach 0 and turn the light off once (no repeated 0 every tick), and per-light presence targets use the same
+  floor. Curtain automation now runs while Away too, so curtains still close at sunset and open after sunrise.
   1.11.9: audit follow-ups. The per-room lux closed loop now adjusts per-light targets too (it only moved
   the room target, which Update then discarded for every light with windows or max_level). A manual change
   outside the ramp range during any ramp is detected, including above an upward ramp (spec 7.2). Cloud cover
@@ -59,7 +62,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.11.9"
+DRIVER_VERSION = "1.11.10"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -301,6 +304,10 @@ function ComputeRoomTarget(room, now, lat, lon, light)
     room.luxScale = nil
   end
 
+  -- 1.11.10: optional daylight cut-off. At/above this clear-sky daylight index the room target is 0 (fully off
+  -- when min_level is 0). Nil (default) keeps the old "dim to the floor" behaviour.
+  if room.daylight_off and D >= room.daylight_off then level = 0 end
+
   -- a light's own max_level overrides the room's; otherwise the room's applies
   local maxLv = (light and light.max_level) or room.max_level
   level = clamp(level, math.min(room.min_level, maxLv), maxLv)
@@ -483,10 +490,14 @@ local function presenceDrive(room, now, inWindow)
       if lv < 1 then
         if (l.lastLevel or 0) > 0 then sendLevel(l, 0, fadeMs) end
       else
-        local v = clamp(lv * l.scale, 1, 100)
-        if l.lastLevel == nil or math.abs(v - l.lastLevel) >= 2 then sendLevel(l, v, fadeMs) end
-        if l.kind == "lifx" and cct and (not l.lastCCT or math.abs(cct - l.lastCCT) >= 50) then
-          sendCCT(l, cct, fadeMs)
+        local v = clamp(lv * l.scale, 0, 100)
+        if v <= 0 then
+          if (l.lastLevel or 0) > 0 then sendLevel(l, 0, fadeMs) end
+        else
+          if l.lastLevel == nil or math.abs(v - l.lastLevel) >= 2 then sendLevel(l, v, fadeMs) end
+          if l.kind == "lifx" and cct and (not l.lastCCT or math.abs(cct - l.lastCCT) >= 50) then
+            sendCCT(l, cct, fadeMs)
+          end
         end
       end
     end
@@ -804,7 +815,7 @@ end
 --   "open_level":100,"closed_level":0,"open_at":"sunrise+15","close_at":"sunset+30",
 --   "glare_threshold":0.35,"glare_position":25}]
 -- Target is openness 0..100 (0 = closed, 100 = open). Openness maps to a level between closed_level and
--- open_level. Rules (evaluated each Update pass, not while Away):
+-- open_level. Rules (evaluated each Update pass, including while Away):
 --   before open_at, at/after close_at, or sun below horizon  -> closed (0)
 --   direct sun on the window >= glare_threshold              -> glare_position
 --   otherwise                                                -> open (100)
@@ -940,6 +951,7 @@ function Update()
     for _, room in ipairs(rooms) do
       if room.pr and room.pr.state == PR_OCCUPIED then presenceDrive(room, now) end   -- robot in an AWAY house
     end
+    runCurtains(now, lat, lon)                 -- 1.11.10: curtains still follow sunset while Away
     setStatus(presenceStatusPrefix() .. string.format("Away | someone's-home lamps: %d | %s", n, os.date("%H:%M", now)))
     return
   end
@@ -1113,14 +1125,18 @@ function Update()
         for _, l in ipairs(room.lights) do
           local lv = level
           if l.windows or l.window_gain or l.facing_deg or l.max_level then lv = ComputeRoomTarget(room, now, lat, lon, l) end
-          local v = clamp(lv * l.scale, 1, 100)
+          local v = clamp(lv * l.scale, 0, 100)
           local isOn = curLevel(l) > 0
           if (scheduled or isOn) and not l.overrideUntil and not l.offHold then       -- follow mode only touches lights that are already on
-            if not l.lastLevel or math.abs(v - l.lastLevel) >= 2 or not isOn then
-              sendLevel(l, v, rampMs)
-            end
-            if l.kind == "lifx" and cct and (not l.lastCCT or math.abs(cct - l.lastCCT) >= 50) then
-              sendCCT(l, cct, rampMs)
+            if v > 0 then
+              if not l.lastLevel or math.abs(v - l.lastLevel) >= 2 or not isOn then
+                sendLevel(l, v, rampMs)
+              end
+              if l.kind == "lifx" and cct and (not l.lastCCT or math.abs(cct - l.lastCCT) >= 50) then
+                sendCCT(l, cct, rampMs)
+              end
+            elseif isOn then                       -- 1.11.10: a 0 target (min_level 0) turns the light fully off, once
+              sendLevel(l, 0, rampMs)
             end
             n = n + 1
           end
@@ -1133,9 +1149,13 @@ function Update()
           if curLevel(l) > 0 and not l.overrideUntil then
             local lv = level
             if l.windows or l.window_gain or l.facing_deg or l.max_level then lv = ComputeRoomTarget(room, now, lat, lon, l) end
-            local v = clamp(lv * l.scale, 1, 100)
-            if not l.lastLevel or math.abs(v - l.lastLevel) >= 3 then sendLevel(l, v, rampMs) end
-            if l.kind == "lifx" and cct and (not l.lastCCT or math.abs(cct - l.lastCCT) >= 50) then
+            local v = clamp(lv * l.scale, 0, 100)
+            if v <= 0 then
+              sendLevel(l, 0, rampMs)            -- 1.11.10: min_level 0 can take it fully dark in daylight
+            elseif not l.lastLevel or math.abs(v - l.lastLevel) >= 3 then
+              sendLevel(l, v, rampMs)
+            end
+            if v > 0 and l.kind == "lifx" and cct and (not l.lastCCT or math.abs(cct - l.lastCCT) >= 50) then
               sendCCT(l, cct, rampMs)
             end
             n = n + 1
@@ -1262,6 +1282,7 @@ local function loadRooms(closeGate)
       window_gain = clamp(tonumber(r.window_gain) or 0.6, 0, 1),
       facing_deg = tonumber(r.facing_deg),
       min_level = tonumber(r.min_level) or 5,
+      daylight_off = (tonumber(r.daylight_off) and clamp(tonumber(r.daylight_off), 0, 1)) or nil,
       max_level = tonumber(r.max_level) or 100,
       away = r.away, on = r.on, off = r.off, off_ramp_min = tonumber(r.off_ramp_min), scenes = r.scenes, days = r.days, windows = parseWindows(r.windows), follow = (r.follow == true), on_daylight = tonumber(r.on_daylight), wake = r.wake,
       lux = (r.lux and r.lux.dev and r.lux.dev > 0) and { dev = r.lux.dev, var = r.lux.var or 1000, target = tonumber(r.lux.target) or 200 } or nil,

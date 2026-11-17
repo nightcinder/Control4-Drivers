@@ -29,7 +29,7 @@ Nothing moves until the master property **Curtain Automation** is set to On (def
 - Before `open_at`, at or after `close_at`, or with the sun below the horizon: closed.
 - Direct-sun index = max(0, cos(sun azimuth - facing)) x sin(sun elevation) x cloud transmittance. At or above the threshold: `glare_position`.
 - Otherwise: open.
-- Not evaluated while presence is Away.
+- Evaluated while presence is Away too (1.11.10): curtains still close at sunset and open in the morning.
 - `times` do not wrap past midnight. `close_at` must be later than `open_at` on the same day.
 
 ## Command limits

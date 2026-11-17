@@ -24,6 +24,14 @@ end
 
 local ROOMS = '[{"name":"Upstairs","on":"18:00","off":"22:30","scenes":{"Off":{"off":true}},"lights":[{"id":337,"kind":"lutron"}]}]'
 
+local function zeros(id)
+  local n = 0
+  for _, s in ipairs(sim.sent) do
+    if s.id == id and s.cmd == "RAMP_TO_LEVEL" and s.params.LEVEL == 0 then n = n + 1 end
+  end
+  return n
+end
+
 local function levels(id, min)
   local n = 0
   for _, s in ipairs(sim.sent) do
@@ -152,6 +160,43 @@ t.test("7: a manual change above an upward ramp is detected", function()
   sim.advance(20 * SEC)                        -- 19:00:15 first tick sends 0 -> 40
   sim.fire_var(U, VAR, "90")                   -- hand far above the ramp target, inside the window
   t.ok(type(sim.persist.holds) == "table" and sim.persist.holds.Upstairs ~= nil, "manual change held")
+end)
+
+t.test("8: min_level 0 lets strong daylight turn the light fully off, once", function()
+  sim.reset(1)
+  local rooms = '[{"name":"Office","on":"06:00","off":"22:30","min_level":0,"max_level":100,"daylight_off":0.5,"lights":[{"id":337,"kind":"lutron"}]}]'
+  local ok = sim.load_driver(DRV, {
+    xml = XML,
+    properties = { ["Enabled"] = "On", ["Update Interval (min)"] = "1", ["Ramp Time (sec)"] = "90", ["Rooms JSON"] = rooms, ["Latitude"] = "0", ["Longitude"] = "0", ["Cloud Cover Source"] = "None (assume clear)" },
+    start_ms = local_sec(12, 0) * SEC,
+    before = function(s) s.set_var(U, VAR, "50") end,
+  })
+  t.ok(ok, "load: " .. tostring(sim.errors[1]))
+  sim.advance(20 * SEC)                        -- first tick at noon: target 0
+  t.ok(zeros(U) >= 1, "a 0 target was sent")
+  sim.set_var(U, VAR, "0")                     -- the light reports off
+  sim.sent = {}
+  sim.advance(5 * 60 * SEC)
+  t.eq(zeros(U), 0, "0 is not re-sent every tick once the light is off")
+end)
+
+t.test("9: curtains still run while Away", function()
+  sim.reset(1)
+  local rooms = '[{"name":"Den","on":"18:00","off":"23:00","curtains":[{"id":493,"name":"Den West","facing_deg":180,"open_at":"08:00","close_at":"20:00"}],"lights":[{"id":337,"kind":"lutron"}]}]'
+  local ok = sim.load_driver(DRV, {
+    xml = XML,
+    properties = { ["Enabled"] = "On", ["Update Interval (min)"] = "1", ["Ramp Time (sec)"] = "90", ["Rooms JSON"] = rooms, ["Latitude"] = "51.5", ["Longitude"] = "-0.1", ["Curtain Automation"] = "On" },
+    start_ms = local_sec(21, 0) * SEC,
+    before = function(s) s.set_var(U, VAR, "0") end,
+  })
+  t.ok(ok, "load: " .. tostring(sim.errors[1]))
+  sim.sent = {}
+  sim.exec("SetPresence", { PRESENT = "AWAY" })
+  local closed = false
+  for _, e in ipairs(sim.sent) do
+    if e.id == 493 and (e.cmd == "CLOSE" or e.cmd == "SET_POSITION") then closed = true end
+  end
+  t.ok(closed, "curtain closed after sunset while Away")
 end)
 
 t.finish("dls-audit-regressions")
