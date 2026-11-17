@@ -16,8 +16,10 @@ after Android Auto. A door close while leaving is a no-op because the house is s
 4. The script re-reads `TAILWIND_TOKEN` while it is empty, so adding the key does not need a
    container restart.
 
-Test: `docker logs -f tailwind-arrival` while opening and closing the garage door. A close edge
-logs `door1: open -> close` and the arrival POST result (`noop` when already home).
+Test: `docker logs -f tailwind-arrival` while opening and closing the garage door. An open edge
+logs `door1: close -> open` and the arrival POST result (`noop` when already home). `OPEN_TRIGGER=1`
+(default) fires on the open edge; set 0 to use only the close edge. A 20 s cooldown stops the
+open+close pair firing twice.
 
 The dls-presence side: `POST /arrival` with `X-Arrival-Token`; `GET /state` returns the current
 state and force expiry. The endpoint is on the freshness port (8731), token-protected.

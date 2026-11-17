@@ -29,7 +29,7 @@ TOKEN = os.environ.get("TAILWIND_TOKEN", "").strip()
 ARRIVAL_URL = os.environ.get("ARRIVAL_URL", "http://127.0.0.1:8731/arrival").strip()
 ARRIVAL_TOKEN = os.environ.get("ARRIVAL_TOKEN", "").strip()
 POLL = float(os.environ.get("POLL_SEC", "3"))
-OPEN_TRIGGER = os.environ.get("OPEN_TRIGGER", "0") == "1"
+OPEN_TRIGGER = os.environ.get("OPEN_TRIGGER", "1") == "1"
 ENV_FILE = os.environ.get("ENV_FILE", "/run/tailwind.env")
 HEARTBEAT = "/tmp/tailwind-heartbeat"
 
@@ -115,6 +115,7 @@ def main():
         time.sleep(20)
     prev = None
     fails = 0
+    last_fire = 0.0
     while True:
         beat()
         try:
@@ -130,9 +131,14 @@ def main():
                     close_edge = was == "open" and status == "close"
                     open_edge = OPEN_TRIGGER and was == "close" and status == "open"
                     if (close_edge or open_edge) and ARRIVAL_TOKEN:
+                        now = time.time()
+                        if now - last_fire < 20:
+                            log("arrival skipped (cooldown)")
+                            continue
+                        last_fire = now
                         try:
                             res = arrival()
-                            log(f"arrival POST: {res}")
+                            log(f"arrival POST ({'open' if open_edge else 'close'} edge): {res}")
                         except Exception as e:
                             log(f"arrival POST failed: {type(e).__name__}: {e}")
             prev = cur
