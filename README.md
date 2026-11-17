@@ -31,9 +31,6 @@ Versions are the XML `<version>` (what Composer compares), with the Lua `DRIVER_
 | `media-remote-bridge-untested` | Media Remote Bridge | 9 (0.4.4) | `MediaRemoteBridge.c4z` | For the phone and watch remote app, untested |
 | `unifi-controller` | UniFi PDU Controls (parent) | 16 (1.0.12) | `UniFi_PDU_Controls.c4z` | PDU Pro and Plug outlets, untested. Renamed from `UniFi_Controller.c4z`, so Composer treats it as a new driver: delete the old one and re-add |
 | `unifi-outlet` | UniFi Outlet (child relay) | 3 (1.0.2) | `UniFi_Outlet.c4z` | One per outlet, untested |
-| `lifx-bulb-legacy` | LIFX Bulb (earlier driver, kept for reference) | 107 (1.0.6) | not built | Replaced by LIFX LAN |
-
-`haiku-senseme/` and `haiku-senseme-nolight/` hold only old icons from the retired combined Haiku packages. They are in git history for rollback.
 
 ### Daylight Lighting Scheduler
 
