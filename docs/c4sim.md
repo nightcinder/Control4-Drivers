@@ -12,6 +12,7 @@ Output is terse: `ok <dir>`, `ERR <dir>: <first error line>`, `warn <dir>: ...`.
 Exit code is non-zero on any ERR or failed test.
 
 CI (`.github/workflows/ci.yml`) runs `check_c4z --all`, the checker tests, `smoke all` and `test all` on every push.
+The suite assumes `TZ=America/New_York` (the controller's timezone): several DLS tests pin local-clock times. CI sets it.
 
 ## Build hook
 
