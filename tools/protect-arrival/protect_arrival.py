@@ -144,7 +144,14 @@ def main():
         sys.exit("PROTECT_URL/PROTECT_USER/PROTECT_PASS must be set")
     if not ARRIVAL_TOKEN:
         sys.exit("ARRIVAL_TOKEN is empty: it must match dls-presence.env")
-    login()
+    while True:                       # a 429 lockout must not become a restart loop
+        try:
+            login()
+            break
+        except Exception as exc:
+            beat()
+            log(f"login failed: {exc}; retry in 180 s")
+            time.sleep(180)
     names, names_at = camera_names(), time.time()
     wanted = set(CAMERAS)
     missing = wanted - set(names.values())
@@ -189,8 +196,9 @@ def main():
                     log(f"arrival POST failed: {type(exc).__name__}: {exc}")
             time.sleep(POLL)
         except Exception as exc:
-            log(f"protect error: {type(exc).__name__}: {exc}")
-            time.sleep(10)
+            wait = 300 if "429" in str(exc) else 10
+            log(f"protect error: {type(exc).__name__}: {exc}; retry in {wait} s")
+            time.sleep(wait)
             try:
                 login()
                 names, names_at = camera_names(), time.time()
