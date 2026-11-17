@@ -184,6 +184,9 @@ local function build_env()
   env.os = setmetatable({ time = function(t)
     if t then return realos.time(t) end
     return sim.epoch + math.floor(sim.now_ms / 1000)
+  end, date = function(fmt, t)
+    if t == nil then t = sim.epoch + math.floor(sim.now_ms / 1000) end
+    return realos.date(fmt, t)
   end }, { __index = realos })
   env.print = function(...)
     local parts = {}
