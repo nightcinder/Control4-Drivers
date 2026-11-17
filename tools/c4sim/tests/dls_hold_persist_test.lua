@@ -68,7 +68,8 @@ t.test("2: off enforcement holds a light left on without a manual event (missed 
   sim.advance(2 * 60 * SEC + 10 * SEC)        -- 22:30:10, scheduled off ramp sent
   t.ok(ramps_off() >= 1, "scheduled off ramp sent")
   sim.sent = {}
-  -- no feedback ever arrives: the Control4 variable still reads 40 although DLS sent 0
+  -- the light is turned up by hand but its feedback event never reaches the driver (variable only)
+  sim.set_var(U, VAR, "55")
   sim.advance(10 * 60 * SEC)
   t.eq(ramps_off(), 0, "enforcement held the light instead of re-sending 0")
   t.ok(type(sim.persist.holds) == "table" and sim.persist.holds.Upstairs ~= nil, "the hold was persisted")

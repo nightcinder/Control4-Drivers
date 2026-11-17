@@ -1,7 +1,12 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.11.7
+  DRIVER_VERSION: 1.11.8
 
+  1.11.8: off enforcement runs for plain rooms even while Presence Lighting is On. The guard meant to exempt
+  presence rooms accidentally exempted every room, so a dropped nightly off in a scheduled room was never
+  re-sent (the Den lamp did not go off at 00:45 on 2026-11-16). Presence rooms still skip it. The settle check
+  and the enforcement hold now only latch a light away from the level its off ramp started from, so a dropped
+  off (stuck at the old level) is retried instead of latched forever.
   1.11.7: room-level scene/Off holds are saved in PersistData and restored after a reload (like per-light
   holds in 1.11.6). Release Room Override now clears the per-light holds it claimed to release. A plain
   property change (Debug, poll interval, port) no longer forgets every light's last level and re-ramps the
@@ -49,7 +54,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.11.7"
+DRIVER_VERSION = "1.11.8"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -1047,7 +1052,10 @@ function Update()
       for _, l in ipairs(room.lights) do
         if l.rampTo == 0 and l.rampEnd and now > l.rampEnd + 3 and not l.settled and not l.overrideUntil then
           l.settled = true
-          if curLevel(l) > OWN_BAND then
+          local cur = curLevel(l)
+          -- 1.11.8: a light stuck at the level the fade started from is a dropped off, not a manual on. A level
+          -- away from that start is a hand on the dimmer.
+          if cur > OWN_BAND and math.abs(cur - (l.rampFrom or 0)) > OWN_BAND then
             l.overrideUntil = now + (tonumber(Properties["Override Hold (min)"]) or 120) * 60
             saveHolds()
             dbg("light on after off ramp, holding", room.name, tostring(l.id))
@@ -1057,12 +1065,14 @@ function Update()
 
       -- off enforcement: lights whose hold expired (or whose off was dropped) are re-sent off,
       -- at most once per 5 min per light, while the room is still off-window.
-      -- 1.11.6: if the light is on while DLS's own last command to it was off (a missed manual-on event),
-      -- hold it instead of sending 0 over the user again.
-      if room.offEnforce and not presenceOn() and not (room.offFadeUntil and now < room.offFadeUntil) then
+      -- 1.11.6/1.11.8: hold a light that is clearly above where DLS's off ramp started (a missed manual-on
+      -- event); keep retrying a light that is merely stuck at or below the old level.
+      if room.offEnforce and not room.pr and not (room.offFadeUntil and now < room.offFadeUntil) then
         for _, l in ipairs(room.lights) do
-          if not l.overrideUntil and curLevel(l) > 0 and (not l.lastEnforce or now - l.lastEnforce >= 300) then
-            if (l.lastLevel or 0) <= OWN_BAND and not (l.rampEnd and now <= l.rampEnd + 60) then
+          local cur = curLevel(l)
+          if not l.overrideUntil and cur > 0 and (not l.lastEnforce or now - l.lastEnforce >= 300) then
+            if (l.lastLevel or 0) <= OWN_BAND and math.abs(cur - (l.rampFrom or 0)) > OWN_BAND
+               and not (l.rampEnd and now <= l.rampEnd + 60) then
               l.overrideUntil = now + (tonumber(Properties["Override Hold (min)"]) or 120) * 60
               saveHolds()
               dbg("light on after DLS off, holding", room.name, tostring(l.id))
