@@ -4,9 +4,10 @@
 
   1.11.6: per-light manual holds are saved in PersistData, so a driver reload (Composer import, project
   refresh) no longer loses them and re-sends the scheduled off over a light the user just turned on.
-  Off enforcement holds a light that is on while DLS's last command to it was off (missed feedback)
-  instead of sending 0 again. The scheduled-off latch survives local midnight, so it can still retry
-  until the next on edge.
+  A reload inside the off window no longer sends an off by itself; only a real on-window -> off-window
+  edge does. Off enforcement holds a light that is on while DLS's last command to it was off (missed
+  feedback) instead of sending 0 again. The scheduled-off latch survives local midnight, so it can
+  still retry until the next on edge.
   1.11.5: command descriptions show device name and parameter values in Composer programming.
   1.11.4: an on_daylight room's daylight trigger (and the date it fired) is saved in PersistData and restored after a restart or Rooms JSON save when still valid for the day cycle, so an off time after midnight is not sent early.
   1.11.3: manual off inside the on-window stays off until the next on edge (not the hold timer); a manual off at 8% or
@@ -1006,9 +1007,10 @@ function Update()
       elseif prBlocks then
         room.wasInWindow = inWindow
       else
-      -- 1.11.3: the first tick after load (Rooms JSON save or restart) inside the off window counts as a pending off edge
-      if scheduled and not inWindow and (room.wasInWindow or (room.wasInWindow == nil and not room.pr
-          and (minNow >= offMin or minNow < noon - 60))) then
+      -- 1.11.6: a reload no longer sends an immediate off. Composer imports and project refreshes restart the
+      -- driver; the old first-tick rule turned the room off even when the user had just turned a light on by
+      -- hand. A pending off now comes only from a real on-window -> off-window edge.
+      if scheduled and not inWindow and room.wasInWindow then
         local offMs = room.off_ramp_min and (room.off_ramp_min * 60000) or rampMs
         for _, l in ipairs(room.lights) do
           if not l.overrideUntil then sendLevel(l, 0, offMs) end

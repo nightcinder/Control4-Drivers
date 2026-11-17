@@ -74,11 +74,11 @@ t.test("2: manual off at 8% or less inside the on-window sets a hold", function(
   t.eq(ramps_on(), 0, "no level re-sent after a manual off at 8% or less")
 end)
 
-t.test("3: restart inside the off window sends the pending off edge", function()
+t.test("3: restart inside the off window does not send an off over a light that is on", function()
   sim.reset(1)
-  start(23, 0, ROOM_EVE)                      -- loaded at 23:00, after the 22:30 off time
+  start(23, 0, ROOM_EVE)                      -- loaded at 23:00, after the 22:30 off time, light reads 40
   sim.advance(2 * 60 * SEC)
-  t.ok(ramps_off() >= 1, "off sent on the first tick after load in the off window")
+  t.eq(ramps_off(), 0, "no off on the first tick after a reload")
   t.eq(ramps_on(), 0, "nothing turned on")
 end)
 
