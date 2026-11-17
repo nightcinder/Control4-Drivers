@@ -1,7 +1,13 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.11.6
+  DRIVER_VERSION: 1.11.7
 
+  1.11.7: room-level scene/Off holds are saved in PersistData and restored after a reload (like per-light
+  holds in 1.11.6). Release Room Override now clears the per-light holds it claimed to release. A plain
+  property change (Debug, poll interval, port) no longer forgets every light's last level and re-ramps the
+  house. Variable listeners are dropped for lights and sensors removed from Rooms JSON. Presence rooms
+  with an on_daylight trigger and an after-midnight off use the daylight window correctly between noon
+  and midnight. Timers and the presence server are torn down in OnDriverDestroyed.
   1.11.6: per-light manual holds are saved in PersistData, so a driver reload (Composer import, project
   refresh) no longer loses them and re-sends the scheduled off over a light the user just turned on.
   A reload inside the off window no longer sends an off by itself; only a real on-window -> off-window
@@ -43,12 +49,12 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.11.6"
+DRIVER_VERSION = "1.11.7"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
 local curtains = {}               -- parsed curtains (1.9.0), independent of rooms
-local curtainState = {}           -- proxy id -> { target = last commanded %, at = os.time() } (kept across reloads)
+local curtainState = {}           -- proxy id -> { target = last commanded %, at = os.time() } (resets on a driver reload)
 local curtainDay, curtainSentToday = nil, 0
 local lightIndex = {}             -- device id -> room
 local cloudPct = nil              -- last cloud cover (0-100) or nil
@@ -378,6 +384,7 @@ end
 local function saveHolds()
   if not PersistData then return end
   local t = {}
+  local rh_all = nil
   for _, room in ipairs(rooms) do
     local rh = nil
     for _, l in ipairs(room.lights) do
@@ -387,8 +394,13 @@ local function saveHolds()
       end
     end
     if rh then t[room.name] = rh end
+    if room.overrideUntil then                              -- 1.11.7: scene/Off holds survive a reload too
+      rh_all = rh_all or {}
+      rh_all[room.name] = room.overrideUntil
+    end
   end
   PersistData.holds = t
+  PersistData.roomHolds = rh_all
 end
 
 local function prSave()
@@ -411,7 +423,11 @@ local function prInWindow(room, now, lat, lon)
   local minNow = minuteOf(now)
   if room.on_daylight then
     local offMin = resolveTimeSpec(room.off or "23:00", now, lat, lon)
-    return room.dayTriggered == true and offMin ~= nil and minNow < offMin
+    if offMin == nil then return false end
+    if offMin < 720 then                     -- 1.11.7: off after midnight: open from noon to midnight, then to off
+      return room.dayTriggered == true and (minNow >= 720 or minNow < offMin)
+    end
+    return room.dayTriggered == true and minNow < offMin
   end
   local onMin = resolveTimeSpec(room.on, now, lat, lon)
   local offMin = resolveTimeSpec(room.off, now, lat, lon)
@@ -905,6 +921,7 @@ function Update()
     local holdsChanged = false
     if room.overrideUntil and now >= room.overrideUntil then
       room.overrideUntil = nil
+      holdsChanged = true
       dbg("override expired", room.name)
     end
     for _, l in ipairs(room.lights) do
@@ -1201,6 +1218,8 @@ end
 local function loadRooms(closeGate)
   for _, r in ipairs(rooms) do
     if r.vacancyTimer then r.vacancyTimer:Cancel() r.vacancyTimer = nil end
+    for _, l in ipairs(r.lights) do C4:UnregisterVariableListener(l.id, LIGHT_LEVEL_VAR) end   -- 1.11.7: drop listeners for lights/rooms removed from the JSON
+    if r.occ then C4:UnregisterVariableListener(r.occ.dev, r.occ.var) end
   end
   rooms, lightIndex = {}, {}
   presenceByKey, presenceWarn = {}, ""
@@ -1226,6 +1245,9 @@ local function loadRooms(closeGate)
     }
     local savedHolds = (type(PersistData) == "table" and type(PersistData.holds) == "table")
       and PersistData.holds[room.name] or nil
+    local savedRoomHold = (type(PersistData) == "table" and type(PersistData.roomHolds) == "table")
+      and tonumber(PersistData.roomHolds[room.name]) or nil
+    if savedRoomHold and savedRoomHold > os.time() then room.overrideUntil = savedRoomHold end   -- 1.11.7: scene/Off hold
     for _, l in ipairs(r.lights or {}) do
       local id = tonumber(l.id) or 0
       if id > 0 then
@@ -1328,9 +1350,18 @@ function OnPropertyChanged(name)
   elseif name == "Cloud Cover Source" then pollCloud()
   elseif name == "Presence Port" then startPresenceServer() end
   if name ~= "Status" and name ~= "Driver Version" and name ~= "Presence" then
-    for _, r in ipairs(rooms) do for _, l in ipairs(r.lights) do l.lastLevel, l.lastCCT = nil, nil end end
     C4:SetTimer(2000, function() Update() end, false)
   end
+end
+
+function OnDriverDestroyed()
+  if mainTimer then mainTimer:Cancel() mainTimer = nil end
+  if cloudTimer then cloudTimer:Cancel() cloudTimer = nil end
+  if presenceTimer then presenceTimer:Cancel() presenceTimer = nil end
+  for _, r in ipairs(rooms) do
+    if r.vacancyTimer then r.vacancyTimer:Cancel() r.vacancyTimer = nil end
+  end
+  if serverHandle then pcall(function() C4:DestroyServer() end) serverHandle = nil end
 end
 
 -- Scenes: a keypad/Control4 event calls ApplyScene (ROOM, SCENE). The scene sets the listed lights (usually
@@ -1371,6 +1402,7 @@ local function applyScene(roomName, sceneName)
         local holdMin = tonumber(sc.hold_min) or tonumber(Properties["Scene Hold (min)"]) or 240
         room.overrideUntil = now + holdMin * 60
       end
+      saveHolds()
       dbg("scene", roomName, sceneName, "held until", tostring(room.overrideUntil))
       setStatus(string.format("Scene %s/%s applied %s", roomName, sceneName, os.date("%H:%M", now)))
       return
@@ -1406,6 +1438,7 @@ local function setPresence(state)
   else
     releaseAll()          -- arriving home: drop scene/Off holds, resume the schedule
   end
+  saveHolds()
   for _, r in ipairs(rooms) do
     if r.pr then prRecompute(r, now, away) end    -- AWAY: rooms left empty fade at once; HOME: re-evaluate
   end
@@ -1535,9 +1568,15 @@ function ExecuteCommand(strCommand, tParams)
     applyScene(tParams and tParams.ROOM, tParams and tParams.SCENE)
   elseif strCommand == "Release Room Override" or strCommand == "ReleaseRoomOverride" then
     for _, r in ipairs(rooms) do
-      if r.name == (tParams and tParams.ROOM) then r.overrideUntil = nil
-        for _, l in ipairs(r.lights) do l.lastLevel, l.lastCCT = nil, nil end end
+      if r.name == (tParams and tParams.ROOM) then
+        r.overrideUntil = nil
+        for _, l in ipairs(r.lights) do                 -- 1.11.7: release per-light holds too, not just the scene hold
+          l.overrideUntil, l.offHold = nil, nil
+          l.lastLevel, l.lastCCT = nil, nil
+        end
+      end
     end
+    saveHolds()
     Update()
   end
 end
