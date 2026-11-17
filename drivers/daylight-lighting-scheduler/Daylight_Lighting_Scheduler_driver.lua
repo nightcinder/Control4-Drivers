@@ -1,7 +1,12 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.11.8
+  DRIVER_VERSION: 1.11.9
 
+  1.11.9: audit follow-ups. The per-room lux closed loop now adjusts per-light targets too (it only moved
+  the room target, which Update then discarded for every light with windows or max_level). A manual change
+  outside the ramp range during any ramp is detected, including above an upward ramp (spec 7.2). Cloud cover
+  older than 6 h is ignored. Sunrise/sunset return local clock minutes, so DST changeover days are not 60 min
+  off. Update and the presence tick run under pcall so one Lua error no longer stops the timer silently.
   1.11.8: off enforcement runs for plain rooms even while Presence Lighting is On. The guard meant to exempt
   presence rooms accidentally exempted every room, so a dropped nightly off in a scheduled room was never
   re-sent (the Den lamp did not go off at 00:45 on 2026-11-16). Presence rooms still skip it. The settle check
@@ -54,7 +59,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.11.8"
+DRIVER_VERSION = "1.11.9"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -142,9 +147,13 @@ local function computeSunEvents(now, lat, lon)
   local rise, set
   local prev = SunPosition(m0, lat, lon)
   for m = 5, 1440, 5 do
-    local el = SunPosition(m0 + m * 60, lat, lon)
-    if prev < -0.833 and el >= -0.833 and not rise then rise = m end
-    if prev >= -0.833 and el < -0.833 then set = m end
+    local t = m0 + m * 60
+    local el = SunPosition(t, lat, lon)
+    -- 1.11.9: return the local clock minute, not the elapsed minute, so DST changeover days are not 60 min off
+    local tm = os.date("*t", t)
+    local clockMin = tm.hour * 60 + tm.min
+    if prev < -0.833 and el >= -0.833 and not rise then rise = clockMin end
+    if prev >= -0.833 and el < -0.833 then set = clockMin end
     prev = el
   end
   return rise, set
@@ -199,6 +208,13 @@ local function cloudTransmittance(pct)
   if not pct then return 1 end
   local c = clamp(pct / 100, 0, 1)
   return 1 - 0.75 * (c ^ 3.4)
+end
+
+-- 1.11.9: a cloud reading older than 6 h is dropped; otherwise a dead Open-Meteo feeds a stale value forever.
+local function cloudNow()
+  if cloudPct == nil then return nil end
+  if cloudStamp > 0 and os.time() - cloudStamp > 6 * 3600 then return nil end
+  return cloudPct
 end
 
 -- circadian color temperature for LIFX-only rooms
@@ -258,7 +274,7 @@ function ComputeRoomTarget(room, now, lat, lon, light)
   local minNow = d.hour * 60 + d.min
   local base = baseLevel(minNow)
 
-  local D = clearDaylight(el) * cloudTransmittance(cloudPct)
+  local D = clearDaylight(el) * cloudTransmittance(cloudNow())
   local windows = (light and light.windows) or room.windows
   if not windows then
     local gain = (light and light.window_gain) or room.window_gain
@@ -268,6 +284,8 @@ function ComputeRoomTarget(room, now, lat, lon, light)
   local level = base * windowsRemaining(windows, el, az, D)
 
   -- optional closed loop when a lux sensor is bound
+  -- 1.11.9: the correction is a room-level factor, so per-light targets (own windows/max_level) use it too.
+  local rawLevel = level
   if room.lux and not light then
     local lux = tonumber(C4:GetDeviceVariable(room.lux.dev, room.lux.var))
     if lux then
@@ -276,6 +294,11 @@ function ComputeRoomTarget(room, now, lat, lon, light)
       room.luxLevel = clamp(prev + 30 * err, room.min_level, base)
       level = room.luxLevel
     end
+    room.luxScale = (rawLevel > 0) and (level / rawLevel) or nil
+  elseif room.lux and light and room.luxScale then
+    level = level * room.luxScale
+  elseif not room.lux then
+    room.luxScale = nil
   end
 
   -- a light's own max_level overrides the room's; otherwise the room's applies
@@ -829,7 +852,7 @@ local function curtainTarget(c, now, lat, lon)
   if minNow < openMin or minNow >= closeMin or el <= 0 then return 0, "night" end
   local glare = 0
   if c.facing then
-    glare = math.max(0, math.cos(rad(az - c.facing))) * math.sin(rad(el)) * cloudTransmittance(cloudPct)
+    glare = math.max(0, math.cos(rad(az - c.facing))) * math.sin(rad(el)) * cloudTransmittance(cloudNow())
   end
   if glare >= c.glare_threshold then
     return c.glare_position, string.format("glare %.2f", glare)
@@ -998,7 +1021,7 @@ function Update()
       if room.on_daylight then
         if not room.dayTriggered and minNow >= noon then
           local el = SunPositionCached(now, lat, lon)
-          local D = clearDaylight(el) * cloudTransmittance(cloudPct)
+          local D = clearDaylight(el) * cloudTransmittance(cloudNow())
           if D < room.on_daylight then
             room.dayTriggered = true
             if type(PersistData) == "table" then                       -- 1.11.4: the trigger survives a restart or Rooms JSON save
@@ -1149,14 +1172,10 @@ function OnWatchedVariableChanged(idDevice, idVariable, strValue)
   if light.ignoreUntil and now <= light.ignoreUntil then
     local from, to = light.rampFrom or 0, light.rampTo or 0
     if not room.pr then
-      -- 1.11.2: only feedback that moves with the ramp is ours; a level moving against it (e.g. 0 -> 30 during a
-      -- scheduled-off ramp to 0) is a hand on the dimmer and falls through to the hold below
-      local own = true
+      -- 1.11.9 (spec 7.2): own only inside the ramp range; a value outside it is a hand on the dimmer, even
+      -- during the window. The old direction-only check missed a manual change above an upward ramp.
       local from, to = light.rampFrom or 0, light.rampTo or 0
-      if light.fbLast then
-        if to < from and v > light.fbLast + OWN_BAND then own = false end
-        if to > from and v < light.fbLast - OWN_BAND then own = false end
-      end
+      local own = v >= math.min(from, to) - OWN_BAND and v <= math.max(from, to) + OWN_BAND
       -- once the ramp is over (2 s settle) only the target level is ours
       if own and light.rampEnd and now > light.rampEnd + 2 and math.abs(v - to) > OWN_BAND then own = false end
       if own then light.fbLast = v return end
@@ -1324,11 +1343,21 @@ local function loadRooms(closeGate)
   dbg("rooms loaded", tostring(#rooms), "curtains", tostring(#curtains))
 end
 
+-- 1.11.9: one Lua error used to stop the repeating timer silently. Keep the timer alive and print the error.
+local function safeUpdate()
+  local ok, err = pcall(Update)
+  if not ok then print("[DLS] Update failed: " .. tostring(err)) end
+end
+local function safePresenceTick()
+  local ok, err = pcall(presenceTick)
+  if not ok then print("[DLS] presence tick failed: " .. tostring(err)) end
+end
+
 local function startTimers()
   if mainTimer then mainTimer:Cancel() end
   if cloudTimer then cloudTimer:Cancel() end
   local mins = tonumber(Properties["Update Interval (min)"]) or 5
-  mainTimer = C4:SetTimer(mins * 60 * 1000, function() Update() end, true)
+  mainTimer = C4:SetTimer(mins * 60 * 1000, function() safeUpdate() end, true)
   local cm = tonumber(Properties["Cloud Poll Interval (min)"]) or 20
   cloudTimer = C4:SetTimer(cm * 60 * 1000, function() pollCloud() end, true)
 end
@@ -1346,10 +1375,10 @@ function OnDriverLateInit()
   loadRooms(true)
   startTimers()
   if presenceTimer then presenceTimer:Cancel() end
-  presenceTimer = C4:SetTimer(1000, function() presenceTick() end, true)
+  presenceTimer = C4:SetTimer(1000, function() safePresenceTick() end, true)
   startPresenceServer()
   pollCloud()
-  C4:SetTimer(15000, function() Update() end, false)   -- first pass after loads settle
+  C4:SetTimer(15000, function() safeUpdate() end, false)   -- first pass after loads settle
 end
 
 function OnPropertyChanged(name)
@@ -1360,7 +1389,7 @@ function OnPropertyChanged(name)
   elseif name == "Cloud Cover Source" then pollCloud()
   elseif name == "Presence Port" then startPresenceServer() end
   if name ~= "Status" and name ~= "Driver Version" and name ~= "Presence" then
-    C4:SetTimer(2000, function() Update() end, false)
+    C4:SetTimer(2000, function() safeUpdate() end, false)
   end
 end
 
