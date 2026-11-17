@@ -8,6 +8,9 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      # The DLS tests pin local-clock times (sunrise, DST, bed time); the controller runs in this TZ.
+      TZ: America/New_York
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
