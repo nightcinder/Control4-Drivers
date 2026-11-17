@@ -105,4 +105,20 @@ t.test("4: occupied on_daylight presence room at 21:00 uses the daylight target,
   t.ok(levels(K, 10) >= 1, "target level sent, not the presence nightLevel of 1")
 end)
 
+t.test("5: off enforcement retries a plain room while Presence Lighting is On", function()
+  sim.reset(1)
+  local ok = sim.load_driver(DRV, {
+    xml = XML,
+    properties = { ["Enabled"] = "On", ["Update Interval (min)"] = "1", ["Ramp Time (sec)"] = "90", ["Override Hold (min)"] = "120", ["Rooms JSON"] = ROOMS, ["Presence"] = "Home", ["Presence Lighting"] = "On", ["Latitude"] = "51.5", ["Longitude"] = "-0.1" },
+    start_ms = local_sec(22, 28) * SEC,
+    before = function(s) s.set_var(U, VAR, "40") end,
+  })
+  t.ok(ok, "load: " .. tostring(sim.errors[1]))
+  sim.advance(2 * 60 * SEC + 10 * SEC)         -- 22:30:10, scheduled off sent
+  t.ok(levels(U, 0) >= 1, "scheduled off sent")
+  sim.sent = {}
+  sim.advance(3 * 60 * SEC)                    -- past offFadeUntil; a dropped off is re-sent once
+  t.ok(levels(U, 0) >= 1, "enforcement retried the off")
+end)
+
 t.finish("dls-audit-regressions")
