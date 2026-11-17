@@ -1166,8 +1166,9 @@ function Update()
     end
   end
   runCurtains(now, lat, lon)
+  local cp = cloudNow()
   setStatus(presenceStatusPrefix() .. string.format("OK %s | lights driven: %d | rooms held: %d | lights held: %d | cloud: %s",
-    os.date("%H:%M", now), n, held, lightsHeld, cloudPct and (math.floor(cloudPct) .. "%") or "n/a"))
+    os.date("%H:%M", now), n, held, lightsHeld, cp and (math.floor(cp) .. "%") or "n/a"))
 end
 
 ---------------------------------------------------------------------------

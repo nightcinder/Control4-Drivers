@@ -121,4 +121,68 @@ t.test("OnDriverDestroyed stops the timers", function()
   t.eq(#sim.sent, 0, "no sends after destroy")
 end)
 
+t.test("cloud cover is read from Open-Meteo and goes stale after 6 h", function()
+  sim.reset(1)
+  load('[{"name":"Office","on":"06:00","off":"22:30","lights":[{"id":337,"kind":"lutron"}]}]', 12, 0, { [U] = 40 })
+  -- startup asks once in OnDriverLateInit and again for Latitude, Longitude and Cloud Cover Source;
+  -- only the last ticket is accepted, so answer all four.
+  for _ = 1, 4 do sim.queue_http("open%-meteo", '{"current":{"cloud_cover":100}}', 200) end
+  sim.advance(3 * SEC)
+  t.ok(tostring(Properties["Status"]):find("cloud: 100%%") ~= nil, "status shows the cloud reading")
+  sim.advance(7 * 60 * 60 * SEC)
+  t.ok(tostring(Properties["Status"]):find("cloud: n/a") ~= nil, "status drops a reading older than 6 h")
+end)
+
+t.test("DST changeover: the wake ramp uses local clock minutes", function()
+  sim.reset(1)
+  local ok = sim.load_driver(DRV, {
+    xml = XML,
+    properties = { ["Enabled"] = "On", ["Update Interval (min)"] = "1", ["Ramp Time (sec)"] = "90", ["Rooms JSON"] = '[{"name":"Upstairs","off":"22:30","wake":{"enabled":true,"at":"sunrise-15","stop":"sunrise+30","ramp_min":30,"level":35,"days":["sun"]},"lights":[{"id":337,"kind":"lutron"}]}]', ["Latitude"] = "40", ["Longitude"] = "-75" },
+    start_ms = (os.time({ year = 2026, month = 3, day = 8, hour = 6, min = 0 }) - EPOCH) * SEC,
+    before = function(s) s.set_var(U, VAR, "0") end,
+  })
+  t.ok(ok, "load: " .. tostring(sim.errors[1]))
+  sim.sent = {}
+  sim.advance(54 * 60 * SEC)                   -- 06:54, before the 07:10 wake start (old DST bug: 06:10)
+  t.eq(#sim.sent, 0, "no wake before the local sunrise window")
+  sim.advance(2 * 60 * 60 * SEC)
+  local n = 0
+  for _, s in ipairs(sim.sent) do if s.id == U and s.cmd == "RAMP_TO_LEVEL" and s.params.LEVEL > 0 then n = n + 1 end end
+  t.ok(n >= 1, "wake levels during the window")
+end)
+
+t.test("presence server buffers a split line and rejects an oversized one", function()
+  sim.reset(1)
+  local replies = {}
+  C4.ServerSend = function(_, handle, data) replies[#replies + 1] = tostring(data) end
+  C4.ServerCloseClient = function(_, handle) end
+  local ok = sim.load_driver(DRV, {
+    xml = XML,
+    properties = { ["Enabled"] = "On", ["Rooms JSON"] = '[{"name":"Kitchen","key":"Kitchen","presence":{"follow":true},"lights":[{"id":101,"kind":"lutron"}]}]', ["Presence Token"] = "tok", ["Presence Port"] = "0" },
+  })
+  t.ok(ok, "load: " .. tostring(sim.errors[1]))
+  replies = {}
+  sim.call("OnServerDataIn", 1, "OCC Kitchen 1 esp to", "10.0.0.5", 50000)
+  t.eq(#replies, 0, "a partial line waits")
+  sim.call("OnServerDataIn", 1, "k\r\n", "10.0.0.5", 50000)
+  t.ok(table.concat(replies):find("OK") ~= nil, "the completed line is accepted")
+  replies = {}
+  sim.call("OnServerDataIn", 1, string.rep("X", 130) .. "\r\n", "10.0.0.5", 50000)
+  t.ok(table.concat(replies):find("ERR SYNTAX") ~= nil, "oversized line rejected")
+end)
+
+t.test("a normal scene sets its levels and its hold expires", function()
+  sim.reset(1)
+  load('[{"name":"Upstairs","on":"18:00","off":"22:30","scenes":{"Evening":{"levels":{"337":50},"hold_min":5}},"lights":[{"id":337,"kind":"lutron"}]}]', 19, 0, { [U] = 40 })
+  sim.advance(70 * SEC)
+  sim.sent = {}
+  sim.exec("ApplyScene", { ROOM = "Upstairs", SCENE = "Evening" })
+  t.ok(sent(U, "RAMP_TO_LEVEL", 50) or sent(U, "RAMP_TO_LEVEL", 51), "scene level sent")
+  sim.sent = {}
+  sim.advance(6 * 60 * SEC)                    -- hold_min 5, then the schedule resumes
+  local drove = false
+  for _, s in ipairs(sim.sent) do if s.id == U and s.cmd == "RAMP_TO_LEVEL" and s.params.LEVEL > 60 then drove = true end end
+  t.ok(drove, "schedule drove the light after the scene hold")
+end)
+
 t.finish("dls-features")

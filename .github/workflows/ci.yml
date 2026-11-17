@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Lua 5.4
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lua5.4
+          sudo ln -s "$(command -v lua5.4)" /usr/local/bin/lua
+          lua -v
+
+      - name: Driver pre-flight checks
+        run: python tools/check_c4z.py --all
+
+      - name: Checker regression tests
+        run: python tools/test_check_c4z.py
+
+      - name: Smoke every driver
+        run: python tools/c4sim/run.py smoke all
+
+      - name: Simulator tests
+        run: python tools/c4sim/run.py test all

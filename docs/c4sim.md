@@ -11,6 +11,8 @@ Logic-only simulator for driver Lua. Code is in `tools/c4sim/`.
 Output is terse: `ok <dir>`, `ERR <dir>: <first error line>`, `warn <dir>: ...`.
 Exit code is non-zero on any ERR or failed test.
 
+CI (`.github/workflows/ci.yml`) runs `check_c4z --all`, the checker tests, `smoke all` and `test all` on every push.
+
 ## Build hook
 
 `tools/build_c4z.py` runs the smoke for the driver, then the whole test suite, after its pre-flight checks. The

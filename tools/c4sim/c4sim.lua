@@ -669,7 +669,7 @@ end
 local function http_request(method, url, headers, body, callback, context)
   local req = { method = method, url = tostring(url), headers = headers, body = body, t = sim.now_ms }
   sim.http[#sim.http + 1] = req
-  sim._http_pending[#sim._http_pending + 1] = { req = req, callback = callback, context = context }
+  sim._http_pending[#sim._http_pending + 1] = { req = req, callback = callback, context = context, ticket = #sim.http }
   return #sim.http
 end
 
@@ -695,7 +695,13 @@ function sim._pump_http()
       add_warn("no queued http response for " .. job.req.method .. " " .. job.req.url)
       err = "no sim response queued"
     end
-    if job.callback then xcall("http callback", job.callback, job.context, data, code, headers or {}, err) end
+    if job.callback then
+      xcall("http callback", job.callback, job.context, data, code, headers or {}, err)
+    else
+      -- DriverWorks delivers a url* call made without a callback to the driver's global ReceivedAsync.
+      local f = sim.env and sim.env.ReceivedAsync
+      if type(f) == "function" then xcall("ReceivedAsync", f, job.ticket, data, code, headers or {}, err) end
+    end
   end
 end
 

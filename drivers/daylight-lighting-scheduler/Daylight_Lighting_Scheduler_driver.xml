@@ -1,11 +1,11 @@
 <devicedata>
-  <version>21</version>
+  <version>22</version>
   <manufacturer>Nick Adamany</manufacturer>
   <name>Daylight Lighting Scheduler</name>
   <model>DLS</model>
   <creator>Nick Adamany</creator>
   <created>10/19/2026 7:30 PM</created>
-  <modified>11/17/2026 12:51 AM</modified>
+  <modified>11/17/2026 01:07 AM</modified>
   <control>lua_gen</control>
   <controlmethod>other</controlmethod>
   <driver>DriverWorks</driver>
