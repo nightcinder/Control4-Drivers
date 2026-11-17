@@ -121,4 +121,37 @@ t.test("5: off enforcement retries a plain room while Presence Lighting is On", 
   t.ok(levels(U, 0) >= 1, "enforcement retried the off")
 end)
 
+t.test("6: the lux closed loop reaches per-light targets", function()
+  sim.reset(1)
+  local rooms = '[{"name":"Office","on":"18:00","off":"22:30","lux":{"dev":900,"var":1000,"target":200},"lights":[{"id":337,"kind":"lutron","max_level":80}]}]'
+  local ok = sim.load_driver(DRV, {
+    xml = XML,
+    properties = { ["Enabled"] = "On", ["Update Interval (min)"] = "1", ["Ramp Time (sec)"] = "90", ["Rooms JSON"] = rooms, ["Latitude"] = "51.5", ["Longitude"] = "-0.1" },
+    start_ms = local_sec(19, 0) * SEC,
+    before = function(s) s.set_var(U, VAR, "0") s.set_var(900, 1000, "2000") end,
+  })
+  t.ok(ok, "load: " .. tostring(sim.errors[1]))
+  sim.advance(4 * 60 * SEC)
+  local last
+  for _, e in ipairs(sim.sent) do
+    if e.id == U and e.cmd == "RAMP_TO_LEVEL" then last = e.params.LEVEL end
+  end
+  t.ok(last ~= nil and last <= 10, "lux correction applied to the per-light target (last " .. tostring(last) .. ")")
+end)
+
+t.test("7: a manual change above an upward ramp is detected", function()
+  sim.reset(1)
+  local rooms = '[{"name":"Upstairs","on":"18:00","off":"22:30","max_level":40,"lights":[{"id":337,"kind":"lutron"}]}]'
+  local ok = sim.load_driver(DRV, {
+    xml = XML,
+    properties = { ["Enabled"] = "On", ["Update Interval (min)"] = "1", ["Ramp Time (sec)"] = "90", ["Rooms JSON"] = rooms, ["Latitude"] = "51.5", ["Longitude"] = "-0.1" },
+    start_ms = local_sec(19, 0) * SEC,
+    before = function(s) s.set_var(U, VAR, "0") end,
+  })
+  t.ok(ok, "load: " .. tostring(sim.errors[1]))
+  sim.advance(20 * SEC)                        -- 19:00:15 first tick sends 0 -> 40
+  sim.fire_var(U, VAR, "90")                   -- hand far above the ramp target, inside the window
+  t.ok(type(sim.persist.holds) == "table" and sim.persist.holds.Upstairs ~= nil, "manual change held")
+end)
+
 t.finish("dls-audit-regressions")
