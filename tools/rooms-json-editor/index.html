@@ -484,7 +484,20 @@ textarea { width: 100%; font-family: var(--font-mono); font-size: 12.5px; line-h
 
     var br = [];
     br.push(row('Max brightness', 'Caps every light in this room. Blank means no cap.', numControl(room, 'max_level', { blank: true, unit: '%' })));
-    br.push(row('Minimum brightness', 'Lowest level the driver sets in this room. Blank = 5%.', numControl(room, 'min_level', { blank: true, ph: '5', unit: '%' })));
+    br.push(row('Minimum brightness', 'Lowest level the driver sets in this room. Blank = 5%. 0 lets strong daylight take the room fully off.', numControl(room, 'min_level', { blank: true, ph: '5', unit: '%' })));
+    br.push(row('Daylight cut-off', 'Turns the room fully off when the clear-sky daylight index reaches this. Needs Minimum brightness 0. Blank = never.', (function () {
+      var f = el('span', 'field'); var i = document.createElement('input');
+      i.type = 'number'; i.min = '0'; i.max = '100'; i.step = '5';
+      if (room.daylight_off !== undefined) { i.value = Math.round(room.daylight_off * 100); }
+      i.addEventListener('input', function () {
+        var v = i.value.trim();
+        if (v === '') { delete room.daylight_off; sync(); return; }
+        var n = Number(v); if (isNaN(n)) { return; }
+        room.daylight_off = Math.max(0, Math.min(100, n)) / 100; sync();
+      });
+      f.appendChild(i); f.appendChild(el('span', 'unit', '%'));
+      return f;
+    })()));
     br.push(row('Default window strength', 'Used by lights with no windows listed', numControl(room, 'window_gain', { pct: true, blank: true, unit: '%' })));
     if (room.facing_deg !== undefined) { br.push(row('Room faces', null, selectControl(COMPASS, room.facing_deg, function (v) { room.facing_deg = v; }))); }
     card.appendChild(group('Brightness', br));
