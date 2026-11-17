@@ -13,9 +13,10 @@ Exit code is non-zero on any ERR or failed test.
 
 ## Build hook
 
-`tools/build_c4z.py` runs the smoke and `tests/<name>_test.lua` (name with `_` for `-`) after its pre-flight checks.
-Success prints at most two lines. An ERR or failed test refuses the build. No `lua` means one "skipped" line and no
-refusal. `C4SIM_SKIP=1` bypasses it.
+`tools/build_c4z.py` runs the smoke for the driver, then the whole test suite, after its pre-flight checks. The
+whole suite (not only `tests/<name>_test.lua`) is used because some drivers keep their tests under a group prefix:
+the DLS tests are `dls_*`, so a name-based lookup silently skipped all of them. Success prints at most three lines.
+An ERR or failed test refuses the build. No `lua` means one "skipped" line and no refusal. `C4SIM_SKIP=1` bypasses it.
 
 ## Write a test
 
@@ -56,7 +57,8 @@ Logs: `sim.sent`, `sim.props`, `sim.events`, `sim.logs`, `sim.errors`, `sim.warn
 - CreateNetworkConnection/NetConnect/SendToNetwork/NetDisconnect/CreateServer/DestroyServer: recorded in `sim.net`.
 - SendDataToUI, UpdatePropertyList (recorded), GetControllerNetworkAddress (returns `127.0.0.1`).
 - Each of these works as `C4:Name(...)` and as a global.
-- `os.time()` in a driver follows the simulated clock (2026-01-01 UTC plus `advance` time).
+- `os.time()` and `os.date()` in a driver follow the simulated clock (2026-01-01 UTC plus `advance` time); `os.date`
+  with no argument uses the simulated time, so a test does not need its own override.
 - `pairs(Properties)` works under Lua 5.4 (`__pairs`).
 - `require("drivers-common-public.*")` loads a stub when no real file is on the path. Calls return nil, and smoke
   prints `warn <dir>: stubbed common-library module X`.
