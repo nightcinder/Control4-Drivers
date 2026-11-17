@@ -104,10 +104,10 @@ def event_matches(e, names, wanted):
     return names.get(e.get("camera")) in wanted
 
 
-def arrival():
+def arrival(payload):
     req = urllib.request.Request(
         ARRIVAL_URL,
-        data=b"{}",
+        data=json.dumps(payload).encode(),
         headers={"X-Arrival-Token": ARRIVAL_TOKEN, "Content-Type": "application/json"},
         method="POST",
     )
@@ -188,7 +188,8 @@ def main():
                     continue
                 last_fire = time.time()
                 try:
-                    res = arrival()
+                    res = arrival({"reason": "protect-garage", "camera": names.get(e["camera"]),
+                                   "event_start": e["start"], "score": e.get("score")})
                     log(
                         f"arrival POST: {res} ({names.get(e['camera'])} vehicle {iso(e['start'])})"
                     )

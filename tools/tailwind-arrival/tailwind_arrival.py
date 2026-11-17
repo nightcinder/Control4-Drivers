@@ -80,10 +80,10 @@ def doors():
     return out
 
 
-def arrival():
+def arrival(payload):
     req = urllib.request.Request(
         ARRIVAL_URL,
-        data=b"{}",
+        data=json.dumps(payload).encode(),
         headers={"X-Arrival-Token": ARRIVAL_TOKEN, "Content-Type": "application/json"},
         method="POST",
     )
@@ -137,7 +137,7 @@ def main():
                             continue
                         last_fire = now
                         try:
-                            res = arrival()
+                            res = arrival({"reason": "tailwind-" + ("open" if open_edge else "close"), "door": name})
                             log(f"arrival POST ({'open' if open_edge else 'close'} edge): {res}")
                         except Exception as e:
                             log(f"arrival POST failed: {type(e).__name__}: {e}")
