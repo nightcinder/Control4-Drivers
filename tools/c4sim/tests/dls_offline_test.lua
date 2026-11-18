@@ -26,7 +26,7 @@ os.date = function(fmt, when)
 end
 
 local ROOMS = '[{"name":"Kitchen","key":"Kitchen","min_level":60,"max_level":60,' ..
-  '"presence":{"follow":true,"offDelaySec":180,"fadeInSec":2,"fadeOutSec":30,"nightLevel":20,"sources":["esp"]},' ..
+  '"presence":{"follow":true,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5,"nightLevel":20,"sources":["esp"]},' ..
   '"lights":[{"id":101,"kind":"lutron"}]}]'
 
 local replies = {}
@@ -46,7 +46,8 @@ end
 
 local function start()
   local props = { ["Presence Port"] = PORT, ["Presence Token"] = TOK, ["Rooms JSON"] = ROOMS,
-    ["Presence"] = "Home", ["Latitude"] = "51.5", ["Longitude"] = "-0.1" }
+    ["Presence"] = "Home", ["Latitude"] = "51.5", ["Longitude"] = "-0.1",
+    ["Light Timeout (sec)"] = "12" }
   local ok = sim.load_driver(DRV, {
     xml = XML, properties = props, start_ms = local_sec(12, 0) * SEC,
     before = function(s) s.set_var(K, VAR, "0") end,
@@ -60,8 +61,10 @@ end
 t.test("a light that never confirms is reported once and listed", function()
   start()
   send(ln("OCC", "Kitchen", "1", "esp", TOK))       -- commands the light to the room target
+  sim.set_var(K, VAR, "60")                          -- first command confirmed: the light works
   sim.advance(3 * SEC)
-  sim.advance(95 * SEC)                              -- past the 90 s timeout, light never changed
+  send(ln("OCC", "Kitchen", "0", "clear", TOK))      -- fade to 0; the light now goes silent
+  sim.advance(45 * SEC)                              -- off delay + fade + 12 s timeout
   t.ok(fired("Light Not Responding"), "Light Not Responding fired")
   t.eq(sim._store["Offline Lights"], "101", "Offline Lights names the light")
 end)
@@ -69,9 +72,12 @@ end)
 t.test("recovery clears the alert and fires once", function()
   start()
   send(ln("OCC", "Kitchen", "1", "esp", TOK))
-  sim.advance(98 * SEC)
+  sim.set_var(K, VAR, "60")
+  sim.advance(3 * SEC)
+  send(ln("OCC", "Kitchen", "0", "clear", TOK))
+  sim.advance(45 * SEC)
   t.ok(fired("Light Not Responding"), "still flagged while silent")
-  sim.set_var(K, VAR, "60")                          -- the light obeys (room target with min_level 60)
+  sim.set_var(K, VAR, "0")                           -- the light obeys the fade
   sim.advance(2 * SEC)
   t.ok(fired("Light Responding Again"), "Light Responding Again fired")
   t.eq(sim._store["Offline Lights"], "", "Offline Lights cleared")

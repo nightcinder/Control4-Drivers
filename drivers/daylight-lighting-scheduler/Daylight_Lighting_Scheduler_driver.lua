@@ -406,6 +406,9 @@ local function checkLightConfirmations(now)
   for _, room in ipairs(rooms) do
     for _, light in ipairs(room.lights or {}) do
       local p = light.pending
+      if p and math.abs(math.floor(curLevel(light) + 0.5) - p.level) <= 2 then light.fbSeen = true end
+      -- never flag a light that has never confirmed anything: that is a wiring problem, not an outage
+      if p and not light.fbSeen then p = nil light.pending = nil end
       if not p and light.offline and light.rampTo
          and math.abs(math.floor(curLevel(light) + 0.5) - light.rampTo) <= 2 then
         light.offline = false                                 -- it took the last command after all

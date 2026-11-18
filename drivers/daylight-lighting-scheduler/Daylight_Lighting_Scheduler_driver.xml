@@ -1,11 +1,11 @@
 <devicedata>
-  <version>27</version>
+  <version>28</version>
   <manufacturer>Nick Adamany</manufacturer>
   <name>Daylight Lighting Scheduler</name>
   <model>DLS</model>
   <creator>Nick Adamany</creator>
   <created>10/19/2026 7:30 PM</created>
-  <modified>11/17/2026 08:07 PM</modified>
+  <modified>11/17/2026 08:09 PM</modified>
   <control>lua_gen</control>
   <controlmethod>other</controlmethod>
   <driver>DriverWorks</driver>
@@ -52,12 +52,16 @@
       </property>
       <property>
         <name>Presence Off Delay (sec)</name>
-        <type>NUMBER</type>
+        <type>RANGED_INTEGER</type>
+        <minimum>10</minimum>
+        <maximum>3600</maximum>
         <default>180</default>
       </property>
       <property>
         <name>Light Timeout (sec)</name>
-        <type>NUMBER</type>
+        <type>RANGED_INTEGER</type>
+        <minimum>10</minimum>
+        <maximum>600</maximum>
         <default>90</default>
       </property>
       <property>
