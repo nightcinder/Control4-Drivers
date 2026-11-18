@@ -1,7 +1,15 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.0
+  DRIVER_VERSION: 1.16.3
 
+  1.16.3: offline-alert hardening. A light that confirmed before a reload can still be flagged after it
+  (the confirmation is remembered in PersistData); a repeated identical command no longer pushes the timeout
+  out, so a dead light is caught at a 1-minute update interval; a hand on the dimmer clears the outstanding
+  expectation instead of raising a false Light Not Responding; and the offline count is appended to every
+  Status line, so the next update cannot wipe it.
+  1.16.2: presence UI polish. The room picker fails closed when the selected room disappears from the Rooms
+  JSON (it used to retarget edits at the first room), the list and values refresh after every reload, and the
+  read-only Presence Room State follows the live state.
   1.16.0: Presence Lighting Off now releases presence-driven rooms back to the schedule (see
   docs/presence-lighting-off.md). Manual holds and per-light holds survive; a Room Vacant event fires for each
   room released, so automation sees the hand-back.
@@ -78,7 +86,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.0"
+DRIVER_VERSION = "1.16.3"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -106,7 +114,22 @@ local function rad(d) return d * math.pi / 180 end
 local function deg(r) return r * 180 / math.pi end
 local atan2 = math.atan2 or function(y, x) return math.atan(y, x) end
 
-local function setStatus(s) C4:UpdateProperty("Status", s) end
+local function offlineCount()
+  local n = 0
+  for _, room in ipairs(rooms or {}) do
+    for _, l in ipairs(room.lights or {}) do if l.offline then n = n + 1 end end
+  end
+  return n
+end
+
+local function setStatus(s)
+  local n = offlineCount()                                    -- 1.16.3: never lose the offline note to the next writer
+  s = tostring(s)
+  if n > 0 and not s:find("not responding", 1, true) then
+    s = s .. " | " .. n .. " light(s) not responding"
+  end
+  C4:UpdateProperty("Status", s)
+end
 
 -- Programming events (XML <events>). DriverWorks events carry no parameters, so the
 -- room/detail rides on the read-only "Last Event" property.
@@ -413,7 +436,11 @@ local function sendLevel(light, level, ms)
   light.fbLast = light.rampFrom
   light.ignoreUntil = os.time() + math.ceil(ms / 1000) + 10
   -- 1.14.0: did the light actually take the command? Checked once a second in the presence tick.
-  light.pending = { level = lvl, deadline = os.time() + (tonumber(Properties["Light Timeout (sec)"]) or 90) }
+  -- 1.16.3: re-commanding the same target keeps the original deadline, otherwise a dead light that is
+  -- re-commanded every update tick would never time out.
+  if not (light.pending and math.abs(light.pending.level - lvl) <= 2) then
+    light.pending = { level = lvl, deadline = os.time() + (tonumber(Properties["Light Timeout (sec)"]) or 90) }
+  end
   dbg("level", tostring(light.id), tostring(math.floor(level + 0.5)), "ms", tostring(ms))
 end
 
@@ -445,7 +472,13 @@ local function checkLightConfirmations(now)
   for _, room in ipairs(rooms) do
     for _, light in ipairs(room.lights or {}) do
       local p = light.pending
-      if p and math.abs(math.floor(curLevel(light) + 0.5) - p.level) <= 2 then light.fbSeen = true end
+      if p and math.abs(math.floor(curLevel(light) + 0.5) - p.level) <= 2 and not light.fbSeen then
+        light.fbSeen = true                                        -- 1.16.3: persisted, so a reload keeps it
+        if type(PersistData) == "table" then
+          PersistData.lightSeen = type(PersistData.lightSeen) == "table" and PersistData.lightSeen or {}
+          PersistData.lightSeen[tostring(light.id)] = true
+        end
+      end
       -- never flag a light that has never confirmed anything: that is a wiring problem, not an outage
       if p and not light.fbSeen then p = nil light.pending = nil end
       if not p and light.offline and light.rampTo
@@ -483,7 +516,7 @@ local function checkLightConfirmations(now)
     end
     table.sort(ids)
     C4:UpdateProperty("Offline Lights", table.concat(ids, ", "))
-    setStatus(#ids > 0 and ("Running (" .. #ids .. " light(s) not responding)") or "Running")
+    setStatus("Running")                                       -- 1.16.3: show the note immediately, not at the next tick
   end
 end
 
@@ -1402,6 +1435,7 @@ function OnWatchedVariableChanged(idDevice, idVariable, strValue)
   elseif not room.pr or math.abs(v) <= OWN_BAND then
     return                                   -- never ramped (baseline 0 for presence rooms)
   end
+  light.pending = nil                              -- 1.16.3: a manual change explains the mismatch
   if room.pr then return prManual(room, light, v, now) end
   -- 1.11.3: a manual off inside the on-window stays off until the next on edge, not just until the hold expires
   if v == 0 and room.wasInWindow then light.offHold = true
@@ -1495,6 +1529,8 @@ local function loadRooms(closeGate)
           if u and u > os.time() then light.overrideUntil = u end   -- 1.11.6: the hold had not expired when the driver reloaded
           if sh.o == true then light.offHold = true end
         end
+        if type(PersistData) == "table" and type(PersistData.lightSeen) == "table"
+           and PersistData.lightSeen[tostring(id)] then light.fbSeen = true end
         table.insert(room.lights, light)
         lightIndex[id] = room
         C4:UnregisterVariableListener(id, LIGHT_LEVEL_VAR)
@@ -1556,6 +1592,7 @@ local function loadRooms(closeGate)
   resetOccupancy()
   presenceWarn = table.concat(warns, "; ")
   dbg("rooms loaded", tostring(#rooms), "curtains", tostring(#curtains))
+  C4:UpdateProperty("Offline Lights", "")      -- 1.16.3: the list is rebuilt from the live light objects
   refreshPresenceRoomList()                    -- 1.16.1: a JSON edit can rename or delete the selected room
   syncPresenceUI()
 end
