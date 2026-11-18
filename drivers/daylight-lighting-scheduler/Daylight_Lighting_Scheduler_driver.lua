@@ -62,7 +62,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.11.10"
+DRIVER_VERSION = "1.12.0"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -91,6 +91,14 @@ local function deg(r) return r * 180 / math.pi end
 local atan2 = math.atan2 or function(y, x) return math.atan(y, x) end
 
 local function setStatus(s) C4:UpdateProperty("Status", s) end
+
+-- Programming events (XML <events>). DriverWorks events carry no parameters, so the
+-- room/detail rides on the read-only "Last Event" property.
+local function fire(name, detail)
+  if detail then C4:UpdateProperty("Last Event", tostring(detail)) end
+  local ok, err = pcall(function() C4:FireEvent(name) end)
+  if not ok then dbg("FireEvent failed", name, tostring(err)) end
+end
 
 local function parseHM(s)
   local h, m = tostring(s or ""):match("^(%d+):(%d+)$")
@@ -541,6 +549,7 @@ local function prSetOcc(room, now, newOcc, src, immediate)
     if not was then
       if pr.state == PR_VACANT then
         pr.state = PR_OCCUPIED                                      -- T1 / T2
+        fire("Room Occupied", room.name)
         presenceDrive(room, now)
       elseif pr.state == PR_FADING then
         pr.state = PR_OCCUPIED                                      -- T6
@@ -608,6 +617,7 @@ local function prReconcile(now)
           prStartFade(room, now)
         else
           pr.state = PR_VACANT
+          fire("Room Vacant", room.name)
           for _, l in ipairs(room.lights) do l.offHold = nil end   -- no off hold outlives a vacancy
         end
       end
@@ -641,6 +651,7 @@ local function prManual(room, light, v, now)
   end
   local holdSec = (tonumber(Properties["Override Hold (min)"]) or 120) * 60
   light.overrideUntil = math.max(light.overrideUntil or 0, now + holdSec)
+  fire("Lighting Held", room.name)
   dbg("presence manual change, light hold", room.name, tostring(light.id))
   prSave()
 end
@@ -1487,6 +1498,7 @@ local function setPresence(state)
   presenceAway = away
   if PersistData then PersistData.presenceAway = away end
   C4:UpdateProperty("Presence", away and "Away" or "Home")
+  fire(away and "Presence Away" or "Presence Home", away and "Away" or "Home")
   local now = os.time()
   if away then
     for _, r in ipairs(rooms) do
