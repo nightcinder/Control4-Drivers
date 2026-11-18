@@ -60,7 +60,7 @@ local function last_event_prop()
 end
 
 local function start(keep_events)
-  local props = { ["Presence Port"] = PORT, ["Presence Token"] = TOK, ["Rooms JSON"] = ROOMS,
+  local props = { ["Presence Lighting"] = "On", ["Presence Port"] = PORT, ["Presence Token"] = TOK, ["Rooms JSON"] = ROOMS,
     ["Presence"] = "Home", ["Latitude"] = "51.5", ["Longitude"] = "-0.1" }
   local ok = sim.load_driver(DRV, {
     xml = XML, properties = props, start_ms = local_sec(12, 0) * SEC,

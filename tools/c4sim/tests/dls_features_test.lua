@@ -35,7 +35,7 @@ local function any_sent(id, cmd)
 end
 
 local function load(rooms, h, m, vars, extra)
-  local properties = { ["Enabled"] = "On", ["Update Interval (min)"] = "1", ["Ramp Time (sec)"] = "90", ["Rooms JSON"] = rooms, ["Latitude"] = "40", ["Longitude"] = "-75" }
+  local properties = { ["Enabled"] = "On", ["Presence Lighting"] = "On", ["Update Interval (min)"] = "1", ["Ramp Time (sec)"] = "90", ["Rooms JSON"] = rooms, ["Latitude"] = "40", ["Longitude"] = "-75" }
   for k, v in pairs(extra or {}) do properties[k] = v end
   local ok = sim.load_driver(DRV, {
     xml = XML,
