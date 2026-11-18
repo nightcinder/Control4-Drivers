@@ -1,7 +1,7 @@
 # DLS presence lighting (driver 1.10.1) - UNTESTED
 
 Status: first slice written, not yet run against any hardware. Nothing changes until Nick sets
-**Presence Lighting = On**. With it Off, the driver behaves exactly as 1.7.0.
+**Presence Lighting = On**. With it Off, presence stops driving: every follow room is released back to the normal DLS schedule (manual holds survive, per-light holds survive), and no presence ramp of any kind is sent — see docs/presence-lighting-off.md.
 
 ## What it does (when Presence Lighting = On)
 
