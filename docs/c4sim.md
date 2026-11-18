@@ -6,17 +6,24 @@ Logic-only simulator for driver Lua. Code is in `tools/c4sim/`.
 
     python tools/c4sim/run.py smoke all
     python tools/c4sim/run.py smoke room-light-helper
+    python tools/c4sim/run.py commands all
     python tools/c4sim/run.py test all
 
 Output is terse: `ok <dir>`, `ERR <dir>: <first error line>`, `warn <dir>: ...`.
 Exit code is non-zero on any ERR or failed test.
 
-CI (`.github/workflows/ci.yml`) runs `check_c4z --all`, the checker tests, `smoke all` and `test all` on every push.
+`commands` calls every `<command>` defined in driver.xml with typed dummy parameters (`"x"` for strings, `1` for
+numbers, `true` for booleans) after load. This catches a handler that throws on a parameter shape the unit tests
+never used. Drivers whose ExecuteCommand comes from `drivers-common-public/global/handlers.lua` print `skip`.
+
+CI (`.github/workflows/ci.yml`) runs `check_c4z --all`, the checker tests, `smoke all`, `commands all` and `test all`
+on every push.
 The suite assumes `TZ=America/New_York` (the controller's timezone): several DLS tests pin local-clock times. CI sets it.
 
 ## Build hook
 
-`tools/build_c4z.py` runs the smoke for the driver, then the whole test suite, after its pre-flight checks. The
+`tools/build_c4z.py` runs the smoke and the command pump for the driver, then the whole test suite, after its
+pre-flight checks. The
 whole suite (not only `tests/<name>_test.lua`) is used because some drivers keep their tests under a group prefix:
 the DLS tests are `dls_*`, so a name-based lookup silently skipped all of them. Success prints at most three lines.
 An ERR or failed test refuses the build. No `lua` means one "skipped" line and no refusal. `C4SIM_SKIP=1` bypasses it.
@@ -69,6 +76,6 @@ Logs: `sim.sent`, `sim.props`, `sim.events`, `sim.logs`, `sim.errors`, `sim.warn
 ## Known limits
 
 - Logic only: no Composer wiring, bindings, or device behaviour.
-- Control4's Lua runtime is older than 5.4. Code targets 5.1 and 5.4; the tests were run under 5.4.
+- Control4's Lua runtime is Lua 5.1. Code targets 5.1 and 5.4; the tests run under 5.4, and `check_c4z.py` compiles every driver with `luac5.1` when it is installed (CI installs it).
 - Url and network argument orders follow the usual DriverWorks layout. Check the SDK before relying on exact signatures.
 - driver.xml is the sibling file unless `opts.xml` is given.
