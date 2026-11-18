@@ -378,5 +378,56 @@ class RobotCases(unittest.TestCase):
         self.assertTrue(r.docked(17.0))
 
 
+class StatusViewTest(unittest.TestCase):
+    """GET /status and /status.json (read-only HTML view of presence state)."""
+
+    def setUp(self):
+        self.tmp = tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, newline="")
+        self.tmp.close()
+        self._old_log = dp.EVENT_LOG
+        self._old_state = dp._last_state
+        self._old_force = dp._force_home_until
+        dp.EVENT_LOG = self.tmp.name
+        dp._last_state = "AWAY"
+        dp._force_home_until = 0.0
+        dp.record("state", value="AWAY")
+        dp.record("source", person="nick", source="unifi", value="false")
+        self.srv = dp.ThreadingHTTPServer(("127.0.0.1", 0), dp._FreshHandler)
+        import threading
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.srv.server_address[1]}"
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+        dp.EVENT_LOG = self._old_log
+        dp._last_state = self._old_state
+        dp._force_home_until = self._old_force
+        os.unlink(self.tmp.name)
+
+    def _get(self, path):
+        import urllib.request
+        with urllib.request.urlopen(self.base + path, timeout=5) as r:
+            return r.status, r.read().decode()
+
+    def test_snapshot_carries_state_and_events(self):
+        snap = dp._status_snapshot()
+        self.assertEqual(snap["state"], "AWAY")
+        self.assertEqual(snap["events"][0]["source"], "unifi")
+        self.assertIn("sources", snap)
+
+    def test_status_html_renders_state(self):
+        code, body = self._get("/status")
+        self.assertEqual(code, 200)
+        self.assertIn("AWAY", body)
+        self.assertIn("Recent events", body)
+        self.assertIn("unifi", body)
+
+    def test_status_json(self):
+        code, body = self._get("/status.json")
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(body)["state"], "AWAY")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -367,6 +367,77 @@ def freshness():
     return out
 
 
+# ---------------------------------------------------------------- status view
+def _tail_events(n=25):
+    """Most recent EVENT_LOG rows, newest first. Empty when logging is off."""
+    if not EVENT_LOG or not os.path.exists(EVENT_LOG):
+        return []
+    try:
+        with _fresh_lock, open(EVENT_LOG, newline="", encoding="utf-8") as fh:
+            rows = list(csv.reader(fh))
+    except Exception:
+        return []
+    if len(rows) < 2:
+        return []
+    hdr = rows[0]
+    out = [dict(zip(hdr, r)) for r in rows[1:][-n:]]
+    out.reverse()
+    return out
+
+
+def _status_snapshot():
+    now = time.time()
+    return {
+        "ok": True,
+        "state": _last_state,
+        "forced_until": _force_home_until if _force_home_until > now else None,
+        "sources": freshness(),
+        "events": _tail_events(25),
+        "generated": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)),
+    }
+
+
+_STATUS_CSS = """
+body{font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;background:#11141a;color:#e6e9ef;margin:0;padding:24px}
+h1{font-size:18px;margin:0 0 4px}h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:#8b95a7;margin:24px 0 8px}
+.big{font-size:34px;font-weight:600;letter-spacing:.04em}.home{color:#67d08a}.away{color:#e0b45c}.unknown{color:#8b95a7}
+table{border-collapse:collapse;width:100%;max-width:1000px}th,td{text-align:left;padding:6px 10px;border-bottom:1px solid #232833;font-variant-numeric:tabular-nums}
+th{color:#8b95a7;font-weight:500;font-size:12px}.stale{color:#e06c75}.ok{color:#67d08a}.muted{color:#8b95a7}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+"""
+
+
+def _esc(v):
+    return (str(v) if v is not None else "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def _status_html(snap):
+    state = snap["state"] or "unknown"
+    cls = {"HOME": "home", "AWAY": "away"}.get(state, "unknown")
+    forced = ""
+    if snap["forced_until"]:
+        forced = f' <span class="muted">forced HOME for {int(snap["forced_until"] - time.time())}s</span>'
+    src_rows = "".join(
+        f'<tr><td>{_esc(name)}</td><td class="{"ok" if h["ever_ok"] and not h["stale"] else "stale"}">'
+        f'{"ok" if h["ever_ok"] and not h["stale"] else ("stale" if h["ever_ok"] else "never")}</td>'
+        f'<td>{h["last_ok_age_s"]}s</td><td>{h["poll_s"]}s</td></tr>'
+        for name, h in sorted(snap["sources"].items())
+    )
+    ev_rows = "".join(
+        f'<tr><td><code>{_esc(e.get("ts"))}</code></td><td>{_esc(e.get("kind"))}</td><td>{_esc(e.get("person"))}</td>'
+        f'<td>{_esc(e.get("source"))}</td><td>{_esc(e.get("value"))}</td></tr>'
+        for e in snap["events"]
+    ) or '<tr><td colspan="5" class="muted">no events recorded (EVENT_LOG unset)</td></tr>'
+    return f"""<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="15">
+<title>DLS presence</title><style>{_STATUS_CSS}</style></head><body>
+<h1>Daylight Lighting Scheduler — presence</h1>
+<div class="big {cls}">{_esc(state)}</div>{forced}
+<div class="muted">generated {_esc(snap["generated"])} · refreshes every 15s</div>
+<h2>Sources</h2><table><tr><th>source</th><th>state</th><th>last ok</th><th>poll</th></tr>{src_rows}</table>
+<h2>Recent events</h2><table><tr><th>time</th><th>kind</th><th>person</th><th>source</th><th>value</th></tr>{ev_rows}</table>
+</body></html>"""
+
+
 class _FreshHandler(BaseHTTPRequestHandler):
     def _token_ok(self):
         if not ARRIVAL_TOKEN:
@@ -398,6 +469,17 @@ class _FreshHandler(BaseHTTPRequestHandler):
                 return
             self._json(200, {"ok": True, "state": _last_state,
                              "forced_until": _force_home_until if _force_home_until > time.time() else None})
+            return
+        if path == "/status.json":
+            self._json(200, _status_snapshot())
+            return
+        if path in ("/status", "/"):
+            body = _status_html(_status_snapshot()).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         self.send_error(404)
 
