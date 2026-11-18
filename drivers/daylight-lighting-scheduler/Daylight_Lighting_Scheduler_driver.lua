@@ -112,7 +112,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.10"
+DRIVER_VERSION = "1.16.11"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -160,7 +160,6 @@ end
 -- 1.16.8: this controller's binding wants a STRING ("staValuelist should be a string"), while the
 -- documented form is a table. Try both, never raise, and report which one the firmware accepted once.
 local listForm = nil
-local listRefused = false
 local function propList(name, list)
   local functions = {
     function() C4:UpdatePropertyList(name, list) end,
@@ -1974,7 +1973,8 @@ function OnServerDataIn(nHandle, strData, strClientAddress, nClientPort)
     if not s then break end
     local line = buf:sub(pos, s - 1):gsub("\r$", "")
     pos = e + 1
-    local reply = replyFor(line, now)
+    local ok, reply = pcall(replyFor, line, now)
+    if not ok then reply = "ERR INTERNAL" end
     if reply then out[#out + 1] = reply .. "\r\n" end
   end
   local rest = buf:sub(pos)
