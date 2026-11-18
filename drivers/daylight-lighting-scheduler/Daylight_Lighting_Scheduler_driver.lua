@@ -1,7 +1,10 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.5
+  DRIVER_VERSION: 1.16.6
 
+  1.16.6: the rest of the scoped audit. A non-follow room in HOLD is released by the switch too, remembered
+  confirmations are pruned for lights that no longer exist (a recycled Composer id is not pre-trusted), and an
+  invalid Rooms JSON empties the presence picker and says so instead of leaving values that silently do nothing.
   1.16.5: scoped-audit fixes. No fade can start while the switch is Off (an AWAY edge used to reach prStartFade),
   the gate timeout and the lost-feed detector keep running while Off, switching back On re-occupies from the last
   occupancy without waiting for a new sensor edge, a release no longer wipes a per-light hold one cycle later,
@@ -93,7 +96,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.5"
+DRIVER_VERSION = "1.16.6"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -1294,7 +1297,8 @@ function Update()
       -- presence rooms (1.11.0): a follow room is driven by its presence state only; a non-follow room keeps the
       -- schedule except while FADING or HOLD
       local prOwns = room.pr and room.pr.follow and presenceOn()
-      local prBlocks = room.pr and not room.pr.follow and (room.pr.state == PR_FADING or room.pr.state == PR_HOLD)
+      local prBlocks = room.pr and not room.pr.follow and Properties["Presence Lighting"] == "On"
+        and (room.pr.state == PR_FADING or room.pr.state == PR_HOLD)   -- 1.16.6: Off releases HOLD rooms too
       if prOwns then
         if room.pr.state == PR_OCCUPIED then presenceDrive(room, now, inWindow) end
         room.wasInWindow = inWindow
@@ -1520,7 +1524,13 @@ local function loadRooms(closeGate)
   local warns = {}
   if closeGate then gateOpen, gateUntil = false, os.time() + 180 end   -- T14
   local ok, data = pcall(function() return C4:JsonDecode(Properties["Rooms JSON"], false) end)
-  if not ok or type(data) ~= "table" then setStatus("Rooms JSON invalid") return end
+  if not ok or type(data) ~= "table" then
+    setStatus("Rooms JSON invalid")                     -- 1.16.6: the presence picker must not lie either
+    C4:UpdatePropertyList("Presence Room", {})
+    C4:UpdateProperty("Presence Room", "")
+    C4:UpdateProperty("Presence Room State", "Rooms JSON invalid")
+    return
+  end
   for _, r in ipairs(data) do
     local room = {
       name = r.name or "Room", type = r.type or "lifx_only",
@@ -1616,6 +1626,12 @@ local function loadRooms(closeGate)
   resetOccupancy()
   presenceWarn = table.concat(warns, "; ")
   dbg("rooms loaded", tostring(#rooms), "curtains", tostring(#curtains))
+  -- 1.16.6: forget confirmations for lights that no longer exist, so a recycled device id is not pre-trusted
+  if type(PersistData) == "table" and type(PersistData.lightSeen) == "table" then
+    local live = {}
+    for _, room in ipairs(rooms) do for _, l in ipairs(room.lights or {}) do live[tostring(l.id)] = true end end
+    for id in pairs(PersistData.lightSeen) do if not live[id] then PersistData.lightSeen[id] = nil end end
+  end
   C4:UpdateProperty("Offline Lights", "")      -- 1.16.3: the list is rebuilt from the live light objects
   refreshPresenceRoomList()                    -- 1.16.1: a JSON edit can rename or delete the selected room
   syncPresenceUI()
