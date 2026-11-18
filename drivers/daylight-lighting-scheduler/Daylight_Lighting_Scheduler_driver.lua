@@ -1,7 +1,11 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.11.10
+  DRIVER_VERSION: 1.12.0
 
+  1.12.0: programming events. The driver now fires Room Occupied, Room Vacant, Presence Home, Presence Away
+  and Lighting Held, and writes a read-only "Last Event" property ("Event: Room") because DriverWorks events
+  carry no parameters. Vacancy fires on the real edges only (fade completion, nothing-on, and a reconcile that
+  actually changes state), and Lighting Held fires once per gesture, including a hand-switched-off light.
   1.11.10: a room with min_level 0 can go fully off in strong daylight: the in-window and follow targets may
   reach 0 and turn the light off once (no repeated 0 every tick), and per-light presence targets use the same
   floor. Curtain automation now runs while Away too, so curtains still close at sunset and open after sunrise.
@@ -95,8 +99,10 @@ local function setStatus(s) C4:UpdateProperty("Status", s) end
 -- Programming events (XML <events>). DriverWorks events carry no parameters, so the
 -- room/detail rides on the read-only "Last Event" property.
 local function fire(name, detail)
-  if detail then C4:UpdateProperty("Last Event", tostring(detail)) end
-  local ok, err = pcall(function() C4:FireEvent(name) end)
+  local ok, err = pcall(function()
+    C4:UpdateProperty("Last Event", detail and (name .. ": " .. tostring(detail)) or name)
+    C4:FireEvent(name)
+  end)
   if not ok then dbg("FireEvent failed", name, tostring(err)) end
 end
 
@@ -532,6 +538,7 @@ local function prStartFade(room, now)
     pr.state = PR_FADING
     pr.fadeAt = now + math.ceil(ms / 1000) + 2
   else
+    if pr.state ~= PR_VACANT then fire("Room Vacant", room.name) end
     pr.state = PR_VACANT
   end
   dbg("presence fade", room.name, any and "fading" or "nothing on")
@@ -616,8 +623,9 @@ local function prReconcile(now)
         if pr.state ~= PR_VACANT and anyOn(room) then
           prStartFade(room, now)
         else
+          local wasVacant = (pr.state == PR_VACANT)
           pr.state = PR_VACANT
-          fire("Room Vacant", room.name)
+          if not wasVacant then fire("Room Vacant", room.name) end
           for _, l in ipairs(room.lights) do l.offHold = nil end   -- no off hold outlives a vacancy
         end
       end
@@ -631,7 +639,9 @@ local function prManual(room, light, v, now)
   local pr = room.pr
   local base = light.lastLevel or 0
   if v == 0 and pr.state == PR_OCCUPIED and base > 0 then           -- manual off in an occupied room: T8 / T9
+    local already = light.offHold
     light.offHold = true
+    if not already then fire("Lighting Held", room.name) end
     light.lastLevel = 0
     local others = false
     for _, o in ipairs(room.lights) do if o ~= light and isLightOn(o) then others = true end end
@@ -650,8 +660,9 @@ local function prManual(room, light, v, now)
     pr.offAt = now + pr.offDelaySec
   end
   local holdSec = (tonumber(Properties["Override Hold (min)"]) or 120) * 60
+  local wasHeld = light.overrideUntil and light.overrideUntil > now
   light.overrideUntil = math.max(light.overrideUntil or 0, now + holdSec)
-  fire("Lighting Held", room.name)
+  if not wasHeld then fire("Lighting Held", room.name) end
   dbg("presence manual change, light hold", room.name, tostring(light.id))
   prSave()
 end
@@ -690,6 +701,7 @@ local function presenceTick()
       end
       if pr.state == PR_FADING and pr.fadeAt and now >= pr.fadeAt then
         pr.state, pr.fadeAt = PR_VACANT, nil
+        fire("Room Vacant", room.name)
         prSave()
       end
       -- a manual-on light in a vacant follow room fades once its hold has expired (section 5 note)
@@ -1498,7 +1510,7 @@ local function setPresence(state)
   presenceAway = away
   if PersistData then PersistData.presenceAway = away end
   C4:UpdateProperty("Presence", away and "Away" or "Home")
-  fire(away and "Presence Away" or "Presence Home", away and "Away" or "Home")
+  fire(away and "Presence Away" or "Presence Home")
   local now = os.time()
   if away then
     for _, r in ipairs(rooms) do
