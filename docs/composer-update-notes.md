@@ -49,12 +49,23 @@ Only one driver can hold the fan's TCP connection reliably, so remove the old in
 - **a** driver.xml starts directly with `<devicedata>` (no BOM, `<?xml?>` declaration or comment) and parses.
 - **b** `<version>` is an integer, and is greater than the HEAD version when the source changed, and greater than the c4z version when the source differs from the c4z. `--no-version-check` skips the ordering part.
 - **c** `<modified>` changed when the source changed since HEAD.
-- **d** the Lua passes `luac -p`.
+- **d** the Lua passes `luac -p` (5.4) and, when `luac5.1` is installed (CI has it), the controller's Lua 5.1 compiler.
 - **e** the Lua defines OnDriverInit, and every `<action><command>` name appears in the Lua.
 - **f** a "Driver Version" property has a `<default>` equal to the Lua DRIVER_VERSION / VERSION constant, and the Lua writes it.
 - **g** the package name matches an existing c4z/ file exactly (case-sensitive). Warns when a differently named c4z exists for the same driver.
 - **h** the package holds only driver.xml, driver.lua, www/ and icons the XML references, and every referenced icon exists.
+- **i** the `c4z/` package committed at HEAD matches the driver source committed at HEAD. A commit that changes the source without rebuilding the package fails. The check is skipped while the source has uncommitted edits, so a build can still run.
 - **j** no `Properties[...] = ...` writes in the Lua. Those change the Lua table only. Use `C4:UpdateProperty(name, value)`.
+
+The Lua and programming-interface checks below also fail the build:
+
+- **L006** no Lua 5.2+ syntax (`goto`, labels, `//`, bitwise operators, `table.unpack`, `utf8.*`, `_ENV`, `rawlen`). The controller runs Lua 5.1 even though the test toolchain is 5.4.
+- **L007** no host APIs (`io.*`, `os.execute`/`exit`/`remove`/`rename`, `dofile`, `loadfile`, `loadstring`, `load()`, `debug.*`, `package.*`) and no `require` outside `drivers-common-public.*`; the DriverWorks sandbox does not provide them.
+- **L008** no duplicate global function definitions. Lua silently uses the last one, which is how a pasted second handler disables the first.
+- **L009** every `C4:<method>` call must be a known DriverWorks method. A near-miss (`C4:UpdatePropery`) is an error with the suggested name; an unknown name is a warning.
+- **E001** every `<command>` and `<event>` `<param>` has a `<name>` and a `<type>`, the name is unique in that command/event, and the type is a known one.
+
+`<commands>`, `<properties>` and `<actions>` may sit at the root or under `<config>`; the checks look in both layouts.
 
     python tools/check_c4z.py --all --no-version-check
     python tools/check_c4z.py drivers/<name>

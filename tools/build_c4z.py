@@ -128,8 +128,13 @@ def c4sim_check(name):
     out = [l for l in sm.stdout.splitlines() if l.strip()]
     if sm.returncode != 0 or not any(l.startswith("ok ") for l in out):
         return False, ([l for l in out if l.startswith("ERR")] or [f"ERR c4sim smoke failed for {name}"])[:2]
+    cm = subprocess.run([sys.executable, runner, "commands", name], cwd=ROOT, capture_output=True, text=True)
+    cout = [l for l in cm.stdout.splitlines() if l.strip()]
+    if cm.returncode != 0:
+        return False, ([l for l in cout if l.startswith(("ERR", "FAIL"))] or ["ERR c4sim commands failed for " + name])[:2]
     warns = [l for l in out if l.startswith("warn ")]
     lines = [f"c4sim smoke: ok {name}" + (f" ({len(warns)} warn)" if warns else "")]
+    lines.append("c4sim commands: " + (cout[-1] if cout else "ok"))
     tr = subprocess.run([sys.executable, runner, "test", "all"], cwd=ROOT, capture_output=True, text=True)
     tout = [l for l in tr.stdout.splitlines() if l.strip()]
     summaries = [m for m in (TEST_SUMMARY.search(l) for l in tout) if m]

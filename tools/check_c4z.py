@@ -7,11 +7,12 @@ Usage:
 
 A driver folder is a path, or a name under drivers/. Each problem prints one line,
 "FAIL <driver> [<check>] <reason>" (warnings start with "WARN"). The exit status is 1
-when any check fails. The checks a-j are described in docs/composer-update-notes.md
+when any check fails. The check IDs are described in docs/composer-update-notes.md
 ("Pre-flight"). --no-version-check skips the version ordering in check b; the integer
 check still runs.
 """
 import argparse
+import difflib
 import os
 import re
 import subprocess
@@ -19,6 +20,7 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
+from io import BytesIO
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DRIVERS = os.path.join(ROOT, "drivers")
@@ -29,6 +31,7 @@ DRIVER_CONST_RE = re.compile(r'^\s*(?:local\s+)?(?:DRIVER_VERSION|VERSION)\s*=\s
 DRIVER_SET_RE = re.compile(r'(?:UpdateProperty|setProp)\s*\(\s*["\']Driver Version["\']')
 ONINIT_RE = re.compile(r'function\s+OnDriverInit\s*\(|OnDriverInit\s*=\s*function')
 EXEC_RE = re.compile(r'function\s+ExecuteCommand\s*\(')
+COMMON_HANDLERS_RE = re.compile(r"\brequire\s*\(?\s*['\"]drivers-common-public\.global\.handlers['\"]")
 SCRIPT_RE = re.compile(r'<script\s+file="([^"]+)"')
 PROPERTIES_WRITE_RE = re.compile(r'\bProperties\s*\[[^\]]*\]\s*=(?!=)')
 # Check g: version labels that must equal DRIVER_VERSION. Lines that look like history are skipped.
@@ -182,6 +185,19 @@ def image_refs(root):
     return refs
 
 
+def find_container(root, tag):
+    """The first <tag> container in the XML: driver.xml puts it at the root or under <config>."""
+    if root is None:
+        return None
+    if root.tag == tag:
+        return root
+    return next(root.iter(tag), None)
+
+
+def commands_container(root):
+    return find_container(root, "commands")
+
+
 def git_bytes(args):
     r = subprocess.run(["git", *args], cwd=ROOT, capture_output=True)
     return r.stdout if r.returncode == 0 else None
@@ -207,8 +223,12 @@ def head_layout(path):
     return layout(files, names[0], names[1])
 
 
-def package_layout(pkg_path):
-    with zipfile.ZipFile(pkg_path) as zf:
+def package_layout_bytes(data):
+    try:
+        zf = zipfile.ZipFile(BytesIO(data))
+    except zipfile.BadZipFile:
+        return None
+    with zf:
         files = {n: zf.read(n) for n in zf.namelist() if not n.endswith("/")}
     if "driver.xml" not in files:
         return None
@@ -216,6 +236,17 @@ def package_layout(pkg_path):
     if script not in files:
         return None
     return layout(files, "driver.xml", script)
+
+
+def package_layout(pkg_path):
+    with open(pkg_path, "rb") as fh:
+        return package_layout_bytes(fh.read())
+
+
+def head_package_layout(expected):
+    """Package layout of c4z/<expected> at git HEAD, or None when it is not committed."""
+    data = git_bytes(["show", "HEAD:c4z/" + expected])
+    return package_layout_bytes(data) if data else None
 
 
 def existing_package(name):
@@ -229,15 +260,15 @@ def norm(s):
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
 
-def luac_error(data, label):
+def luac_error(data, label, compiler="luac"):
     with tempfile.TemporaryDirectory() as td:
         p = os.path.join(td, "check.lua")
         with open(p, "wb") as fh:
             fh.write(strip_bom(data))
         try:
-            r = subprocess.run(["luac", "-p", p], capture_output=True, text=True)
+            r = subprocess.run([compiler, "-p", p], capture_output=True, text=True)
         except FileNotFoundError:
-            return "luac is not on PATH, so the Lua syntax check could not run"
+            return f"{compiler} is not on PATH, so the Lua syntax check could not run"
     if r.returncode == 0:
         return None
     text = (r.stderr or r.stdout or "luac -p failed").strip().splitlines()[0]
@@ -341,6 +372,13 @@ def check_folder(path, xml_override=None, version_check=True):
                 if packed not in pkg_lay:
                     warn("h", f"c4z/{expected} lacks icon {ref} referenced by driver.xml (expected at {packed})")
 
+    # i. the committed package must match the committed source. Compared at HEAD (not the working tree) so an
+    # uncommitted edit can still be checked and built; a commit that changes the source without rebuilding fails.
+    if xml_override is None and head is not None:
+        head_pkg = head_package_layout(expected)
+        if head_pkg is not None and sig(head) != sig(head_pkg):
+            fail("i", f"c4z/{expected} at HEAD does not match drivers/{name} at HEAD; rebuild and commit the package")
+
     # h (source folder contents, and icon references)
     refs = image_refs(root)
     for rel in cur:
@@ -357,13 +395,15 @@ def check_folder(path, xml_override=None, version_check=True):
         else:
             warn("h", f"driver.xml references image {ref}, which is missing from the driver folder (expected at {packed})")
 
-    # d. Lua syntax
+    # d. Lua syntax: 5.4 for the shared toolchain, and 5.1 for the controller runtime when it is installed.
     lua_bytes = files[lua_rel]
-    err = luac_error(lua_bytes, lua_rel)
-    if err and err.startswith("luac is not on PATH"):
-        warn("d", err + "; Lua syntax was not checked")
-    elif err:
-        fail("d", err)
+    for compiler, required in (("luac", True), ("luac5.1", False)):
+        err = luac_error(lua_bytes, lua_rel, compiler)
+        if err and "is not on PATH" in err:
+            if required:
+                warn("d", err + "; Lua syntax was not checked")
+        elif err:
+            fail("d", err)
     lua_text = strip_bom(lua_bytes).decode("utf-8", "replace")
 
     # e. OnDriverInit, and every action command handled in Lua
@@ -377,7 +417,7 @@ def check_folder(path, xml_override=None, version_check=True):
             warn("e", "an <action> has no <command>")
         elif text not in commands:
             commands.append(text)
-    if commands and not EXEC_RE.search(lua_text):
+    if commands and not (EXEC_RE.search(lua_text) or COMMON_HANDLERS_RE.search(lua_text)):
         warn("e", "driver.xml defines actions but the Lua defines no ExecuteCommand")
     for cmd in commands:
         if cmd == "LUA_ACTION":
@@ -538,10 +578,12 @@ def check_property_xml(root, xml_rel, fail, warn):
 
 def check_unique(root, xml_rel, fail):
     """U001: names and ids must be unique within the driver."""
+    commands = commands_container(root)
+    events = find_container(root, "events")
     groups = {
         "property name": [_child_text(p, "name") for p in root.iter("property")],
-        "command name": [_child_text(c, "name") for c in root.findall("commands/command")],
-        "event name": [_child_text(e, "name") for e in root.findall("events/event")],
+        "command name": [_child_text(c, "name") for c in (commands.findall("command") if commands is not None else [])],
+        "event name": [_child_text(e, "name") for e in (events.findall("event") if events is not None else [])],
         "action name": [_child_text(a, "name") for a in root.findall("actions/action")],
         "connection id": [_child_text(c, "id") for c in root.iter("connection")],
         "connection name": [_child_text(c, "connectionname") for c in root.iter("connection")],
@@ -607,9 +649,12 @@ def check_lua_vs_xml(root, xml_rel, lua_rel, lua_text, fail, warn):
     def defined(fn):
         return re.search(r"\bfunction\s+%s\s*\(|\b%s\s*=\s*function\b" % (fn, fn), code) is not None
 
-    if root.findall("commands/command") and not defined("ExecuteCommand"):
+    # The public common library supplies the entry points when a driver requires its handlers module.
+    common_handlers = COMMON_HANDLERS_RE.search(code) is not None
+    commands = commands_container(root)
+    if commands is not None and commands.findall("command") and not (defined("ExecuteCommand") or common_handlers):
         fail("L004", f"{xml_rel} defines commands but {lua_rel} defines no ExecuteCommand")
-    if props and not (defined("OnPropertyChanged") or defined("OnDriverLateInit")):
+    if props and not (defined("OnPropertyChanged") or defined("OnDriverLateInit") or common_handlers):
         fail("L004", f"{xml_rel} defines properties but {lua_rel} defines neither OnPropertyChanged nor OnDriverLateInit")
     for m in LOCAL_HANDLER_RE.finditer(code):
         fn = m.group(1) or m.group(2)
@@ -649,7 +694,7 @@ GLUED_TOKEN_RE = re.compile(r"[A-Za-z0-9_](?:NAME|PARAM\d+)|(?:NAME|PARAM\d+)[A-
 def check_command_descriptions(root, xml_rel, fail):
     """CD001: every <command> under <commands> needs a <description> that uses NAME exactly once and
     PARAM1..PARAMn exactly once each (n = number of <param> elements). Composer fills these in the programming line."""
-    commands = root.find("commands")
+    commands = commands_container(root)
     if commands is None:
         return
     for cmd in commands.findall("command"):
@@ -691,6 +736,132 @@ def check_command_descriptions(root, xml_rel, fail):
         fail("CD001", f"{where} {rule}; " + "; ".join(detail))
 
 
+LUA51_RULES = [
+    ("goto", re.compile(r"\bgoto\b"), "goto is Lua 5.2+"),
+    ("a ::label::", re.compile(r"::[A-Za-z_]\w*::"), "labels are Lua 5.2+"),
+    ("//", re.compile(r"(?<![/*])//(?![/*])"), "integer division is Lua 5.3+"),
+    ("a bitwise operator", re.compile(r"(?<![&])&(?![&])|(?<![|])\|(?![|])|(?<![~])~(?!=)|<<|>>"),
+     "bitwise operators are Lua 5.3+"),
+    ("table.unpack", re.compile(r"\btable\.unpack\b"), "table.unpack is Lua 5.2+; use unpack"),
+    ("math.type or math.tointeger", re.compile(r"\bmath\.(?:type|tointeger)\b"), "these are Lua 5.3+"),
+    ("utf8.*", re.compile(r"\butf8\s*\."), "the utf8 library is Lua 5.3+"),
+    ("_ENV", re.compile(r"\b_ENV\b"), "_ENV is Lua 5.2+"),
+    ("rawlen", re.compile(r"\brawlen\b"), "rawlen is Lua 5.2+"),
+]
+LUA_SANDBOX_RULES = [
+    ("io.*", re.compile(r"\bio\s*\.")),
+    ("os.execute/exit/remove/rename/tmpname/setlocale",
+     re.compile(r"\bos\s*\.\s*(?:execute|exit|remove|rename|tmpname|setlocale)\b")),
+    ("dofile", re.compile(r"\bdofile\b")),
+    ("loadfile", re.compile(r"\bloadfile\b")),
+    ("loadstring", re.compile(r"\bloadstring\b")),
+    ("load()", re.compile(r"(?<![\w.])load\s*\(")),
+    ("debug.*", re.compile(r"\bdebug\s*\.")),
+    ("package.*", re.compile(r"\bpackage\s*\.")),
+]
+REQUIRE_MODULE_RE = re.compile(r"\brequire\s*\(?\s*['\"]([^'\"\n]+)['\"]")
+GLOBAL_FUNC_RE = re.compile(r"^\s*function\s+([A-Za-z_]\w*)\s*\(", re.M)
+C4_CALL_RE = re.compile(r"\bC4\s*[:.]\s*([A-Za-z_]\w*)")
+# DriverWorks methods a driver may call. An unknown name warns; a near-miss of a known name fails as a typo.
+KNOWN_C4_METHODS = {
+    "AddDevice", "AddTimer", "AddVariable", "Base64Decode", "Base64Encode", "Bind", "CreateNetworkConnection",
+    "CreateServer", "CreateTCPClient", "DebugLog", "DestroyServer", "ErrorLog", "FireEvent", "FireEventByID",
+    "GetBoundConsumerDevices", "GetBoundProviderDevice", "GetControllerNetworkAddress", "GetDeviceDisplayName",
+    "GetDeviceID", "GetDeviceVariable", "GetDeviceVariables", "GetDevices", "GetDevicesByC4iName", "GetTime",
+    "JsonDecode", "JsonEncode", "KillAllTimers", "KillTimer", "NetConnect", "NetDisconnect", "ParseXml",
+    "PersistGetValue", "PersistSetValue", "RegisterVariableListener", "RoomGetId", "SendDataToUI", "SendToDevice",
+    "SendToNetwork", "SendToProxy", "ServerCloseClient", "ServerSend", "SetTimer", "SetVariable",
+    "UnregisterVariableListener", "UpdateProperty", "UpdatePropertyList", "url", "urlDo", "urlGet", "urlPost",
+    "urlPut", "urlSetTimeout",
+}
+PARAM_TYPES = {
+    "STRING", "NUMBER", "BOOL", "BOOLEAN", "INTEGER", "FLOAT", "DOUBLE", "LONG", "RANGED_INTEGER",
+    "RANGED_FLOAT", "LIST", "DEVICE_SELECTOR", "COLOR_SELECTOR",
+}
+
+
+def check_lua51(lua_rel, lua_text, fail):
+    """L006: constructs the Lua 5.4 interpreter accepts but a Control4 driver's Lua 5.1 runtime does not."""
+    lines = lua_code_lines(lua_text)
+    for label, rx, why in LUA51_RULES:
+        for lineno, line in enumerate(lines, 1):
+            if rx.search(line):
+                fail("L006", f"{lua_rel}:{lineno} uses {label}; {why}, and drivers run on Lua 5.1")
+                break
+
+
+def check_lua_sandbox(lua_rel, lua_text, fail):
+    """L007: host APIs the DriverWorks sandbox does not provide, and requires outside the public library."""
+    code_lines = lua_code_lines(lua_text)
+    for label, rx in LUA_SANDBOX_RULES:
+        for lineno, line in enumerate(code_lines, 1):
+            if rx.search(line):
+                fail("L007", f"{lua_rel}:{lineno} uses {label}, which is not available in the Control4 driver sandbox")
+                break
+    # Requires keep their module name in a string, so this pass removes comments but not strings.
+    for lineno, line in enumerate(lua_no_comments(lua_text).splitlines(), 1):
+        for m in REQUIRE_MODULE_RE.finditer(line):
+            module = m.group(1)
+            if not module.startswith("drivers-common-public."):
+                fail("L007", f"{lua_rel}:{lineno} requires '{module}'; only drivers-common-public modules are available")
+
+
+def check_duplicate_functions(lua_rel, lua_text, fail):
+    """L008: a second global definition silently replaces the first."""
+    code = "\n".join(lua_code_lines(lua_text))
+    found = {}
+    for m in GLOBAL_FUNC_RE.finditer(code):
+        found.setdefault(m.group(1), []).append(code[:m.start()].count("\n") + 1)
+    for name, linenos in found.items():
+        if len(linenos) > 1:
+            where = ", ".join(str(n) for n in linenos)
+            fail("L008", f"{lua_rel} defines global function {name} {len(linenos)} times (lines {where}); "
+                         "the last definition wins silently")
+
+
+def check_c4_methods(lua_rel, lua_text, fail, warn):
+    """L009: typo detection for C4:<method> calls. A near-miss of a known method is an error; anything else warns."""
+    warned = set()
+    for lineno, line in enumerate(lua_code_lines(lua_text), 1):
+        for m in C4_CALL_RE.finditer(line):
+            name = m.group(1)
+            if name in KNOWN_C4_METHODS:
+                continue
+            close = difflib.get_close_matches(name, KNOWN_C4_METHODS, n=1, cutoff=0.8)
+            if close:
+                fail("L009", f"{lua_rel}:{lineno} calls C4:{name}, which is not a DriverWorks method "
+                             f"(did you mean C4:{close[0]}?)")
+            elif name not in warned:
+                warned.add(name)
+                warn("L009", f"{lua_rel}:{lineno} calls C4:{name}, which is not in the known DriverWorks method list")
+
+
+def check_params(root, xml_rel, fail, warn):
+    """E001: every command and event parameter has a name, a type, and a name that is unique in its parent."""
+    for container_tag, item_tag in (("commands", "command"), ("events", "event")):
+        container = find_container(root, container_tag)
+        if container is None:
+            continue
+        for item in container.findall(item_tag):
+            iname = _child_text(item, "name") or "(no name)"
+            where = f"{xml_rel} {item_tag} '{iname}'"
+            params = item.findall("params/param") or item.findall("param")
+            seen = set()
+            for prm in params:
+                pname = _child_text(prm, "name")
+                ptype = _child_text(prm, "type")
+                if not pname:
+                    fail("E001", f"{where} has a <param> with no <name>")
+                elif pname in seen:
+                    fail("E001", f"{where} has two params named '{pname}'")
+                else:
+                    seen.add(pname)
+                if not ptype:
+                    fail("E001", f"{where} param '{pname or '?'}' has no <type>; Composer cannot render it")
+                elif ptype.upper() not in PARAM_TYPES:
+                    warn("E001", f"{where} param '{pname or '?'}' has unknown <type> {ptype}")
+
+
 def run_extra_checks(xml_rel, lua_rel, root, files, lua_text, fail, warn):
     check_property_xml(root, xml_rel, fail, warn)
     check_command_descriptions(root, xml_rel, fail)
@@ -699,6 +870,11 @@ def run_extra_checks(xml_rel, lua_rel, root, files, lua_text, fail, warn):
     check_lua_vs_xml(root, xml_rel, lua_rel, lua_text, fail, warn)
     check_html_refs(root, xml_rel, lua_rel, lua_text, files, fail)
     check_binding(root, xml_rel, warn)
+    check_params(root, xml_rel, fail, warn)
+    check_lua51(lua_rel, lua_text, fail)
+    check_lua_sandbox(lua_rel, lua_text, fail)
+    check_duplicate_functions(lua_rel, lua_text, fail)
+    check_c4_methods(lua_rel, lua_text, fail, warn)
 
 
 def driver_path(arg):

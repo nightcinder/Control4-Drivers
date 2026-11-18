@@ -13,7 +13,10 @@ import xml.etree.ElementTree as ET
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from check_c4z import check_command_descriptions  # noqa: E402
+from check_c4z import (  # noqa: E402
+    check_c4_methods, check_command_descriptions, check_duplicate_functions, check_lua51, check_lua_sandbox,
+    check_lua_vs_xml, check_params, check_unique,
+)
 
 
 def command(name, description, nparams=0, desc_xml=None):
@@ -100,6 +103,147 @@ class CommandDescriptionTests(unittest.TestCase):
     def test_driver_without_commands_passes(self):
         self.assertEqual(run_check(devicedata()), [])
         self.assertEqual(run_check("<devicedata><commands></commands></devicedata>"), [])
+
+
+def nested(*items_xml):
+    """A driver.xml with its containers under <config>, the layout newer drivers use."""
+    body = "".join(items_xml)
+    return f"<devicedata><config>{body}</config></devicedata>"
+
+
+def commands(*items):
+    return "<commands>" + "".join(items) + "</commands>"
+
+
+class NestedContainerTests(unittest.TestCase):
+    """The <commands> container is at the root in older drivers and under <config> in newer ones."""
+
+    def test_nested_command_description_is_checked(self):
+        root = ET.fromstring(nested(commands(command("Off", "Turn it off"))))
+        fails = []
+        check_command_descriptions(root, "driver.xml", lambda c, m: fails.append(m))
+        self.assertEqual(len(fails), 1)
+        self.assertIn("uses NAME 0 times", fails[0])
+
+    def test_nested_duplicate_command_name_fails(self):
+        root = ET.fromstring(nested(commands(command("Off", "Turn NAME off"), command("Off", "Switch NAME off"))))
+        fails = []
+        check_unique(root, "driver.xml", lambda c, m: fails.append(m))
+        self.assertIn("2 command names with value 'Off'", fails[0])
+
+    def test_nested_commands_need_execute_command(self):
+        root = ET.fromstring(nested(commands(command("Off", "Turn NAME off"))))
+        fails = []
+        check_lua_vs_xml(root, "driver.xml", "driver.lua", "local x = 1", lambda c, m: fails.append(m), lambda c, m: None)
+        self.assertEqual(len(fails), 1)
+        self.assertIn("defines commands", fails[0])
+
+    def test_common_handlers_supply_execute_command(self):
+        root = ET.fromstring(nested(commands(command("Off", "Turn NAME off"))))
+        lua = "require ('drivers-common-public.global.handlers')"
+        fails = []
+        check_lua_vs_xml(root, "driver.xml", "driver.lua", lua, lambda c, m: fails.append(m), lambda c, m: None)
+        self.assertEqual(fails, [])
+
+
+class Lua51Tests(unittest.TestCase):
+    def fails(self, text):
+        out = []
+        check_lua51("driver.lua", text, lambda c, m: out.append(m))
+        return out
+
+    def test_lua52_and_later_constructs_fail(self):
+        self.assertIn("integer division", self.fails("local x = 4 // 2")[0])
+        self.assertIn("goto", self.fails("goto done")[0])
+        self.assertIn("bitwise operator", self.fails("local x = a & b")[0])
+        self.assertTrue(self.fails("local x = table.unpack(t)"))
+
+    def test_lua51_code_passes(self):
+        self.assertEqual(self.fails("local x = 4 / 2\nlocal y = a ~= b\nlocal s = 'a // b'\n-- goto done"), [])
+
+
+class LuaSandboxTests(unittest.TestCase):
+    def fails(self, text):
+        out = []
+        check_lua_sandbox("driver.lua", text, lambda c, m: out.append(m))
+        return out
+
+    def test_host_apis_fail(self):
+        self.assertTrue(self.fails('os.execute("rm -rf /")'))
+        self.assertTrue(self.fails("local f = io.open('x')"))
+        self.assertTrue(self.fails("local f = loadstring('x')"))
+
+    def test_require_outside_public_library_fails(self):
+        self.assertTrue(self.fails("require('socket')"))
+        self.assertEqual(self.fails("require('drivers-common-public.global.url')"), [])
+        self.assertEqual(self.fails("local s = \"io.open\" -- os.execute"), [])
+
+
+class DuplicateFunctionTests(unittest.TestCase):
+    def fails(self, text):
+        out = []
+        check_duplicate_functions("driver.lua", text, lambda c, m: out.append(m))
+        return out
+
+    def test_duplicate_global_fails(self):
+        fails = self.fails("function ExecuteCommand(a)\nend\nfunction ExecuteCommand(b)\nend")
+        self.assertEqual(len(fails), 1)
+        self.assertIn("ExecuteCommand 2 times", fails[0])
+
+    def test_local_and_table_functions_pass(self):
+        self.assertEqual(self.fails("local function f() end\nlocal function f() end"), [])
+        self.assertEqual(self.fails("local t = {\n  parse = function() end,\n}\nlocal u = {\n  parse = function() end,\n}"), [])
+
+
+class C4MethodTests(unittest.TestCase):
+    def run_check(self, text):
+        fails, warns = [], []
+        check_c4_methods("driver.lua", text, lambda c, m: fails.append(m), lambda c, m: warns.append(m))
+        return fails, warns
+
+    def test_typo_fails_with_suggestion(self):
+        fails, _ = self.run_check('C4:UpdatePropery("X", 1)')
+        self.assertEqual(len(fails), 1)
+        self.assertIn("did you mean C4:UpdateProperty", fails[0])
+
+    def test_unknown_method_warns(self):
+        fails, warns = self.run_check("C4:Frobnicate()")
+        self.assertEqual(fails, [])
+        self.assertIn("not in the known DriverWorks method list", warns[0])
+
+    def test_known_method_passes(self):
+        self.assertEqual(self.run_check('C4:UpdateProperty("X", 1)\nC4:url()'), ([], []))
+
+    def test_string_is_not_a_call(self):
+        self.assertEqual(self.run_check('local s = "C4:UpdatePropery"'), ([], []))
+
+
+class ParamTests(unittest.TestCase):
+    def run_check(self, xml_text):
+        root = ET.fromstring(xml_text)
+        fails, warns = [], []
+        check_params(root, "driver.xml", lambda c, m: fails.append(m), lambda c, m: warns.append(m))
+        return fails, warns
+
+    def test_missing_type_fails(self):
+        fails, _ = self.run_check(nested(commands(
+            "<command><name>Set</name><params><param><name>LEVEL</name></param></params></command>")))
+        self.assertEqual(len(fails), 1)
+        self.assertIn("has no <type>", fails[0])
+
+    def test_duplicate_param_name_fails(self):
+        fails, _ = self.run_check(nested(commands(
+            "<command><name>Set</name><params>"
+            "<param><name>LEVEL</name><type>STRING</type></param>"
+            "<param><name>LEVEL</name><type>STRING</type></param>"
+            "</params></command>")))
+        self.assertIn("two params named 'LEVEL'", fails[0])
+
+    def test_valid_params_pass(self):
+        self.assertEqual(self.run_check(nested(commands(
+            "<command><name>Set</name><params>"
+            "<param><name>LEVEL</name><type>RANGED_INTEGER</type></param>"
+            "</params></command>"))), ([], []))
 
 
 if __name__ == "__main__":

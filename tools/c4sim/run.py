@@ -2,13 +2,17 @@
 """c4sim runner.
 
   python tools/c4sim/run.py smoke [dir|all]
+  python tools/c4sim/run.py commands [dir|all]
   python tools/c4sim/run.py test [name|all]
 """
 import glob
+import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import xml.etree.ElementTree as ET
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -101,12 +105,97 @@ def run_tests(which):
     return rc
 
 
+NUMERIC_PARAM_TYPES = {
+    "NUMBER", "INTEGER", "LONG", "FLOAT", "DOUBLE", "RANGED_INTEGER", "RANGED_FLOAT",
+}
+
+
+def command_specs(xmlpath):
+    """(name, [Lua argument literals]) for every command in driver.xml, in either XML layout."""
+    try:
+        root = ET.parse(xmlpath).getroot()
+    except (ET.ParseError, OSError):
+        return []
+    container = root if root.tag == "commands" else next(root.iter("commands"), None)
+    if container is None:
+        return []
+    out = []
+    for cmd in container.findall("command"):
+        name = (cmd.findtext("name") or "").strip()
+        if not name or name == "LUA_ACTION":
+            continue
+        args = []
+        for prm in cmd.findall("params/param") or cmd.findall("param"):
+            ptype = (prm.findtext("type") or "STRING").strip().upper()
+            if ptype in NUMERIC_PARAM_TYPES:
+                args.append("1")
+            elif ptype in ("BOOL", "BOOLEAN"):
+                args.append("true")
+            else:
+                args.append('"x"')
+        out.append((name, args))
+    return out
+
+
+def command_script(name, luapath, xmlpath, commands):
+    lines = [
+        'local sim = require("c4sim")',
+        'sim.load_driver(%s, {xml = %s})' % (json.dumps(luapath), json.dumps(xmlpath)),
+        'if type(sim.env.ExecuteCommand) ~= "function" then',
+        '  print("skip %s: ExecuteCommand is supplied by the common library")' % name,
+        '  os.exit(0)',
+        'end',
+        'if #sim.errors > 0 then print("ERR %s load: " .. sim.errors[1]); os.exit(1) end' % name,
+    ]
+    for cname, args in commands:
+        lines.append('sim.exec(%s, {%s})' % (json.dumps(cname), ", ".join(args)))
+        lines.append('if #sim.errors > 0 then print("ERR %s " .. %s .. ": " .. sim.errors[#sim.errors]); '
+                     'os.exit(1) end' % (name, json.dumps(cname)))
+    lines.append('print("ok %s %d")' % (name, len(commands)))
+    return "\n".join(lines)
+
+
+def run_commands(which):
+    """Call every command defined in driver.xml with typed dummy parameters; fail on an uncaught error."""
+    specs, missing = drivers(which)
+    for m in missing:
+        print("ERR %s: no driver lua or driver.xml found" % m)
+    if not specs and not missing:
+        print("ERR no drivers matched '%s'" % which)
+        return 1
+    if not specs:
+        return 1
+    lua = find_lua()
+    rc = 0
+    for spec in specs:
+        dname, luapath, xmlpath = spec.split("|", 2)
+        commands = command_specs(xmlpath)
+        if not commands:
+            print("ok %s 0 commands" % dname)
+            continue
+        script = command_script(dname, luapath, xmlpath, commands)
+        fd, path = tempfile.mkstemp(prefix="c4cmd_", suffix=".lua")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(script)
+            r = subprocess.run([lua, path], cwd=ROOT, env=lua_env(), capture_output=True, text=True)
+        finally:
+            os.unlink(path)
+        out = (r.stdout or "").strip().splitlines()
+        print(out[-1] if out else "ERR %s: no output" % dname)
+        if r.returncode != 0 or not out or not out[-1].startswith(("ok ", "skip ")):
+            rc = 1
+    return rc
+
+
 def main(argv):
-    if len(argv) != 2 or argv[0] not in ("smoke", "test"):
-        print("usage: run.py smoke [dir|all] | test [name|all]")
+    if len(argv) != 2 or argv[0] not in ("smoke", "commands", "test"):
+        print("usage: run.py smoke [dir|all] | commands [dir|all] | test [name|all]")
         return 2
     if argv[0] == "smoke":
         return run_smoke(argv[1])
+    if argv[0] == "commands":
+        return run_commands(argv[1])
     return run_tests(argv[1])
 
 
