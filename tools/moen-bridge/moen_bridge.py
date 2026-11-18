@@ -4,7 +4,7 @@
 The shower is controlled over HomeKit with aiohomekit. Control4 talks to this
 bridge over TCP using one JSON object per line (UTF-8). See README.md.
 
-Run on the Linux host:  python moen_bridge.py --config /home/liesa/moen-bridge.json
+Run on the Linux host:  python moen_bridge.py --config ~/moen-bridge.json
 Test without hardware:  python moen_bridge.py --mock --config /path/to/test.json
 """
 
@@ -45,7 +45,7 @@ CURRENT_DEBOUNCE_F = 2              # shower off: min change in F to publish a n
 CURRENT_LOG_INTERVAL = 1.0          # at most one "current_f" INFO line per this many seconds
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "pairing_file": "/home/liesa/moen-hk.json",
+    "pairing_file": os.path.expanduser("~/moen-hk.json"),
     "pairing_alias": "moen",
     "bind": "0.0.0.0",
     "port": 8765,

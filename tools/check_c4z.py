@@ -762,6 +762,9 @@ LUA_SANDBOX_RULES = [
 REQUIRE_MODULE_RE = re.compile(r"\brequire\s*\(?\s*['\"]([^'\"\n]+)['\"]")
 GLOBAL_FUNC_RE = re.compile(r"^\s*function\s+([A-Za-z_]\w*)\s*\(", re.M)
 C4_CALL_RE = re.compile(r"\bC4\s*[:.]\s*([A-Za-z_]\w*)")
+LUA_TIMER_RE = re.compile(
+    r"\bC4\s*[:.]\s*(?:SetTimer|AddTimer|CreateServer|CreateNetworkConnection|CreateTCPClient|NetConnect)\b")
+DESTROY_RE = re.compile(r"\bfunction\s+OnDriverDestroyed\s*\(|\bOnDriverDestroyed\s*=\s*function\b")
 # DriverWorks methods a driver may call. An unknown name warns; a near-miss of a known name fails as a typo.
 KNOWN_C4_METHODS = {
     "AddDevice", "AddTimer", "AddVariable", "Base64Decode", "Base64Encode", "Bind", "CreateNetworkConnection",
@@ -836,6 +839,13 @@ def check_c4_methods(lua_rel, lua_text, fail, warn):
                 warn("L009", f"{lua_rel}:{lineno} calls C4:{name}, which is not in the known DriverWorks method list")
 
 
+def check_destroy(lua_rel, lua_text, fail):
+    """L010: a driver that starts timers or network connections must cancel them in OnDriverDestroyed."""
+    code = "\n".join(lua_code_lines(lua_text))
+    if LUA_TIMER_RE.search(code) and not DESTROY_RE.search(code):
+        fail("L010", f"{lua_rel} starts timers or network connections but defines no OnDriverDestroyed to stop them")
+
+
 def check_params(root, xml_rel, fail, warn):
     """E001: every command and event parameter has a name, a type, and a name that is unique in its parent."""
     for container_tag, item_tag in (("commands", "command"), ("events", "event")):
@@ -875,6 +885,7 @@ def run_extra_checks(xml_rel, lua_rel, root, files, lua_text, fail, warn):
     check_lua_sandbox(lua_rel, lua_text, fail)
     check_duplicate_functions(lua_rel, lua_text, fail)
     check_c4_methods(lua_rel, lua_text, fail, warn)
+    check_destroy(lua_rel, lua_text, fail)
 
 
 def driver_path(arg):

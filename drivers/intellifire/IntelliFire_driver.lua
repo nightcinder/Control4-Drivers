@@ -142,7 +142,7 @@
 
 	================================================================================
 	LIVE HARDWARE TEST (2026-08-15, later same day) - real IFT-WFM module at
-	172.21.1.149, driven through Control4 Composer Pro, not the sandbox.
+	the fireplace's local address, driven through Control4 Composer Pro, not the sandbox.
 
 	CONFIRMED against the real unit:
 	  - /poll and /get_challenge respond exactly as documented above: /poll's
@@ -242,7 +242,7 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "212"
+DRIVER_VERSION = "213"
 PAGE_FILE  = 'fireplace3.html'   -- renamed every page release (Navigator caches controller:// pages)
 PAGE_BUILD = '3'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 

@@ -32,7 +32,7 @@ local ROOMS = '[{"name":"Kitchen","key":"Kitchen","min_level":60,"max_level":60,
 C4.ServerSend = function() end
 C4.ServerCloseClient = function() end
 local function ln(...) return table.concat({ ... }, " ") .. "\r\n" end
-local function send(data) sim.call("OnServerDataIn", 1, data, "10.0.0.5", 50000) end
+local function send(data) sim.call("OnServerDataIn", 1, data, "192.0.2.5", 50000) end
 local function fired(name)
   for _, e in ipairs(sim.events or {}) do if e.id == name then return true end end
   return false

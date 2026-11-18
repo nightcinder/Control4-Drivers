@@ -35,7 +35,7 @@ C4.ServerCloseClient = function(_, handle) end
 local function ln(...) return table.concat({ ... }, " ") .. "\r\n" end
 local function send(data)
   replies = {}
-  sim.call("OnServerDataIn", 1, data, "10.0.0.5", 50000)
+  sim.call("OnServerDataIn", 1, data, "192.0.2.5", 50000)
   return table.concat(replies)
 end
 

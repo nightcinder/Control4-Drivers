@@ -4,11 +4,12 @@
 -- it back as UO_STATUS. Relay notifications: CLOSED = ON, OPENED = OFF.
 -- Proxy choice: "relay" (class RELAY), the same native on/off proxy family the repo uses for relay-style devices.
 
-local DRIVER_VERSION = "1.0.2"
+local DRIVER_VERSION = "1.0.3"
 local CONTROLLER_BINDING = 1
 local PROXY_BINDING = 5001
 
 local g_state = nil  -- true = ON, false = OFF, nil = unknown
+local g_startTimer = nil
 
 local function prop(name) return (Properties and Properties[name]) or "" end
 
@@ -70,7 +71,14 @@ end
 
 function OnDriverLateInit()
   pcall(function() C4:UpdateProperty("Driver Version", DRIVER_VERSION) end)
-  pcall(function() C4:SetTimer(3000, function() register() end) end)
+  local ok, timer = pcall(function()
+    return C4:SetTimer(3000, function() g_startTimer = nil; register() end)
+  end)
+  if ok then g_startTimer = timer end
+end
+
+function OnDriverDestroyed()
+  if g_startTimer then pcall(function() g_startTimer:Cancel() end); g_startTimer = nil end
 end
 
 function OnPropertyChanged(strProperty)

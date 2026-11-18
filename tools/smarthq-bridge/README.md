@@ -6,7 +6,7 @@ LAN HTTP JSON API for GE SmartHQ appliances (Cafe, etc.), built on `gehomesdk` 2
 
 ## First-time login
 
-Run once, from the compose project folder (`/home/liesa/automation-pollers`). Prompts for email, password, and an MFA code if SmartHQ asks for one. The password is not stored.
+Run once, from the compose project folder (the automation-pollers stack folder). Prompts for email, password, and an MFA code if SmartHQ asks for one. The password is not stored.
 
 ```
 mkdir -p smarthq-bridge/data && sudo chown 10001:10001 smarthq-bridge/data

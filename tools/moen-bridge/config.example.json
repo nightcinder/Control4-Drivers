@@ -1,5 +1,5 @@
 {
-  "pairing_file": "/home/liesa/moen-hk.json",
+  "pairing_file": "/path/to/moen-hk.json",
   "pairing_alias": "moen",
   "bind": "0.0.0.0",
   "port": 8765,

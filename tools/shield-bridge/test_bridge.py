@@ -73,7 +73,7 @@ PLEX_MOVIE_SESSION = {
                     "title": "Downstairs Shield",
                     "product": "Plex for Android (TV)",
                     "state": "paused",
-                    "address": "172.21.1.186",
+                    "address": "192.0.2.20",
                     "machineIdentifier": "abc-com-plexapp-android",
                 },
             }
@@ -96,7 +96,7 @@ PLEX_TRACK_SESSION = {
                     "title": "SHIELD",
                     "product": "Plex for Android (TV)",
                     "state": "buffering",
-                    "address": "172.21.1.186",
+                    "address": "192.0.2.20",
                     "machineIdentifier": "abc-com-plexapp-android",
                 },
             }
@@ -106,12 +106,12 @@ PLEX_TRACK_SESSION = {
 
 
 def _make_shield(tmp: Path, with_plex: bool = True) -> bridge.Shield:
-    art_cfg = {"plex_url": "http://172.21.1.157:32400", "plex_token": "tok"} if with_plex else {}
+    art_cfg = {"plex_url": "http://192.0.2.10:32400", "plex_token": "tok"} if with_plex else {}
     cfg = bridge.Config(
         listen_host="127.0.0.1",
         listen_port=8790,
         token="secret",
-        shields={"Downstairs": bridge.ShieldConfig("Downstairs", "172.21.1.186", 5555)},
+        shields={"Downstairs": bridge.ShieldConfig("Downstairs", "192.0.2.20", 5555)},
         cert=str(tmp / "cert.pem"),
         key=str(tmp / "key.pem"),
         adbkey=str(tmp / "adbkey"),
@@ -232,7 +232,7 @@ class ArtResolverTests(unittest.IsolatedAsyncioTestCase):
     async def test_plex_matches_grandparent_title_for_episodes(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             resolver = art.ArtResolver(
-                {"plex_url": "http://172.21.1.157:32400", "plex_token": "tok"},
+                {"plex_url": "http://192.0.2.10:32400", "plex_token": "tok"},
                 Path(td),
                 AsyncMock(return_value=None),
             )
@@ -255,7 +255,7 @@ class ArtResolverTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(art_id)
             assert art_id is not None
             self.assertEqual(resolver.get(art_id), (b"FAKE_PNG_POSTER", "image/png"))
-            self.assertIn("http://172.21.1.157:32400/library/metadata/99/thumb/1", calls)
+            self.assertIn("http://192.0.2.10:32400/library/metadata/99/thumb/1", calls)
 
     def test_shield_tile_is_512_png(self) -> None:
         import io
@@ -287,7 +287,7 @@ class ArtResolverTests(unittest.IsolatedAsyncioTestCase):
     async def test_direct_plex_thumb_short_circuits_session_lookup(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             resolver = art.ArtResolver(
-                {"plex_url": "http://172.21.1.157:32400", "plex_token": "tok"},
+                {"plex_url": "http://192.0.2.10:32400", "plex_token": "tok"},
                 Path(td),
                 AsyncMock(return_value=None),
             )
@@ -310,7 +310,7 @@ class ArtResolverTests(unittest.IsolatedAsyncioTestCase):
                 )
 
             self.assertIsNotNone(art_id)
-            self.assertEqual(calls, ["http://172.21.1.157:32400/library/metadata/99/thumb/1"])
+            self.assertEqual(calls, ["http://192.0.2.10:32400/library/metadata/99/thumb/1"])
 
     async def test_update_art_retries_after_fallback_ttl_expires(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -432,14 +432,14 @@ class ArtResolverTests(unittest.IsolatedAsyncioTestCase):
                 listen_port=8790,
                 token="secret",
                 shields={
-                    "Downstairs": bridge.ShieldConfig("Downstairs", "172.21.1.186", 5555),
-                    "Upstairs": bridge.ShieldConfig("Upstairs", "172.21.1.187", 5555),
+                    "Downstairs": bridge.ShieldConfig("Downstairs", "192.0.2.20", 5555),
+                    "Upstairs": bridge.ShieldConfig("Upstairs", "192.0.2.21", 5555),
                 },
                 cert=str(tmp / "cert.pem"),
                 key=str(tmp / "key.pem"),
                 adbkey=str(tmp / "adbkey"),
                 poll_seconds=2.0,
-                art={"plex_url": "http://172.21.1.157:32400", "plex_token": "tok"},
+                art={"plex_url": "http://192.0.2.10:32400", "plex_token": "tok"},
             )
             upstairs = bridge.Shield(cfg.shields["Upstairs"], cfg)
             upstairs.adb.up = True
@@ -476,16 +476,16 @@ class ArtResolverTests(unittest.IsolatedAsyncioTestCase):
                 token="secret",
                 shields={
                     "Downstairs": bridge.ShieldConfig(
-                        "Downstairs", "172.21.1.186", 5555,
+                        "Downstairs", "192.0.2.20", 5555,
                         plex_machine_id="c4a4513162927419-com-plexapp-android",
                     ),
-                    "Upstairs": bridge.ShieldConfig("Upstairs", "172.21.1.187", 5555),
+                    "Upstairs": bridge.ShieldConfig("Upstairs", "192.0.2.21", 5555),
                 },
                 cert=str(tmp / "cert.pem"),
                 key=str(tmp / "key.pem"),
                 adbkey=str(tmp / "adbkey"),
                 poll_seconds=2.0,
-                art={"plex_url": "http://172.21.1.157:32400", "plex_token": "tok"},
+                art={"plex_url": "http://192.0.2.10:32400", "plex_token": "tok"},
             )
             downstairs = bridge.Shield(cfg.shields["Downstairs"], cfg)
             upstairs = bridge.Shield(cfg.shields["Upstairs"], cfg)

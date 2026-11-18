@@ -4,7 +4,7 @@
 -- UNVERIFIED: API paths, outlet JSON fields, PUT body, cookie/CSRF handling, self-signed certificate
 -- handling (TLS_OPTIONS key names). Raw responses are logged at Debug level (secrets masked).
 
-local DRIVER_VERSION = "1.0.12"
+local DRIVER_VERSION = "1.0.13"
 -- The UniFi console uses a self-signed certificate that Control4 cannot verify, so certificate checks are
 -- turned off for this controller only. Passed as the 6th argument (options) of C4:urlGet / urlPost / urlPut
 -- (signature confirmed from the Snap One drivers-common-public url.lua). The key names are curl-style and
@@ -615,6 +615,11 @@ local function helloCheck(build)
     pcall(function() C4:UpdateProperty("Web Page Status", "PAGE IS STALE: page " .. tostring(build) .. ", driver expects " .. PAGE_BUILD) end)
   end
   publishUi()
+end
+
+function OnDriverDestroyed()
+  if g_loginWatch then pcall(function() g_loginWatch:Cancel() end); g_loginWatch = nil end
+  if g_timer then pcall(function() g_timer:Cancel() end); g_timer = nil end
 end
 
 function OnDriverInit()

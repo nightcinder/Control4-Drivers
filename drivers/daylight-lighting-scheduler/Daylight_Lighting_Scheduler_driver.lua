@@ -1,7 +1,11 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.6
+  DRIVER_VERSION: 1.16.7
 
+  1.16.7: crash-proofing after the 2026-11-17 import left the driver loaded but not running (no
+  listener on 8730, no schedule, lights on all night). Every property write now goes through a pcall,
+  "Presence Off Delay (sec)" is written as a number rather than a string, and OnDriverLateInit catches a
+  load failure, reports it in Status as "Load error: ..." and still starts the timers.
   1.16.6: the rest of the scoped audit. A non-follow room in HOLD is released by the switch too, remembered
   confirmations are pruned for lights that no longer exist (a recycled Composer id is not pre-trusted), and an
   invalid Rooms JSON empties the presence picker and says so instead of leaving values that silently do nothing.
@@ -96,7 +100,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.6"
+DRIVER_VERSION = "1.16.7"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -132,20 +136,35 @@ local function offlineCount()
   return n
 end
 
+-- 1.16.7: a property write must never be able to kill the driver. DriverWorks raises on an
+-- unknown name, a wrong value type or a read-only property, and an uncaught raise inside
+-- OnDriverLateInit leaves the driver loaded but not running: no timers, no listener, no schedule.
+local function prop(name, value)
+  local ok, err = pcall(function() C4:UpdateProperty(name, value) end)
+  if not ok then dbg("property write failed", tostring(name), tostring(err)) end
+  return ok
+end
+
+local function propList(name, list)
+  local ok, err = pcall(function() C4:UpdatePropertyList(name, list) end)
+  if not ok then dbg("property list write failed", tostring(name), tostring(err)) end
+  return ok
+end
+
 local function setStatus(s)
   local n = offlineCount()                                    -- 1.16.3: never lose the offline note to the next writer
   s = tostring(s)
   if n > 0 and not s:find("not responding", 1, true) then
     s = s .. " | " .. n .. " light(s) not responding"
   end
-  C4:UpdateProperty("Status", s)
+  prop("Status", s)
 end
 
 -- Programming events (XML <events>). DriverWorks events carry no parameters, so the
 -- room/detail rides on the read-only "Last Event" property.
 local function fire(name, detail)
   local ok, err = pcall(function()
-    C4:UpdateProperty("Last Event", detail and (name .. ": " .. tostring(detail)) or name)
+    prop("Last Event", detail and (name .. ": " .. tostring(detail)) or name)
     C4:FireEvent(name)
   end)
   if not ok then dbg("FireEvent failed", name, tostring(err)) end
@@ -525,7 +544,7 @@ local function checkLightConfirmations(now)
       end
     end
     table.sort(ids)
-    C4:UpdateProperty("Offline Lights", table.concat(ids, ", "))
+    prop("Offline Lights", table.concat(ids, ", "))
     if Properties["Enabled"] == "On" then                       -- 1.16.5: never overwrite Disabled/Bad lat-lon
       setStatus("Running")
     end
@@ -551,13 +570,13 @@ end
 local function syncPresenceUI()
   local room = presSelectedRoom()
   if not room or not room.pr then
-    C4:UpdateProperty("Presence Room State", "-")
+    prop("Presence Room State", "-")
     return
   end
-  C4:UpdateProperty("Presence Follow", room.pr.follow and "Follow" or "Off")
-  C4:UpdateProperty("Presence Off Delay (sec)", tostring(room.pr.offDelaySec))
+  prop("Presence Follow", room.pr.follow and "Follow" or "Off")
+  prop("Presence Off Delay (sec)", math.floor(tonumber(room.pr.offDelaySec) or 180))   -- 1.16.7: number, not string
   local names = { [PR_VACANT] = "Vacant", [PR_OCCUPIED] = "Occupied", [PR_FADING] = "Fading", [PR_HOLD] = "Held" }
-  C4:UpdateProperty("Presence Room State",
+  prop("Presence Room State",
     (names[room.pr.state] or "?") .. (room.pr.occIn and " / occupied" or " / vacant"))
 end
 
@@ -565,9 +584,9 @@ local function refreshPresenceRoomList()
   local names = {}
   for _, r in ipairs(rooms) do names[#names + 1] = r.name end
   if #names == 0 then return end
-  C4:UpdatePropertyList("Presence Room", names)
+  propList("Presence Room", names)
   if not Properties["Presence Room"] or Properties["Presence Room"] == "" then
-    C4:UpdateProperty("Presence Room", names[1])
+    prop("Presence Room", names[1])
   end
 end
 
@@ -901,7 +920,8 @@ local function presenceTick()
       end
     end
     Update()   -- refresh Status now so "Presence feed lost" shows without waiting for the main timer
-  end  if Properties["Presence Lighting"] ~= "On" then return end   -- 1.16.5: the schedule owns every room while Off
+  end
+  if Properties["Presence Lighting"] ~= "On" then return end   -- 1.16.5: the schedule owns every room while Off
 
   if not gateOpen then return end
   for _, room in ipairs(rooms) do
@@ -1526,9 +1546,9 @@ local function loadRooms(closeGate)
   local ok, data = pcall(function() return C4:JsonDecode(Properties["Rooms JSON"], false) end)
   if not ok or type(data) ~= "table" then
     setStatus("Rooms JSON invalid")                     -- 1.16.6: the presence picker must not lie either
-    C4:UpdatePropertyList("Presence Room", {})
-    C4:UpdateProperty("Presence Room", "")
-    C4:UpdateProperty("Presence Room State", "Rooms JSON invalid")
+    propList("Presence Room", {})
+    prop("Presence Room", "")
+    prop("Presence Room State", "Rooms JSON invalid")
     return
   end
   for _, r in ipairs(data) do
@@ -1632,7 +1652,7 @@ local function loadRooms(closeGate)
     for _, room in ipairs(rooms) do for _, l in ipairs(room.lights or {}) do live[tostring(l.id)] = true end end
     for id in pairs(PersistData.lightSeen) do if not live[id] then PersistData.lightSeen[id] = nil end end
   end
-  C4:UpdateProperty("Offline Lights", "")      -- 1.16.3: the list is rebuilt from the live light objects
+  prop("Offline Lights", "")      -- 1.16.3: the list is rebuilt from the live light objects
   refreshPresenceRoomList()                    -- 1.16.1: a JSON edit can rename or delete the selected room
   syncPresenceUI()
 end
@@ -1662,19 +1682,26 @@ end
 function OnDriverInit() end
 
 function OnDriverLateInit()
-  C4:UpdateProperty("Driver Version", DRIVER_VERSION)
-  if PersistData and PersistData.presenceAway == true then presenceAway = true end
-  C4:UpdateProperty("Presence", presenceAway and "Away" or "Home")
-  lastAcceptedAt = os.time()
-  loadRooms(true)
-  refreshPresenceRoomList()
-  syncPresenceUI()
-  startTimers()
-  if presenceTimer then presenceTimer:Cancel() end
-  presenceTimer = C4:SetTimer(1000, function() safePresenceTick() end, true)
-  startPresenceServer()
-  pollCloud()
-  C4:SetTimer(15000, function() safeUpdate() end, false)   -- first pass after loads settle
+  -- 1.16.7: whatever happens below, end up with a Status that says so and a running schedule.
+  pcall(function() C4:UpdateProperty("Driver Version", DRIVER_VERSION) end)   -- literal kept for the build check
+  local ok, err = pcall(function()
+    if PersistData and PersistData.presenceAway == true then presenceAway = true end
+    prop("Presence", presenceAway and "Away" or "Home")
+    lastAcceptedAt = os.time()
+    loadRooms(true)
+    refreshPresenceRoomList()
+    syncPresenceUI()
+  end)
+  if not ok then
+    dbg("late init failed", tostring(err))
+    prop("Status", "Load error: " .. tostring(err))
+  end
+  pcall(startTimers)
+  if presenceTimer then pcall(function() presenceTimer:Cancel() end) end
+  pcall(function() presenceTimer = C4:SetTimer(1000, function() safePresenceTick() end, true) end)
+  pcall(startPresenceServer)
+  pcall(pollCloud)
+  pcall(function() C4:SetTimer(15000, function() safeUpdate() end, false) end)   -- first pass after loads settle
 end
 
 function OnPropertyChanged(name)

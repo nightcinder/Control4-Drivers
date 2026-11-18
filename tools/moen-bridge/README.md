@@ -10,11 +10,11 @@ Never commit it, copy it into the repo, or share it. Keep it on the Linux host o
 
 ## Install on the Linux host
 
-Python 3.14 venv at `/home/liesa/hk` with `aiohomekit` and `zeroconf` installed.
+Python 3.14 venv at `$HOME/hk` with `aiohomekit` and `zeroconf` installed.
 
 ```bash
-cp moen_bridge.py /home/liesa/
-cp config.example.json /home/liesa/moen-bridge.json
+cp moen_bridge.py $HOME/
+cp config.example.json $HOME/moen-bridge.json
 sudo cp moen-bridge.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now moen-bridge

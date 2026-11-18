@@ -107,7 +107,7 @@ t.test("4: occupied on_daylight presence room at 21:00 uses the daylight target,
     before = function(s) s.set_var(K, VAR, "0") end,
   })
   t.ok(ok, "load: " .. tostring(sim.errors[1]))
-  sim.call("OnServerDataIn", 1, "PRESENCE HOME " .. TOK .. "\r\nHELLO 1 1 " .. TOK .. "\r\nOCC Kitchen 1 esp " .. TOK .. "\r\n", "10.0.0.5", 50000)
+  sim.call("OnServerDataIn", 1, "PRESENCE HOME " .. TOK .. "\r\nHELLO 1 1 " .. TOK .. "\r\nOCC Kitchen 1 esp " .. TOK .. "\r\n", "192.0.2.5", 50000)
   sim.sent = {}
   sim.advance(2 * 60 * SEC)
   t.ok(levels(K, 10) >= 1, "target level sent, not the presence nightLevel of 1")

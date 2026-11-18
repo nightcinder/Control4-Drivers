@@ -5,8 +5,8 @@
 	<name>SmartHQ Hub</name>
 	<model>SmartHQ Hub (parent, read-only LAN bridge client)</model>
 	<created>11/12/2026 12:00 PM</created>
-	<modified>11/12/2026 11:58 PM</modified>
-	<version>14</version>
+	<modified>11/18/2026 12:01 AM</modified>
+	<version>15</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -70,7 +70,7 @@
 				<name>Host</name>
 				<type>STRING</type>
 				<readonly>false</readonly>
-				<default>172.21.1.157</default>
+				<default></default>
 			</property>
 			<property>
 				<name>Port</name>
@@ -125,7 +125,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>0.3.6</default>
+				<default>0.3.7</default>
 			</property>
 		</properties>
 	</config>

@@ -6,7 +6,7 @@ The driver talks to the Roborock LAN HTTP bridge in `tools/roborock-bridge` (run
 
 ## Bridge
 
-- Base URL: `http://172.21.1.157:8788` (set with the Bridge Host and Bridge Port properties)
+- Base URL: `http://192.0.2.10:8788` (set with the Bridge Host and Bridge Port properties)
 - `GET /state` returns `state`, `battery`, `error`, `rooms`, `current_room`, `last_error`, and with bridge 0.2.3 also `error_code`, `cleaning_mode`, `water_mode`, `fan_speed`, `clean_area_m2`, `clean_time_s`, `run_progress_pct`, `mode_restore_pending`, `bridge_version`
 - `POST /command` with `{"action": "start|stop|pause|dock|clean_rooms|set_mode", "rooms": [ids], "mode": "vacuum|vac_and_mop|mop"}`
 
@@ -14,7 +14,7 @@ The driver talks to the Roborock LAN HTTP bridge in `tools/roborock-bridge` (run
 
 | Property | Type | Default | Notes |
 |---|---|---|---|
-| Bridge Host | string | 172.21.1.157 | Bridge address |
+| Bridge Host | string | 192.0.2.10 | Bridge address |
 | Bridge Port | 1-65535 | 8788 | Bridge port |
 | Poll Interval | 5-3600 s | 15 | The driver polls every 5 s while the robot is cleaning, returning or busy at the dock |
 | Laundry Room ID | 0-9999 | 0 | Room id for the laundry events (21 in this home); 0 turns them off |

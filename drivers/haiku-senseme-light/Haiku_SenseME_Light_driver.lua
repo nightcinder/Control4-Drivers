@@ -1,6 +1,6 @@
 --[[
   Haiku SenseME Light (child) driver for Control4 (OS 3.4.x)
-  Version: 404
+  Version: 405
   404: command descriptions show device name and parameter values in Composer programming.
   One instance = the light kit of one Big Ass Fans Haiku / i6 fan. It has no network settings: bind its
   "Haiku Fan" connection to the "Light Kit Link" connection of that fan's "Haiku SenseME Fan" driver.
@@ -10,11 +10,12 @@
     from fan: HK_LIGHT {POWER, LEVEL, HASLIGHT, ONLINE, FANNAME}, HK_HELLO
 ]]
 
-local DRIVER_VERSION = "404"
+local DRIVER_VERSION = "405"
 local PROXY_BINDING = 5001
 local FAN_LINK = 1
 
 local state = { power = "OFF", level = 0, online = false, hasLight = nil }
+local startTimer = nil
 
 local function prop(name)
   local ok, v = pcall(function() return Properties[name] end)
@@ -68,7 +69,14 @@ function OnDriverLateInit()
   setProp("Driver Version", DRIVER_VERSION)
   setProp("Status", "Starting")
   -- Give the fan driver a moment to start, then register.
-  pcall(function() C4:SetTimer(3000, function() register() end) end)
+  local ok, timer = pcall(function()
+    return C4:SetTimer(3000, function() startTimer = nil; register() end)
+  end)
+  if ok then startTimer = timer end
+end
+
+function OnDriverDestroyed()
+  if startTimer then pcall(function() startTimer:Cancel() end); startTimer = nil end
 end
 
 function OnBindingChanged(idBinding, strClass, bIsBound, otherDeviceId, otherBindingId)

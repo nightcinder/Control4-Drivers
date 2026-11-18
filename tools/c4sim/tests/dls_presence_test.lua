@@ -43,7 +43,7 @@ local function ln(...) return table.concat({ ... }, " ") .. "\r\n" end
 -- Feed raw TCP data to OnServerDataIn; return the reply text for this call only.
 local function send(data)
   replies = {}
-  sim.call("OnServerDataIn", 1, data, "10.0.0.5", 50000)
+  sim.call("OnServerDataIn", 1, data, "192.0.2.5", 50000)
   return table.concat(replies)
 end
 

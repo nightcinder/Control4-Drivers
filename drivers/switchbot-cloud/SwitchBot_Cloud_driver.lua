@@ -1,6 +1,6 @@
 --[[
   SwitchBot Cloud (parent) driver for Control4 (OS 3.4.x)
-  Version: 2.1.1
+  Version: 2.1.2
   Changelog 2.1.1: descriptions show device name and parameter values in Composer programming
   Holds the SwitchBot Token and Secret, talks to the cloud API v1.1, polls status, and serves any number of
   "SwitchBot Curtain" child drivers bound to its SWITCHBOT_CLOUD connection. Never log Token or Secret.
@@ -10,7 +10,7 @@
     parent -> child: SB_STATUS {DEVICE_ID, POSITION, MOVING, BATTERY}, SB_PARENT_STATUS {TEXT}, SB_HELLO
 ]]
 
-local DRIVER_VERSION = "2.1.1"
+local DRIVER_VERSION = "2.1.2"
 local API_BASE = "https://api.switch-bot.com/v1.1"
 local CLOUD_BINDING = 1
 local SUPPORTED_TYPES = { ["Curtain"] = true, ["Curtain3"] = true, ["Blind Tilt"] = true }
@@ -306,6 +306,7 @@ end
 -- Driver state and helpers
 -- ============================================================================
 local state = { failures = 0, pollTimer = nil, children = {}, lastStatus = nil, deviceList = "None" }
+local startTimers = {}
 
 local function prop(name)
   local ok, v = pcall(function() return Properties[name] end)
@@ -549,12 +550,23 @@ function OnDriverInit()
   schedulePoll(false)
 end
 
+local function startTimer(ms, fn)
+  local ok, timer = pcall(function() return C4:SetTimer(ms, fn) end)
+  if ok then startTimers[#startTimers + 1] = timer end
+end
+
 function OnDriverLateInit()
-  if (prop("Token") or "") ~= "" then pcall(function() C4:SetTimer(1500, function() discover() end) end) end
+  if (prop("Token") or "") ~= "" then startTimer(1500, function() discover() end) end
   -- Ask any bound children to register their device IDs.
-  pcall(function() C4:SetTimer(2000, function()
+  startTimer(2000, function()
     for _, id in ipairs(childIds()) do sendToChild(id, "SB_HELLO", {}) end
-  end) end)
+  end)
+end
+
+function OnDriverDestroyed()
+  if state.pollTimer then pcall(function() state.pollTimer:Cancel() end); state.pollTimer = nil end
+  for _, timer in ipairs(startTimers) do pcall(function() timer:Cancel() end) end
+  startTimers = {}
 end
 
 function OnBindingChanged(idBinding, strClass, bIsBound, otherDeviceId, otherBindingId)

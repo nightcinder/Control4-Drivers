@@ -34,7 +34,7 @@ t.test("url requests are recorded and answered on advance", function()
   sim.reset()
   sim.queue_http("/state$", '{"on":true}', 200)
   local got
-  C4:urlGet("http://10.0.0.5/state", {}, function(ctx, data, code, _, err)
+  C4:urlGet("http://192.0.2.5/state", {}, function(ctx, data, code, _, err)
     got = { ctx = ctx, data = data, code = code, err = err }
   end, "ctx1")
   t.eq(#sim.http, 1, "recorded")
@@ -59,7 +59,7 @@ t.test("network sends are recorded and receive calls ReceivedFromNetwork", funct
   sim.reset()
   local got
   _G.ReceivedFromNetwork = function(b, p, d) got = { b, p, d } end
-  C4:CreateNetworkConnection(7, "10.0.0.9", "TCP")
+  C4:CreateNetworkConnection(7, "192.0.2.9", "TCP")
   NetConnect(7, 4000, "TCP")
   SendToNetwork(7, 4000, "hi")
   t.eq(sim.net.sent[1].data, "hi", "sent")

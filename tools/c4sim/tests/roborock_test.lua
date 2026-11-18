@@ -78,7 +78,10 @@ local function start(opts)
   opts = opts or {}
   local ok = sim.load_driver(DRV, {
     xml = XML,
-    properties = { ["Poll Interval"] = "5", ["Laundry Room ID"] = opts.laundry or "21", ["Log Mode"] = "Print" },
+    properties = {
+      ["Bridge Host"] = "192.0.2.10", ["Poll Interval"] = "5",
+      ["Laundry Room ID"] = opts.laundry or "21", ["Log Mode"] = "Print",
+    },
     persist = opts.persist,
   })
   t.ok(ok, "load: " .. tostring(sim.errors[1]))
@@ -128,7 +131,7 @@ end
 t.test("loads; version label and every updated property exist in driver.xml", function()
   start()
   step({ state = "charging" })
-  t.eq(P("Driver Version"), "0.7.1", "Driver Version")
+  t.eq(P("Driver Version"), "0.7.2", "Driver Version")
   t.eq(P("Status"), "Connected", "Status")
   local declared = {}
   for _, n in ipairs(sim.xml_names) do declared[n] = true end
