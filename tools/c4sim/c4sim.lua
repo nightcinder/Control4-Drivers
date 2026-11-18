@@ -343,13 +343,18 @@ function C4:GetTime()
 end
 
 function C4:SetTimer(ms, fn, repeating)
+  if type(ms) ~= "number" then error("SetTimer: interval must be a number", 2) end
+  if type(fn) ~= "function" then error("SetTimer: callback must be a function", 2) end
   return add_timer(ms, fn, repeating, nil)
 end
 
 -- AddTimer(interval, units, repeating): returns an id and fires global OnTimerExpired(id).
 -- Control4 never calls a handler named in a 4th argument (see the intellifire driver notes).
 function C4:AddTimer(interval, units, repeating)
-  local mult = UNITS[string.upper(tostring(units or "MILLISECONDS"))] or 1
+  if type(interval) ~= "number" then error("AddTimer: interval must be a number", 2) end
+  local unitName = string.upper(tostring(units or "MILLISECONDS"))
+  local mult = UNITS[unitName]
+  if not mult then error("AddTimer: units must be MILLISECONDS, SECONDS, MINUTES or HOURS", 2) end
   sim._timerSeq = sim._timerSeq + 1
   local id = sim._timerSeq
   local tm = add_timer((tonumber(interval) or 0) * mult, function()
