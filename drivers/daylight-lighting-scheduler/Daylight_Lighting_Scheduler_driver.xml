@@ -1,5 +1,5 @@
 <devicedata>
-  <version>26</version>
+  <version>27</version>
   <manufacturer>Nick Adamany</manufacturer>
   <name>Daylight Lighting Scheduler</name>
   <model>DLS</model>
@@ -54,6 +54,17 @@
         <name>Presence Off Delay (sec)</name>
         <type>NUMBER</type>
         <default>180</default>
+      </property>
+      <property>
+        <name>Light Timeout (sec)</name>
+        <type>NUMBER</type>
+        <default>90</default>
+      </property>
+      <property>
+        <name>Offline Lights</name>
+        <type>STRING</type>
+        <default></default>
+        <readonly>true</readonly>
       </property>
       <property>
         <name>Presence Room State</name>
@@ -284,6 +295,16 @@
       <id>5</id>
       <name>Lighting Held</name>
       <description>A light was changed by hand and is being held at that level. The room is in Last Event.</description>
+    </event>
+    <event>
+      <id>6</id>
+      <name>Light Not Responding</name>
+      <description>A light did not confirm a level command within the light timeout. Last Event carries the light id.</description>
+    </event>
+    <event>
+      <id>7</id>
+      <name>Light Responding Again</name>
+      <description>A light that had stopped responding confirmed a command again. Last Event carries the light id.</description>
     </event>
   </events>
 </devicedata>
