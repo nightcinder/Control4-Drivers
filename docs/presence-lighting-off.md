@@ -1,6 +1,6 @@
 # Presence Lighting Off — what should happen to follow-me rooms?
 
-Status: recommendation, not yet implemented. Open audit decision from the 1.11.x DLS review.
+Status: implemented in DLS 1.16.0 and hardened in 1.16.1 (release path, schedule ownership, in-flight fade).
 
 ## The question
 
@@ -12,7 +12,7 @@ should happen to a room that follow-me has already turned on?
 2. **Release it** — drop the room out of presence control and hand it back to the normal DLS schedule
    (daylight ramp, room on/off window, night level).
 
-## Recommendation: release, do not park
+## Decision: release, do not park
 
 Turn every follow-me room back to the schedule the moment `Presence Lighting` goes Off.
 
