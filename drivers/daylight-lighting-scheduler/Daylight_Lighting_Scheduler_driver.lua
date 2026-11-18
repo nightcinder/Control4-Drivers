@@ -1,7 +1,10 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.8
+  DRIVER_VERSION: 1.16.9
 
+  1.16.9: "Presence Room" is a STRING, not a LIST. This firmware ignores C4:UpdatePropertyList in both
+  documented forms (the picker showed only "-"), so the room is chosen by typing its name from the Rooms
+  JSON. Matched exactly; an unknown name does nothing and says so in Presence Room State.
   1.16.8: the real load crash. C4:UpdatePropertyList raises "staValuelist should be a string" on this
   firmware when handed the documented table form, and that raise inside loadRooms killed the driver at
   load (no listener on 8730, no schedule, lights left on). Both call forms are now tried inside pcall,
@@ -104,7 +107,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.8"
+DRIVER_VERSION = "1.16.9"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -601,20 +604,15 @@ local function syncPresenceUI()
 end
 
 local function refreshPresenceRoomList()
+  -- 1.16.9: dynamic LIST items are not settable on this firmware (both call forms are ignored), so
+  -- "Presence Room" is a STRING the installer types. Nothing to populate; just make sure the value
+  -- names a room that exists, and point it at the first room on a first run.
   local names = {}
   for _, r in ipairs(rooms) do names[#names + 1] = r.name end
   if #names == 0 then return end
-  if not propList("Presence Room", names) then
-    if not listRefused then
-      listRefused = true
-      dbg("presence room list unavailable on this firmware")
-      prop("Presence Room State", "Room picker unavailable: set the room name in Presence Room")
-    end
-    return
-  end
-  if not Properties["Presence Room"] or Properties["Presence Room"] == "" then
-    prop("Presence Room", names[1])
-  end
+  local want = Properties["Presence Room"]
+  for _, n in ipairs(names) do if n == want then return end end
+  if want == nil or want == "" or want == "-" then prop("Presence Room", names[1]) end
 end
 
 local function savePresenceUI()
