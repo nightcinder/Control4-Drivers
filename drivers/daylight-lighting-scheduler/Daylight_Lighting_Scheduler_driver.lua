@@ -1,7 +1,11 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.7
+  DRIVER_VERSION: 1.16.8
 
+  1.16.8: the real load crash. C4:UpdatePropertyList raises "staValuelist should be a string" on this
+  firmware when handed the documented table form, and that raise inside loadRooms killed the driver at
+  load (no listener on 8730, no schedule, lights left on). Both call forms are now tried inside pcall,
+  the accepted one is remembered, and if neither works the picker says so instead of dying.
   1.16.7: crash-proofing after the 2026-11-17 import left the driver loaded but not running (no
   listener on 8730, no schedule, lights on all night). Every property write now goes through a pcall,
   "Presence Off Delay (sec)" is written as a number rather than a string, and OnDriverLateInit catches a
@@ -100,7 +104,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.7"
+DRIVER_VERSION = "1.16.8"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -145,10 +149,26 @@ local function prop(name, value)
   return ok
 end
 
+-- 1.16.8: this controller's binding wants a STRING ("staValuelist should be a string"), while the
+-- documented form is a table. Try both, never raise, and report which one the firmware accepted once.
+local listForm = nil
+local listRefused = false
 local function propList(name, list)
-  local ok, err = pcall(function() C4:UpdatePropertyList(name, list) end)
-  if not ok then dbg("property list write failed", tostring(name), tostring(err)) end
-  return ok
+  local functions = {
+    function() C4:UpdatePropertyList(name, list) end,
+    function() C4:UpdatePropertyList(name, table.concat(list, ",")) end,
+  }
+  local order = listForm and { listForm, 3 - listForm } or { 1, 2 }
+  for _, i in ipairs(order) do
+    local ok, err = pcall(functions[i])
+    if ok then
+      if listForm ~= i then dbg("property list form", tostring(name), i == 1 and "table" or "comma string", tostring(#list)) end
+      listForm = i
+      return true
+    end
+    if not listForm then dbg("property list write failed", tostring(name), i == 1 and "table" or "comma string", tostring(err)) end
+  end
+  return false
 end
 
 local function setStatus(s)
@@ -584,7 +604,14 @@ local function refreshPresenceRoomList()
   local names = {}
   for _, r in ipairs(rooms) do names[#names + 1] = r.name end
   if #names == 0 then return end
-  propList("Presence Room", names)
+  if not propList("Presence Room", names) then
+    if not listRefused then
+      listRefused = true
+      dbg("presence room list unavailable on this firmware")
+      prop("Presence Room State", "Room picker unavailable: set the room name in Presence Room")
+    end
+    return
+  end
   if not Properties["Presence Room"] or Properties["Presence Room"] == "" then
     prop("Presence Room", names[1])
   end

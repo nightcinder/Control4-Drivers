@@ -22,6 +22,8 @@ import xml.etree.ElementTree as ET
 import zipfile
 from io import BytesIO
 
+from check_public import is_text, scan_text
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DRIVERS = os.path.join(ROOT, "drivers")
 DIST = os.path.join(ROOT, "c4z")
@@ -295,6 +297,13 @@ def check_folder(path, xml_override=None, version_check=True):
     xml_rel, lua_rel = names
     raw = files[xml_rel]
 
+    # S001. the repository is public: no private addresses, personal paths or credentials in a driver folder.
+    for rel, data in files.items():
+        if not is_text(rel, data):
+            continue
+        for lineno, kind, text in scan_text(data.decode("utf-8", "replace")):
+            fail("S001", f"{rel}:{lineno} {kind} ({text})")
+
     # a. driver.xml starts directly with <devicedata>, no BOM, declaration or comment; it parses.
     if raw.startswith(BOM):
         fail("a", "driver.xml starts with a UTF-8 BOM")
@@ -376,8 +385,13 @@ def check_folder(path, xml_override=None, version_check=True):
     # uncommitted edit can still be checked and built; a commit that changes the source without rebuilding fails.
     if xml_override is None and head is not None:
         head_pkg = head_package_layout(expected)
-        if head_pkg is not None and sig(head) != sig(head_pkg):
-            fail("i", f"c4z/{expected} at HEAD does not match drivers/{name} at HEAD; rebuild and commit the package")
+        if head_pkg is not None:
+            if sig(head) != sig(head_pkg):
+                fail("i", f"c4z/{expected} at HEAD does not match drivers/{name} at HEAD; rebuild and commit the package")
+            src_v = xml_facts(head["driver.xml"])[1]
+            pkg_v = xml_facts(head_pkg["driver.xml"])[1]
+            if src_v is not None and pkg_v is not None and src_v != pkg_v:
+                fail("i", f"c4z/{expected} at HEAD has <version> {pkg_v} but the source at HEAD has {src_v}; rebuild it")
 
     # h (source folder contents, and icon references)
     refs = image_refs(root)
@@ -397,6 +411,8 @@ def check_folder(path, xml_override=None, version_check=True):
 
     # d. Lua syntax: 5.4 for the shared toolchain, and 5.1 for the controller runtime when it is installed.
     lua_bytes = files[lua_rel]
+    if lua_bytes.startswith(BOM):
+        fail("d", f"{lua_rel} starts with a UTF-8 BOM; the controller's Lua 5.1 loader does not skip it")
     for compiler, required in (("luac", True), ("luac5.1", False)):
         err = luac_error(lua_bytes, lua_rel, compiler)
         if err and "is not on PATH" in err:
@@ -846,6 +862,30 @@ def check_destroy(lua_rel, lua_text, fail):
         fail("L010", f"{lua_rel} starts timers or network connections but defines no OnDriverDestroyed to stop them")
 
 
+def command_key(name):
+    """Command names are matched after removing punctuation and case; Composer and drivers do the same."""
+    return re.sub(r"[^A-Za-z0-9]", "", name).upper()
+
+
+def check_command_handlers(root, xml_rel, lua_rel, lua_text, fail):
+    """E002: every command in driver.xml must appear in the Lua, or nothing handles it."""
+    commands = commands_container(root)
+    if commands is None:
+        return
+    code = lua_no_comments(lua_text)
+    if COMMON_HANDLERS_RE.search(code):
+        return
+    normalized = command_key(code)
+    for cmd in commands.findall("command"):
+        name = (cmd.findtext("name") or "").strip()
+        if not name or name == "LUA_ACTION":
+            continue
+        key = command_key(name)
+        if key and key not in normalized:
+            fail("E002", f"{xml_rel} command '{name}' does not appear in {lua_rel}; Composer would send a command "
+                         "nothing handles")
+
+
 def check_params(root, xml_rel, fail, warn):
     """E001: every command and event parameter has a name, a type, and a name that is unique in its parent."""
     for container_tag, item_tag in (("commands", "command"), ("events", "event")):
@@ -881,6 +921,7 @@ def run_extra_checks(xml_rel, lua_rel, root, files, lua_text, fail, warn):
     check_html_refs(root, xml_rel, lua_rel, lua_text, files, fail)
     check_binding(root, xml_rel, warn)
     check_params(root, xml_rel, fail, warn)
+    check_command_handlers(root, xml_rel, lua_rel, lua_text, fail)
     check_lua51(lua_rel, lua_text, fail)
     check_lua_sandbox(lua_rel, lua_text, fail)
     check_duplicate_functions(lua_rel, lua_text, fail)

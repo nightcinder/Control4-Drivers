@@ -10,8 +10,18 @@ for i = 1, #arg do
   if name then
     sim.load_driver(luapath, { xml = (xml ~= "" and xml) or nil })
     for _ = 1, 600 do sim.advance(1000) end
+    -- Destroy must stop the driver's timers; a cancelled timer that still fires is an error.
+    sim.call("OnDriverDestroyed")
+    sim.advance(60000)
 
-    if #sim.errors > 0 then
+    local live = 0
+    for _, timer in ipairs(sim.timers) do
+      if not timer.cancelled then live = live + 1 end
+    end
+    if live > 0 then
+      fails = fails + 1
+      out("ERR " .. name .. ": " .. live .. " timer(s) still live after OnDriverDestroyed")
+    elseif #sim.errors > 0 then
       fails = fails + 1
       out("ERR " .. name .. ": " .. sim.errors[1])
     else

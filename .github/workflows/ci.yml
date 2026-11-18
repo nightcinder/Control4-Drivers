@@ -27,6 +27,12 @@ jobs:
           lua -v
           luac5.1 -v
 
+      - name: Public repo scan
+        run: python tools/check_public.py
+
+      - name: Public scan regression tests
+        run: python tools/test_check_public.py
+
       - name: Driver pre-flight checks
         run: python tools/check_c4z.py --all
 
