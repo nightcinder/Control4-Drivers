@@ -1,11 +1,11 @@
 <devicedata>
-  <version>24</version>
+  <version>26</version>
   <manufacturer>Nick Adamany</manufacturer>
   <name>Daylight Lighting Scheduler</name>
   <model>DLS</model>
   <creator>Nick Adamany</creator>
   <created>10/19/2026 7:30 PM</created>
-  <modified>11/17/2026 08:01 PM</modified>
+  <modified>11/17/2026 08:07 PM</modified>
   <control>lua_gen</control>
   <controlmethod>other</controlmethod>
   <driver>DriverWorks</driver>
@@ -18,7 +18,7 @@
       <property>
         <name>Driver Version</name>
         <type>STRING</type>
-        <default>1.12.0</default>
+        <default>1.13.0</default>
         <readonly>true</readonly>
       </property>
       <property>
@@ -31,6 +31,34 @@
         <name>Last Event</name>
         <type>STRING</type>
         <default></default>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Presence Room</name>
+        <type>LIST</type>
+        <default></default>
+        <items>
+          <item>-</item>
+        </items>
+      </property>
+      <property>
+        <name>Presence Follow</name>
+        <type>LIST</type>
+        <default>Follow</default>
+        <items>
+          <item>Follow</item>
+          <item>Off</item>
+        </items>
+      </property>
+      <property>
+        <name>Presence Off Delay (sec)</name>
+        <type>NUMBER</type>
+        <default>180</default>
+      </property>
+      <property>
+        <name>Presence Room State</name>
+        <type>STRING</type>
+        <default>-</default>
         <readonly>true</readonly>
       </property>
       <property>
