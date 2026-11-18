@@ -394,6 +394,10 @@ local function validate_property(name, value)
     error("UpdateProperty: " .. tostring(name) .. " is " .. def.type .. " but got " ..
       type(value) .. " (" .. tostring(value) .. ")", 2)
   end
+  if (def.type == "RANGED_INTEGER" or def.type == "INTEGER" or def.type == "LONG") and value % 1 ~= 0 then
+    error("UpdateProperty: " .. tostring(name) .. " is " .. def.type .. " but got the fraction " ..
+      tostring(value), 2)
+  end
   if (def.min and value < def.min) or (def.max and value > def.max) then
     error("UpdateProperty: " .. tostring(name) .. " value " .. tostring(value) .. " is outside " ..
       tostring(def.min) .. ".." .. tostring(def.max), 2)

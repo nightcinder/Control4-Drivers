@@ -806,6 +806,10 @@ LUA_TIMER_RE = re.compile(
 DESTROY_RE = re.compile(r"\bfunction\s+OnDriverDestroyed\s*\(|\bOnDriverDestroyed\s*=\s*function\b")
 ADD_TIMER_4ARG_RE = re.compile(r"\bC4\s*[:.]\s*AddTimer\s*\([^)\n]*,\s*(['\"])[^'\"\n]+\1\s*\)")
 ON_TIMER_EXPIRED_RE = re.compile(r"\bfunction\s+OnTimerExpired\s*\(|\bOnTimerExpired\s*=\s*function\b")
+NET_CLIENT_RE = re.compile(r"\bC4\s*[:.]\s*(?:CreateNetworkConnection|NetConnect)\b")
+NET_DISCONNECT_RE = re.compile(r"\bC4\s*[:.]\s*NetDisconnect\b")
+SERVER_CREATE_RE = re.compile(r"\bC4\s*[:.]\s*CreateServer\b")
+SERVER_DESTROY_RE = re.compile(r"\bC4\s*[:.]\s*DestroyServer\b")
 # DriverWorks methods a driver may call. An unknown name warns; a near-miss of a known name fails as a typo.
 KNOWN_C4_METHODS = {
     "AddDevice", "AddTimer", "AddVariable", "Base64Decode", "Base64Encode", "Bind", "CreateNetworkConnection",
@@ -885,6 +889,10 @@ def check_destroy(lua_rel, lua_text, fail):
     code = "\n".join(lua_code_lines(lua_text))
     if LUA_TIMER_RE.search(code) and not DESTROY_RE.search(code):
         fail("L010", f"{lua_rel} starts timers or network connections but defines no OnDriverDestroyed to stop them")
+    if NET_CLIENT_RE.search(code) and not NET_DISCONNECT_RE.search(code):
+        fail("L016", f"{lua_rel} opens a network connection but never calls C4:NetDisconnect")
+    if SERVER_CREATE_RE.search(code) and not SERVER_DESTROY_RE.search(code):
+        fail("L016", f"{lua_rel} creates a server but never calls C4:DestroyServer")
 
 
 def check_timers(lua_rel, lua_text, fail):

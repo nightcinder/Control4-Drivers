@@ -1,6 +1,6 @@
 <devicedata>
-  <version>12</version>
-  <modified>10/19/2026 06:55 PM</modified>
+  <version>13</version>
+  <modified>11/18/2026 12:34 AM</modified>
   <name>LIFX LAN Light</name>
   <model>LIFX LAN Light</model>
   <creator>Nick Adamany</creator>
@@ -67,7 +67,7 @@
         <name>Driver Version</name>
         <type>STRING</type>
         <readonly>true</readonly>
-        <default></default>
+        <default>1.1.2</default>
       </property>
       <property>
         <name>Status</name>
