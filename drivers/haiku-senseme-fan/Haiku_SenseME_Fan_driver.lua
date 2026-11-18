@@ -88,7 +88,7 @@ PF_IP_ADDRESS                = 120 -- string
 
 -- Root2 / Commit / Query / QueryResult field numbers
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION    = "403"
+DRIVER_VERSION    = "404"
 
 RF_ROOT2          = 2
 R2F_COMMIT        = 2
@@ -344,6 +344,7 @@ end
 
 function OnDriverDestroyed()
 	StopPolling()
+	pcall(function() C4:NetDisconnect(NET_BINDING, TCP_PORT) end)
 end
 
 function LoadProperties()
@@ -383,6 +384,7 @@ function BindTo(sIP)
 	end
 	if (sIP == g_boundIP and g_netOnline) then return end
 	LOG("Connecting (TCP) to " .. sIP .. ":" .. TCP_PORT)
+	pcall(function() C4:NetDisconnect(NET_BINDING, TCP_PORT) end)
 	local ok, err = pcall(function()
 		C4:CreateNetworkConnection(NET_BINDING, sIP)
 	end)

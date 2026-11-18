@@ -1,6 +1,6 @@
 -- LIFX LAN Light driver for Control4 (Light V2 proxy)
 -- DRIVER_VERSION is bumped inside this file; the filename stays the same.
-DRIVER_VERSION = "1.1.1"
+DRIVER_VERSION = "1.1.2"
 
 local PROXY    = 5001
 local NET_BCAST = 6001   -- UDP broadcast / discovery connection
@@ -475,6 +475,8 @@ end
 local function connect()
   local bc = deriveBroadcast()
   dbg("broadcast address", bc)
+  pcall(function() C4:NetDisconnect(NET_BCAST, PORT) end)
+  pcall(function() C4:NetDisconnect(NET_BULB, PORT) end)
   C4:CreateNetworkConnection(NET_BCAST, bc, "UDP")
   C4:NetConnect(NET_BCAST, PORT, "UDP")
   local ip = unicast()
@@ -522,6 +524,8 @@ end
 
 function OnDriverDestroyed()
   if pollTimer then pollTimer:Cancel() end
+  pcall(function() C4:NetDisconnect(NET_BCAST, PORT) end)
+  pcall(function() C4:NetDisconnect(NET_BULB, PORT) end)
 end
 
 function OnPropertyChanged(strProperty)

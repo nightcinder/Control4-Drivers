@@ -255,6 +255,26 @@ class TimerApiTests(unittest.TestCase):
         self.assertEqual(self.fails(text), [])
 
 
+class NetworkTeardownTests(unittest.TestCase):
+    def fails(self, text):
+        out = []
+        check_destroy("driver.lua", text, lambda c, m: out.append(m))
+        return out
+
+    def test_netconnect_without_disconnect_fails(self):
+        fails = self.fails('C4:NetConnect(6001, 1234, "TCP")\nfunction OnDriverDestroyed() end')
+        self.assertTrue(any("NetDisconnect" in f for f in fails), fails)
+
+    def test_create_server_without_destroy_fails(self):
+        fails = self.fails("C4:CreateServer(8730)\nfunction OnDriverDestroyed() end")
+        self.assertTrue(any("DestroyServer" in f for f in fails), fails)
+
+    def test_teardown_passes(self):
+        text = ('C4:NetConnect(6001, 1234, "TCP")\nC4:CreateServer(8730)\n'
+                'function OnDriverDestroyed() C4:NetDisconnect(6001, 1234) C4:DestroyServer() end')
+        self.assertEqual(self.fails(text), [])
+
+
 class CommandHandlerTests(unittest.TestCase):
     def fails(self, xml_text, lua_text):
         root = ET.fromstring(xml_text)

@@ -78,6 +78,7 @@ t.test("UpdateProperty rejects a string or out-of-range value for a numeric prop
   os.remove(lua)
   os.remove(xml)
   t.ok(not pcall(function() C4:UpdateProperty("Level", "5") end), "string rejected")
+  t.ok(not pcall(function() C4:UpdateProperty("Level", 7.5) end), "fraction rejected")
   t.ok(not pcall(function() C4:UpdateProperty("Level", 99) end), "range rejected")
   t.ok(pcall(function() C4:UpdateProperty("Level", 7) end), "number accepted")
 end)

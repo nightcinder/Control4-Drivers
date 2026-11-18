@@ -68,6 +68,7 @@ The Lua and programming-interface checks below also fail the build:
 - **L012** a numeric property must be written with a number, not a string literal or `tostring(...)`.
 - **L014** `C4:AddTimer` takes `(interval, units, repeating)`. A handler name in a 4th argument is ignored.
 - **L015** a driver that uses `C4:AddTimer` must define the global `OnTimerExpired(id)`; otherwise its timers never run.
+- **L016** a driver that opens a network connection or server must call `C4:NetDisconnect` or `C4:DestroyServer`, so a reload does not leave the socket or port open.
 - **E001** every `<command>` and `<event>` `<param>` has a `<name>` and a `<type>`, the name is unique in that command/event, and the type is a known one.
 - **E002** every `<command>` name appears in the Lua (punctuation and case are ignored), so Composer cannot send a command nothing handles. Drivers using `drivers-common-public.global.handlers` are exempt.
 - **S001** no private IPv4 address, personal home path or credential-like token in the driver folder. The repository is public.
