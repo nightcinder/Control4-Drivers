@@ -1,11 +1,7 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.1
+  DRIVER_VERSION: 1.16.0
 
-  1.16.1: audit fixes. The schedule now owns follow rooms whenever Presence Lighting is Off (it used to keep
-  them parked, and presence kept driving them), per-light holds no longer block the room release, an in-flight
-  fade is cancelled cleanly, the offline deadline is not refreshed by repeated identical commands, and a light
-  that has ever reported stays eligible across reloads.
   1.16.0: Presence Lighting Off now releases presence-driven rooms back to the schedule (see
   docs/presence-lighting-off.md). Manual holds and per-light holds survive; a Room Vacant event fires for each
   room released, so automation sees the hand-back.
@@ -82,7 +78,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.1"
+DRIVER_VERSION = "1.16.0"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -417,11 +413,7 @@ local function sendLevel(light, level, ms)
   light.fbLast = light.rampFrom
   light.ignoreUntil = os.time() + math.ceil(ms / 1000) + 10
   -- 1.14.0: did the light actually take the command? Checked once a second in the presence tick.
-  -- 1.16.1: a re-command of the same target keeps the original deadline, otherwise a dead light that is
-  -- re-commanded every tick would never time out.
-  if not (light.pending and math.abs(light.pending.level - lvl) <= 2) then
-    light.pending = { level = lvl, deadline = os.time() + (tonumber(Properties["Light Timeout (sec)"]) or 90) }
-  end
+  light.pending = { level = lvl, deadline = os.time() + (tonumber(Properties["Light Timeout (sec)"]) or 90) }
   dbg("level", tostring(light.id), tostring(math.floor(level + 0.5)), "ms", tostring(ms))
 end
 
@@ -453,13 +445,7 @@ local function checkLightConfirmations(now)
   for _, room in ipairs(rooms) do
     for _, light in ipairs(room.lights or {}) do
       local p = light.pending
-      if p and math.abs(math.floor(curLevel(light) + 0.5) - p.level) <= 2 and not light.fbSeen then
-        light.fbSeen = true
-        if type(PersistData) == "table" then
-          PersistData.lightSeen = type(PersistData.lightSeen) == "table" and PersistData.lightSeen or {}
-          PersistData.lightSeen[tostring(light.id)] = true
-        end
-      end
+      if p and math.abs(math.floor(curLevel(light) + 0.5) - p.level) <= 2 then light.fbSeen = true end
       -- never flag a light that has never confirmed anything: that is a wiring problem, not an outage
       if p and not light.fbSeen then p = nil light.pending = nil end
       if not p and light.offline and light.rampTo
@@ -514,7 +500,7 @@ local PR_VACANT, PR_OCCUPIED, PR_FADING, PR_HOLD = "VACANT", "OCCUPIED", "FADING
 local function presSelectedRoom()
   local want = Properties["Presence Room"]
   for _, r in ipairs(rooms) do if r.name == want then return r end end
-  return nil                                   -- stale selection: never silently retarget another room
+  return rooms[1]
 end
 
 local function syncPresenceUI()
@@ -535,10 +521,9 @@ local function refreshPresenceRoomList()
   for _, r in ipairs(rooms) do names[#names + 1] = r.name end
   if #names == 0 then return end
   C4:UpdatePropertyList("Presence Room", names)
-  local want = Properties["Presence Room"]
-  local found = false
-  for _, n in ipairs(names) do if n == want then found = true end end
-  if not found then C4:UpdateProperty("Presence Room", names[1]) end
+  if not Properties["Presence Room"] or Properties["Presence Room"] == "" then
+    C4:UpdateProperty("Presence Room", names[1])
+  end
 end
 
 local function savePresenceUI()
@@ -628,10 +613,8 @@ local function releasePresenceRooms()
   for _, room in ipairs(rooms) do
     local pr = room.pr
     if pr then
-      local held = (pr.state == PR_HOLD)          -- a hand-off hold is the only one that outlives the switch
+      local held = (pr.state == PR_HOLD) or anyHeld(room)
       pr.fadeAt, pr.offAt = nil, nil
-      for _, l in ipairs(room.lights or {}) do l.preFade = nil end
-      for _, l in ipairs(room.lights or {}) do l.pending = nil end
       if not held and pr.state ~= PR_VACANT then
         pr.state, pr.occIn = PR_VACANT, false
         released[#released + 1] = room
@@ -725,8 +708,6 @@ end
 -- Occupancy edge handling (T1-T4, T6, T13). immediate = AWAY command: rooms left empty fade at once.
 local function prSetOcc(room, now, newOcc, src, immediate)
   local pr = room.pr
-  if not presenceOn() then return end                     -- 1.16.1: switch Off means the schedule owns the room
-
   local was = pr.occIn
   pr.occIn = newOcc
   if newOcc then
@@ -763,7 +744,6 @@ end
 
 -- Turn the raw source (rawOcc, rawSrc) into occIn: allow-list, then the AWAY filter (section 8).
 local function prRecompute(room, now, immediate)
-  if not presenceOn() then return end
   local pr = room.pr
   local occ, src = false, pr.rawSrc or "clear"
   if pr.rawOcc then
@@ -851,9 +831,6 @@ end
 local function presenceTick()
   local now = os.time()
   checkLightConfirmations(now)
-  tickCount = (tickCount or 0) + 1
-  if tickCount % 5 == 0 then syncPresenceUI() end
-  if not presenceOn() then return end
   if not gateOpen and now >= gateUntil then
     gateOpen = true
     dbg("presence gate open (timeout)")
@@ -1263,9 +1240,8 @@ function Update()
 
       -- presence rooms (1.11.0): a follow room is driven by its presence state only; a non-follow room keeps the
       -- schedule except while FADING or HOLD
-      local prOwns = room.pr and room.pr.follow and presenceOn()
-      local prBlocks = room.pr and presenceOn() and not room.pr.follow
-        and (room.pr.state == PR_FADING or room.pr.state == PR_HOLD)
+      local prOwns = room.pr and room.pr.follow
+      local prBlocks = room.pr and not room.pr.follow and (room.pr.state == PR_FADING or room.pr.state == PR_HOLD)
       if prOwns then
         if room.pr.state == PR_OCCUPIED then presenceDrive(room, now, inWindow) end
         room.wasInWindow = inWindow
@@ -1375,12 +1351,8 @@ function Update()
   end
   runCurtains(now, lat, lon)
   local cp = cloudNow()
-  local offline = 0
-  for _, room in ipairs(rooms) do
-    for _, l in ipairs(room.lights or {}) do if l.offline then offline = offline + 1 end end
-  end
-  setStatus(presenceStatusPrefix() .. string.format("OK %s | lights driven: %d | rooms held: %d | lights held: %d | offline: %d | cloud: %s",
-    os.date("%H:%M", now), n, held, lightsHeld, offline, cp and (math.floor(cp) .. "%") or "n/a"))
+  setStatus(presenceStatusPrefix() .. string.format("OK %s | lights driven: %d | rooms held: %d | lights held: %d | cloud: %s",
+    os.date("%H:%M", now), n, held, lightsHeld, cp and (math.floor(cp) .. "%") or "n/a"))
 end
 
 ---------------------------------------------------------------------------
@@ -1521,8 +1493,6 @@ local function loadRooms(closeGate)
           if u and u > os.time() then light.overrideUntil = u end   -- 1.11.6: the hold had not expired when the driver reloaded
           if sh.o == true then light.offHold = true end
         end
-        if type(PersistData) == "table" and type(PersistData.lightSeen) == "table"
-           and PersistData.lightSeen[tostring(id)] then light.fbSeen = true end
         table.insert(room.lights, light)
         lightIndex[id] = room
         C4:UnregisterVariableListener(id, LIGHT_LEVEL_VAR)
@@ -1585,9 +1555,6 @@ local function loadRooms(closeGate)
   presenceWarn = table.concat(warns, "; ")
   dbg("rooms loaded", tostring(#rooms), "curtains", tostring(#curtains))
 end
-  refreshPresenceRoomList()
-  syncPresenceUI()
-  C4:UpdateProperty("Offline Lights", "")
 
 -- 1.11.9: one Lua error used to stop the repeating timer silently. Keep the timer alive and print the error.
 local function safeUpdate()
@@ -1631,10 +1598,8 @@ end
 
 function OnPropertyChanged(name)
   if name == "Rooms JSON" then loadRooms(true)
-  elseif name == "Presence Lighting" then
-    if Properties["Presence Lighting"] ~= "On" then releasePresenceRooms() end
-    safeUpdate()
-  elseif name == "Vacancy Delay (min)" then
+  elseif name == "Presence Lighting" or name == "Vacancy Delay (min)" then
+    if name == "Presence Lighting" and Properties["Presence Lighting"] ~= "On" then releasePresenceRooms() end
     loadRooms(true)
   elseif name == "Latitude" or name == "Longitude" then sunEvents.day = nil pollCloud()
   elseif name == "Update Interval (min)" or name == "Cloud Poll Interval (min)" then startTimers()
