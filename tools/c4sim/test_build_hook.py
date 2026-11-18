@@ -22,7 +22,8 @@ def make_repo(tmp):
     shutil.copytree(os.path.join(REPO, "tools"), os.path.join(tmp, "tools"),
                     ignore=shutil.ignore_patterns("__pycache__"))
     os.makedirs(os.path.join(tmp, "c4z"))
-    shutil.copytree(os.path.join(REPO, "drivers", DRIVER), os.path.join(tmp, "drivers", DRIVER))
+    # The build hook runs the whole c4sim suite, so every driver the tests load must exist.
+    shutil.copytree(os.path.join(REPO, "drivers"), os.path.join(tmp, "drivers"))
     return tmp
 
 

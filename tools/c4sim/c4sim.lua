@@ -98,6 +98,7 @@ function sim.reset(deviceId)
   sim.devvars = {}
   sim.persist = {}
   sim._store = {}
+  sim.prop_types = {}
   sim.xml_names = {}
   sim.env = nil
   sim.epoch = 1767225600          -- sim os.time() origin (2026-01-01 UTC)
@@ -250,7 +251,18 @@ local function parse_props(xml)
     local name = block:match("<name>%s*(.-)%s*</name>")
     if name then
       local def = block:match("<default[^>]*>(.-)</default>") or ""
-      list[#list + 1] = { name = unescape(name), default = unescape(def) }
+      local ptype = (block:match("<type>%s*(.-)%s*</type>") or ""):upper()
+      local items = {}
+      local itemBlock = block:match("<items>(.-)</items>")
+      if itemBlock then
+        for it in itemBlock:gmatch("<item>%s*(.-)%s*</item>") do items[#items + 1] = unescape(it) end
+      end
+      list[#list + 1] = {
+        name = unescape(name), default = unescape(def), type = ptype,
+        min = tonumber(block:match("<minimum>%s*(.-)%s*</minimum>")),
+        max = tonumber(block:match("<maximum>%s*(.-)%s*</maximum>")),
+        items = items,
+      }
     end
   end
   return list
@@ -298,6 +310,7 @@ function sim.load_driver(path, opts)
       xf:close()
       for _, p in ipairs(parse_props(xml)) do
         sim._store[p.name] = p.default
+        sim.prop_types[p.name] = p
         sim.xml_names[#sim.xml_names + 1] = p.name
         add_name(p.name)
       end
@@ -365,7 +378,30 @@ function C4:GetDeviceID()
   return sim.deviceId
 end
 
+local NUMERIC_PROP_TYPES = {
+  RANGED_INTEGER = true, RANGED_FLOAT = true, INTEGER = true, FLOAT = true, DOUBLE = true, LONG = true,
+}
+
+-- The controller raises when a numeric property is written with a string, or outside its range.
+local function validate_property(name, value)
+  local def = sim.prop_types[name]
+  if not def then
+    if next(sim.prop_types) ~= nil then add_warn("UpdateProperty: unknown property " .. tostring(name)) end
+    return
+  end
+  if not NUMERIC_PROP_TYPES[def.type] then return end
+  if type(value) ~= "number" then
+    error("UpdateProperty: " .. tostring(name) .. " is " .. def.type .. " but got " ..
+      type(value) .. " (" .. tostring(value) .. ")", 2)
+  end
+  if (def.min and value < def.min) or (def.max and value > def.max) then
+    error("UpdateProperty: " .. tostring(name) .. " value " .. tostring(value) .. " is outside " ..
+      tostring(def.min) .. ".." .. tostring(def.max), 2)
+  end
+end
+
 function C4:UpdateProperty(name, value)
+  validate_property(name, value)
   sim._store[name] = value
   sim.props_api[name] = true
   sim.props[#sim.props + 1] = { name = name, value = value, t = sim.now_ms }

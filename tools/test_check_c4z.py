@@ -15,7 +15,7 @@ sys.path.insert(0, HERE)
 
 from check_c4z import (  # noqa: E402
     check_c4_methods, check_command_descriptions, check_command_handlers, check_destroy, check_duplicate_functions,
-    check_lua51, check_lua_sandbox, check_lua_vs_xml, check_params, check_unique,
+    check_lua51, check_lua_sandbox, check_lua_vs_xml, check_params, check_timers, check_unique,
 )
 
 
@@ -236,6 +236,25 @@ class DestroyTests(unittest.TestCase):
         self.assertEqual(self.fails("C4:urlGet('http://x', {}, false, function() end)"), [])
 
 
+class TimerApiTests(unittest.TestCase):
+    def fails(self, text):
+        out = []
+        check_timers("driver.lua", text, lambda c, m: out.append(m))
+        return out
+
+    def test_fourth_argument_fails(self):
+        fails = self.fails('C4:AddTimer(60, "SECONDS", true, "OnPollTimer")')
+        self.assertTrue(any("4th argument" in f for f in fails), fails)
+
+    def test_missing_on_timer_expired_fails(self):
+        fails = self.fails('C4:AddTimer(60, "SECONDS", true)')
+        self.assertTrue(any("OnTimerExpired" in f for f in fails), fails)
+
+    def test_correct_usage_passes(self):
+        text = 'C4:AddTimer(60, "SECONDS", true)\nfunction OnTimerExpired(id) end\nfunction OnDriverDestroyed() end'
+        self.assertEqual(self.fails(text), [])
+
+
 class CommandHandlerTests(unittest.TestCase):
     def fails(self, xml_text, lua_text):
         root = ET.fromstring(xml_text)
@@ -278,6 +297,28 @@ class UpdatePropertyListTests(unittest.TestCase):
     def test_unknown_property_name_fails(self):
         fails = self.run_check('function OnPropertyChanged() end\nC4:UpdatePropertyList("Q", "a")')
         self.assertTrue(any("not a property" in f for f in fails), fails)
+
+
+class NumericPropertyWriteTests(unittest.TestCase):
+    def run_check(self, lua):
+        root = ET.fromstring(
+            "<devicedata><properties><property><name>Level</name><type>RANGED_INTEGER</type>"
+            "<minimum>1</minimum><maximum>10</maximum><default>5</default></property></properties></devicedata>")
+        fails = []
+        check_lua_vs_xml(root, "driver.xml", "driver.lua", "function OnPropertyChanged() end\n" + lua,
+                         lambda c, m: fails.append(m), lambda c, m: None)
+        return fails
+
+    def test_string_to_numeric_fails(self):
+        fails = self.run_check('C4:UpdateProperty("Level", "7")')
+        self.assertTrue(any("write a number" in f for f in fails), fails)
+
+    def test_tostring_to_numeric_fails(self):
+        fails = self.run_check('C4:UpdateProperty("Level", tostring(7))')
+        self.assertTrue(any("write a number" in f for f in fails), fails)
+
+    def test_number_passes(self):
+        self.assertEqual(self.run_check('C4:UpdateProperty("Level", 7)'), [])
 
 
 class ParamTests(unittest.TestCase):

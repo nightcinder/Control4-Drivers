@@ -7,6 +7,7 @@ Logic-only simulator for driver Lua. Code is in `tools/c4sim/`.
     python tools/c4sim/run.py smoke all
     python tools/c4sim/run.py smoke room-light-helper
     python tools/c4sim/run.py commands all
+    python tools/c4sim/run.py props all
     python tools/c4sim/run.py test all
 
 Output is terse: `ok <dir>`, `ERR <dir>: <first error line>`, `warn <dir>: ...`.
@@ -17,16 +18,21 @@ and advances another minute; a timer that still fires after destroy is reported 
 numbers, `true` for booleans) after load. This catches a handler that throws on a parameter shape the unit tests
 never used. Drivers whose ExecuteCommand comes from `drivers-common-public/global/handlers.lua` print `skip`.
 
-CI (`.github/workflows/ci.yml`) runs `check_c4z --all`, the checker tests, `smoke all`, `commands all` and `test all`
-on every push.
+`props` changes every property once, first to an alternate valid value and then to an empty string (LIST items and
+numeric ranges are respected), and calls `OnPropertyChanged` for each. This catches a property handler that throws
+on a value the unit tests never used.
+
+CI (`.github/workflows/ci.yml`) runs `check_c4z --all`, the checker tests, `smoke all`, `commands all`, `props all`
+and `test all` on every push. The same job runs the build-hook tests and the dls-presence, roborock-bridge and
+shield-bridge unit tests (Pillow is installed for the icon tests).
 The suite assumes `TZ=America/New_York` (the controller's timezone): several DLS tests pin local-clock times. CI sets it.
 
 ## Build hook
 
-`tools/build_c4z.py` runs the smoke and the command pump for the driver, then the whole test suite, after its
-pre-flight checks. The
+`tools/build_c4z.py` runs the smoke, the command pump and the property pump for the driver, then the whole test
+suite, after its pre-flight checks. The
 whole suite (not only `tests/<name>_test.lua`) is used because some drivers keep their tests under a group prefix:
-the DLS tests are `dls_*`, so a name-based lookup silently skipped all of them. Success prints at most three lines.
+the DLS tests are `dls_*`, so a name-based lookup silently skipped all of them. Success prints at most four lines.
 An ERR or failed test refuses the build. No `lua` means one "skipped" line and no refusal. `C4SIM_SKIP=1` bypasses it.
 
 ## Write a test
