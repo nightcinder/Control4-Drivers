@@ -507,17 +507,20 @@ KNOWN_PROPERTY_TYPES = {
     "LIST", "DEVICE_SELECTOR", "COLOR_SELECTOR", "TRACK", "LABEL", "CUSTOM_SELECT",
 }
 NUMERIC_TYPES = {"INTEGER", "LONG", "FLOAT", "DOUBLE"}
+NUMERIC_WRITE_TYPES = NUMERIC_TYPES | {"RANGED_INTEGER", "RANGED_FLOAT"}
 LUA_BLOCK_COMMENT_RE = re.compile(r"--\[(=*)\[.*?\]\1\]", re.S)
 PROP_READ_RE = re.compile(r"\bProperties\s*\[\s*([\"'])([^\"'\n]+)\1\s*\](?!\s*=(?!=))")
 PROP_DOT_READ_RE = re.compile(r"\bProperties\.([A-Za-z_]\w*)\b(?!\s*=(?!=))")
 PROP_DOT_WRITE_RE = re.compile(r"\bProperties\.([A-Za-z_]\w*)\s*=(?!=)")
 UPDATE_PROP_RE = re.compile(r"C4:UpdateProperty\s*\(\s*(['\"])([^'\"\n]+)\1")
+UPDATE_PROP_STRING_RE = re.compile(r"C4:UpdateProperty\s*\(\s*(['\"])([^'\"\n]+)\1\s*,\s*(['\"])([^'\"]*)\3")
+UPDATE_PROP_TOSTRING_RE = re.compile(r"C4:UpdateProperty\s*\(\s*(['\"])([^'\"\n]+)\1\s*,\s*tostring\s*\(")
 UPDATE_PROP_LIST_RE = re.compile(r"C4:UpdatePropertyList\s*\(\s*(['\"])([^'\"\n]+)\1")
 UPDATE_PROP_LIST_TABLE_RE = re.compile(r"C4:UpdatePropertyList\s*\(\s*(['\"])([^'\"\n]+)\1\s*,\s*\{")
 FIRE_EVENT_RE = re.compile(r"C4:FireEvent\s*\(\s*(['\"])([^'\"\n]+)\1")
 LOCAL_HANDLER_RE = re.compile(
-    r"\blocal\s+function\s+(ExecuteCommand|OnPropertyChanged|OnDriverLateInit|OnDriverInit)\b"
-    r"|\blocal\s+(ExecuteCommand|OnPropertyChanged|OnDriverLateInit|OnDriverInit)\s*="
+    r"\blocal\s+function\s+(ExecuteCommand|OnPropertyChanged|OnDriverLateInit|OnDriverInit|OnTimerExpired)\b"
+    r"|\blocal\s+(ExecuteCommand|OnPropertyChanged|OnDriverLateInit|OnDriverInit|OnTimerExpired)\s*="
 )
 HTML_REF_RE = re.compile(r"(?<![\w:/.\\-])([\w\-./]+\.html?)\b", re.I)
 
@@ -601,7 +604,9 @@ def check_unique(root, xml_rel, fail):
     groups = {
         "property name": [_child_text(p, "name") for p in root.iter("property")],
         "command name": [_child_text(c, "name") for c in (commands.findall("command") if commands is not None else [])],
+        "command id": [_child_text(c, "id") for c in (commands.findall("command") if commands is not None else [])],
         "event name": [_child_text(e, "name") for e in (events.findall("event") if events is not None else [])],
+        "event id": [_child_text(e, "id") for e in (events.findall("event") if events is not None else [])],
         "action name": [_child_text(a, "name") for a in root.findall("actions/action")],
         "connection id": [_child_text(c, "id") for c in root.iter("connection")],
         "connection name": [_child_text(c, "connectionname") for c in root.iter("connection")],
@@ -649,6 +654,7 @@ def check_lua_vs_xml(root, xml_rel, lua_rel, lua_text, fail, warn):
     code = lua_no_comments(lua_text)
     props = {_child_text(p, "name") for p in root.iter("property")}
     props.discard(None)
+    prop_types = {_child_text(p, "name"): (_child_text(p, "type") or "").upper() for p in root.iter("property")}
     lines = code.splitlines()
     for lineno, line in enumerate(lines, 1):
         for m in PROP_DOT_WRITE_RE.finditer(line):
@@ -663,6 +669,14 @@ def check_lua_vs_xml(root, xml_rel, lua_rel, lua_text, fail, warn):
             if m.group(2) not in props:
                 fail("L003", f"{lua_rel}:{lineno} calls C4:UpdateProperty('{m.group(2)}'), "
                              f"which is not a property in {xml_rel}")
+        for m in UPDATE_PROP_STRING_RE.finditer(line):
+            if prop_types.get(m.group(2)) in NUMERIC_WRITE_TYPES:
+                fail("L012", f"{lua_rel}:{lineno} writes the string {m.group(4)!r} to numeric property "
+                             f"'{m.group(2)}' ({prop_types[m.group(2)]}); write a number")
+        for m in UPDATE_PROP_TOSTRING_RE.finditer(line):
+            if prop_types.get(m.group(2)) in NUMERIC_WRITE_TYPES:
+                fail("L012", f"{lua_rel}:{lineno} writes tostring(...) to numeric property '{m.group(2)}' "
+                             f"({prop_types[m.group(2)]}); write a number")
         for m in UPDATE_PROP_LIST_RE.finditer(line):
             if m.group(2) not in props:
                 fail("L003", f"{lua_rel}:{lineno} calls C4:UpdatePropertyList('{m.group(2)}'), "
@@ -790,6 +804,8 @@ C4_CALL_RE = re.compile(r"\bC4\s*[:.]\s*([A-Za-z_]\w*)")
 LUA_TIMER_RE = re.compile(
     r"\bC4\s*[:.]\s*(?:SetTimer|AddTimer|CreateServer|CreateNetworkConnection|CreateTCPClient|NetConnect)\b")
 DESTROY_RE = re.compile(r"\bfunction\s+OnDriverDestroyed\s*\(|\bOnDriverDestroyed\s*=\s*function\b")
+ADD_TIMER_4ARG_RE = re.compile(r"\bC4\s*[:.]\s*AddTimer\s*\([^)\n]*,\s*(['\"])[^'\"\n]+\1\s*\)")
+ON_TIMER_EXPIRED_RE = re.compile(r"\bfunction\s+OnTimerExpired\s*\(|\bOnTimerExpired\s*=\s*function\b")
 # DriverWorks methods a driver may call. An unknown name warns; a near-miss of a known name fails as a typo.
 KNOWN_C4_METHODS = {
     "AddDevice", "AddTimer", "AddVariable", "Base64Decode", "Base64Encode", "Bind", "CreateNetworkConnection",
@@ -871,6 +887,18 @@ def check_destroy(lua_rel, lua_text, fail):
         fail("L010", f"{lua_rel} starts timers or network connections but defines no OnDriverDestroyed to stop them")
 
 
+def check_timers(lua_rel, lua_text, fail):
+    """L014: C4:AddTimer takes (interval, units, repeating), not a handler name.
+    L015: AddTimer fires the global OnTimerExpired(id), so it must exist."""
+    code = "\n".join(lua_code_lines(lua_text))
+    m = ADD_TIMER_4ARG_RE.search(code)
+    if m:
+        fail("L014", f"{lua_rel} passes a 4th argument to C4:AddTimer; Control4 ignores it and calls "
+                     "OnTimerExpired(id) instead")
+    if re.search(r"\bC4\s*[:.]\s*AddTimer\b", code) and not ON_TIMER_EXPIRED_RE.search(code):
+        fail("L015", f"{lua_rel} uses C4:AddTimer but defines no OnTimerExpired, so its timers never run")
+
+
 def command_key(name):
     """Command names are matched after removing punctuation and case; Composer and drivers do the same."""
     return re.sub(r"[^A-Za-z0-9]", "", name).upper()
@@ -936,6 +964,7 @@ def run_extra_checks(xml_rel, lua_rel, root, files, lua_text, fail, warn):
     check_duplicate_functions(lua_rel, lua_text, fail)
     check_c4_methods(lua_rel, lua_text, fail, warn)
     check_destroy(lua_rel, lua_text, fail)
+    check_timers(lua_rel, lua_text, fail)
 
 
 def driver_path(arg):

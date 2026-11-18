@@ -65,6 +65,9 @@ The Lua and programming-interface checks below also fail the build:
 - **L009** every `C4:<method>` call must be a known DriverWorks method. A near-miss (`C4:UpdatePropery`) is an error with the suggested name; an unknown name is a warning.
 - **L010** a driver that starts timers or network connections must define `OnDriverDestroyed` so a reload or import does not leave them running.
 - **L011** `C4:UpdatePropertyList` must be passed a comma-separated string, never a table literal. The controller raises "strValueList should be a string"; an uncaught raise in `OnDriverLateInit` leaves the driver loaded but not running.
+- **L012** a numeric property must be written with a number, not a string literal or `tostring(...)`.
+- **L014** `C4:AddTimer` takes `(interval, units, repeating)`. A handler name in a 4th argument is ignored.
+- **L015** a driver that uses `C4:AddTimer` must define the global `OnTimerExpired(id)`; otherwise its timers never run.
 - **E001** every `<command>` and `<event>` `<param>` has a `<name>` and a `<type>`, the name is unique in that command/event, and the type is a known one.
 - **E002** every `<command>` name appears in the Lua (punctuation and case are ignored), so Composer cannot send a command nothing handles. Drivers using `drivers-common-public.global.handlers` are exempt.
 - **S001** no private IPv4 address, personal home path or credential-like token in the driver folder. The repository is public.

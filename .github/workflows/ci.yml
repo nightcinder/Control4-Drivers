@@ -5,9 +5,16 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # The DLS tests pin local-clock times (sunrise, DST, bed time); the controller runs in this TZ.
       TZ: America/New_York
@@ -39,11 +46,26 @@ jobs:
       - name: Checker regression tests
         run: python tools/test_check_c4z.py
 
+      - name: Helper test dependency
+        run: python -m pip install --quiet pillow
+
+      - name: Bridge helper tests
+        run: |
+          python tools/dls-presence/test_dls_presence.py
+          python -m unittest discover -s tools/roborock-bridge -p "test_*.py"
+          python tools/shield-bridge/test_bridge.py
+
+      - name: Build-hook tests
+        run: python tools/c4sim/test_build_hook.py
+
       - name: Smoke every driver
         run: python tools/c4sim/run.py smoke all
 
       - name: Execute every command
         run: python tools/c4sim/run.py commands all
+
+      - name: Change every property
+        run: python tools/c4sim/run.py props all
 
       - name: Simulator tests
         run: python tools/c4sim/run.py test all
