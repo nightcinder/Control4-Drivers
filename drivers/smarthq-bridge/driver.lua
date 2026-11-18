@@ -1,6 +1,6 @@
 --[[
   SmartHQ Bridge (parent) for Control4 DriverWorks, OS 3.4.x
-  Version: 0.3.6  (UNTESTED in Composer/Director; see docs/smarthq.md)
+  Version: 0.3.7  (UNTESTED in Composer/Director; see docs/smarthq.md)
 
   0.3.6: creates missing child devices at runtime (C4:AddDevice) after each good /inventory
     poll, binds them to this driver, and sends them SH_CONFIGURE. Property "Auto Create Children"
@@ -23,8 +23,8 @@
                 SH_CONFIGURE {APPLIANCE_ID, APPLIANCE_TYPE}  (sent once to a child this driver created)
 ]]
 
-local DRIVER_VERSION = "0.3.6"
-local DEFAULT_HOST = "172.21.1.157"
+local DRIVER_VERSION = "0.3.7"
+local DEFAULT_HOST = ""
 local DEFAULT_PORT = "8789"
 local DEFAULT_POLL_SECONDS = 60
 local MIN_POLL_SECONDS = 30
@@ -117,6 +117,7 @@ end
 local function baseUrl()
   local host = prop("Host")
   if host == "" then host = DEFAULT_HOST end
+  if host == "" then return nil end
   local port = prop("Port")
   if port == "" then port = DEFAULT_PORT end
   return "http://" .. host .. ":" .. port
@@ -124,7 +125,12 @@ end
 
 -- handler(data, code, err). code 0 means no response.
 local function httpGet(path, handler)
-  local url = baseUrl() .. path
+  local base = baseUrl()
+  if not base then
+    handler(nil, 0, "Host is not set")
+    return
+  end
+  local url = base .. path
   local function onReply(_, data, code, _, err)
     handler(data, tonumber(code) or 0, err)
   end
@@ -570,9 +576,11 @@ end
 local function hoodCommand(replyCid, applianceId, level)
   if applianceId == "" then setStatus("Hood light: no appliance ID"); return end
   if not HOOD_LEVELS[level] then setStatus("Hood light: bad level " .. tostring(level)); return end
+  local base = baseUrl()
+  if not base then setStatus("Hood light: Host is not set"); return end
   local body = '{"action":"light","level":"' .. level .. '"}'
   local ok, perr = pcall(function()
-    C4:urlPost(baseUrl() .. "/appliances/" .. applianceId .. "/command", body,
+    C4:urlPost(base .. "/appliances/" .. applianceId .. "/command", body,
       { ["Content-Type"] = "application/json" }, false,
       function(_, data, code, _, err)
         local n = tonumber(code) or 0

@@ -12,16 +12,16 @@ Small LAN HTTP bridge around python-roborock (pinned 7.22.0). Polls the vacuum e
 - data/: volume for roborock.json (mode 600). Holds login tokens. Never commit it.
 
 ## Build
-    docker build -t roborock-bridge:0.2.3 /home/liesa/automation-pollers/roborock-bridge
+    docker build -t roborock-bridge:0.2.3 $HOME/automation-pollers/roborock-bridge
 
 The build path is the one used for 0.1.0 (from the stack notes). Confirm it on liesa before building.
 
 ## One-time login
 The container user is uid 10001, so give it ownership of data/ first:
 
-    sudo chown 10001:10001 /home/liesa/automation-pollers/roborock-bridge/data
-    cd /home/liesa/automation-pollers
-    docker run --rm -it -v /home/liesa/automation-pollers/roborock-bridge/data:/data roborock-bridge:0.2.3 python app.py login
+    sudo chown 10001:10001 $HOME/automation-pollers/roborock-bridge/data
+    cd $HOME/automation-pollers
+    docker run --rm -it -v $HOME/automation-pollers/roborock-bridge/data:/data roborock-bridge:0.2.3 python app.py login
 
 The login file from 0.1.0 is still valid; this step is only needed if the data/ folder is missing.
 

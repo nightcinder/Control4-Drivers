@@ -6,7 +6,7 @@ Reads appliance state from the LAN HTTP bridge running on liesa.
 
 ## Bridge
 
-- Base URL: `http://172.21.1.157:8789` (driver properties `Host` and `Port`)
+- Base URL: `http://192.0.2.10:8789` (driver properties `Host` and `Port`)
 - `GET /health`: 200 when healthy, 503 when stale or not logged in
 - `GET /appliances`: list of `{id, type, name, online}`
 - `GET /appliances/{id}/state`: flat JSON of readable values
@@ -86,7 +86,7 @@ The single driver (`drivers/smarthq`, 0.2.x) stays in place. 0.3.0 splits it int
 
 | Driver | Package | Role |
 |---|---|---|
-| SmartHQ Bridge | `c4z/smarthq-bridge.c4z` | Parent. Polls `GET /inventory` on the liesa bridge (172.21.1.157:8789) every Poll Interval seconds and pushes each appliance's state to its children. Action: Refresh Now. Event: Bridge Unreachable. |
+| SmartHQ Bridge | `c4z/smarthq-bridge.c4z` | Parent. Polls `GET /inventory` on the liesa bridge (192.0.2.10:8789) every Poll Interval seconds and pushes each appliance's state to its children. Action: Refresh Now. Event: Bridge Unreachable. |
 | SmartHQ Appliance | `c4z/smarthq-appliance.c4z` | Child, one per appliance. Set Appliance Type (Oven, Beverage Center, Dishwasher, Refrigerator, Washer, Dryer) and Appliance ID. Read-only state properties. Events: Oven Preheated, Oven Timer Done, Dishwasher Done, Washer Done, Dryer Done, Door Left Open. |
 | SmartHQ Hood Light | `c4z/smarthq-hood-light.c4z` | Child, one for the hood. A light_v2 proxy with off, dim and high. Writes go through the parent (`POST /appliances/{id}/command`, the same call as 0.2.x). |
 

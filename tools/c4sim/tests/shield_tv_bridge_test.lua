@@ -460,9 +460,9 @@ t.test("room mute variable is watched and reaches UI_STATE", function()
   t.ok(string.find(v, '"vol":35', 1, true) ~= nil, "volume 35")
 end)
 
-t.test("Driver Version is 1.5.1", function()
+t.test("Driver Version is 1.5.2", function()
   start(nil)
-  t.eq(sim._store["Driver Version"], "1.5.1", "driver version property")
+  t.eq(sim._store["Driver Version"], "1.5.2", "driver version property")
 end)
 
 t.finish("shield-tv-bridge")

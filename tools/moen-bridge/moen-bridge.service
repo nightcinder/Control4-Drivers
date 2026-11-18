@@ -6,8 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=liesa
-WorkingDirectory=/home/liesa
-ExecStart=/home/liesa/hk/bin/python /home/liesa/moen_bridge.py
+WorkingDirectory=%h
+ExecStart=%h/hk/bin/python %h/moen_bridge.py
 Restart=always
 RestartSec=10
 

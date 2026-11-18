@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-LUA_WIN = r"C:\Users\Nick\AppData\Local\Microsoft\WinGet\Links\lua.exe"
+LUA_WIN = os.path.expanduser(r"~\AppData\Local\Microsoft\WinGet\Links\lua.exe")
 
 
 def find_lua():

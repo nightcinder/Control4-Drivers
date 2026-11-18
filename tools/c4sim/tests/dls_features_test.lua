@@ -162,12 +162,12 @@ t.test("presence server buffers a split line and rejects an oversized one", func
   })
   t.ok(ok, "load: " .. tostring(sim.errors[1]))
   replies = {}
-  sim.call("OnServerDataIn", 1, "OCC Kitchen 1 esp to", "10.0.0.5", 50000)
+  sim.call("OnServerDataIn", 1, "OCC Kitchen 1 esp to", "192.0.2.5", 50000)
   t.eq(#replies, 0, "a partial line waits")
-  sim.call("OnServerDataIn", 1, "k\r\n", "10.0.0.5", 50000)
+  sim.call("OnServerDataIn", 1, "k\r\n", "192.0.2.5", 50000)
   t.ok(table.concat(replies):find("OK") ~= nil, "the completed line is accepted")
   replies = {}
-  sim.call("OnServerDataIn", 1, string.rep("X", 130) .. "\r\n", "10.0.0.5", 50000)
+  sim.call("OnServerDataIn", 1, string.rep("X", 130) .. "\r\n", "192.0.2.5", 50000)
   t.ok(table.concat(replies):find("ERR SYNTAX") ~= nil, "oversized line rejected")
 end)
 

@@ -5,8 +5,8 @@
 	<name>UniFi PDU Controls</name>
 	<model>UniFi PDU Controls</model>
 	<created>11/11/2026 12:00 PM</created>
-	<modified>11/12/2026 10:40 PM</modified>
-	<version>16</version>
+	<modified>11/18/2026 12:03 AM</modified>
+	<version>18</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -168,7 +168,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>1.0.12</default>
+				<default>1.0.13</default>
 			</property>
 		</properties>
 	</config>

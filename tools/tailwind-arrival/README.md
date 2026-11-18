@@ -7,8 +7,9 @@ after Android Auto. A door close while leaving is a no-op because the house is s
 
 ## Setup
 
-1. Copy the 6-digit Local Control Key from web.gotailwind.com (Local Control Key) into
-   `/home/liesa/automation-pollers/secrets/tailwind.env` as `TAILWIND_TOKEN=`.
+1. Put `TAILWIND_IP=<iQ3 LAN address>` and the 6-digit Local Control Key from
+   web.gotailwind.com (`TAILWIND_TOKEN=`) into the automation-pollers secrets env file
+   (`secrets/tailwind.env` in the stack folder).
 2. The same file needs `ARRIVAL_TOKEN` matching `dls-presence.env`.
 3. The container is `tailwind-arrival` in the `automation-pollers` Portainer stack. It mounts
    this directory at `/app`, the env file at `/run/tailwind.env`, and talks to

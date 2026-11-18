@@ -13,7 +13,7 @@ Intended as the Notion child page "Fable window 1 report 2026-11-15" under Smart
 - c4sim test all: roborock 37/0, room-light-helper 30/0, dls-presence 25/0, dls-extra 7/0, dls-edge-cases 7/0, dls-manual-override 1/0, selftest 11/0, stubs 8/0.
 - Bridge unittest: 32 tests OK (python-roborock mocked).
 - build_c4z.py roborock: built c4z/roborock.c4z, XML 18 -> 19. check_c4z.py roborock: ok; --all: 22 checked, 0 failures.
-- Working python on ixhel: C:\Users\Nick\AppData\Local\Python\bin\python.exe (py.exe and the Store alias are broken).
+- Working python on ixhel: `%LOCALAPPDATA%\Python\bin\python.exe` (py.exe and the Store alias are broken).
 - Live read-only GET of the bridge /state: docked, state "charging", battery 100, no error, 6 rooms (16-21), progress null.
 
 ### Untested

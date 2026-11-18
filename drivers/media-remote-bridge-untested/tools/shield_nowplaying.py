@@ -796,46 +796,46 @@ def run_once(cfg):
 
 def selftest():
     """Feed sample Plex and Jellyfin JSON through the parsers. No network, no adb, no token."""
-    shield = "172.21.1.186"
+    shield = "192.0.2.20"
     plex_episode = {"MediaContainer": {"size": 2, "Metadata": [
         {"type": "episode", "title": "Time for a Wedding!", "grandparentTitle": "Example Show",
          "parentIndex": 7, "index": 3, "year": 2019,
-         "Player": {"address": "172.21.1.186", "state": "playing",
+         "Player": {"address": "192.0.2.20", "state": "playing",
                     "title": "SHIELD Android TV", "product": "Plex for Android (TV)"}},
         {"type": "movie", "title": "Other Movie", "year": 2001,
-         "Player": {"address": "172.21.1.50", "state": "playing",
+         "Player": {"address": "192.0.2.50", "state": "playing",
                     "title": "Living Room Browser", "product": "Plex Web"}},
     ]}}
     plex_movie = {"MediaContainer": {"size": 1, "Metadata": [
         {"type": "movie", "title": "Example Movie", "year": 2019, "ratingKey": "1234",
-         "Player": {"address": "172.21.1.186", "state": "paused",
+         "Player": {"address": "192.0.2.20", "state": "paused",
                     "title": "SHIELD Android TV", "product": "Plex for Android (TV)"}},
     ]}}
     plex_other_only = {"MediaContainer": {"size": 1, "Metadata": [
         {"type": "movie", "title": "Other Movie", "year": 2001,
-         "Player": {"address": "172.21.1.50", "state": "playing",
+         "Player": {"address": "192.0.2.50", "state": "playing",
                     "title": "Living Room Browser", "product": "Plex Web"}},
     ]}}
     jf_episode = [
         {"Id": "s1", "DeviceName": "Shield", "Client": "Jellyfin Android TV",
-         "RemoteEndPoint": "172.21.1.186",
+         "RemoteEndPoint": "192.0.2.20",
          "NowPlayingItem": {"Type": "Episode", "SeriesName": "Example Show", "Name": "Time for a Wedding!",
                             "ParentIndexNumber": 7, "IndexNumber": 3},
          "PlayState": {"IsPaused": False, "PositionTicks": 123456789}},
         {"Id": "s2", "DeviceName": "Laptop", "Client": "Jellyfin Web",
-         "RemoteEndPoint": "172.21.1.50:51122",
+         "RemoteEndPoint": "192.0.2.50:51122",
          "NowPlayingItem": {"Type": "Movie", "Name": "Other Movie", "ProductionYear": 2001},
          "PlayState": {"IsPaused": False}},
     ]
     jf_movie = [
         {"Id": "s3", "DeviceName": "Shield TV", "Client": "Jellyfin Android TV",
-         "RemoteEndPoint": "172.21.1.186:41234",
+         "RemoteEndPoint": "192.0.2.20:41234",
          "NowPlayingItem": {"Type": "Movie", "Name": "Example Movie", "ProductionYear": 2019},
          "PlayState": {"IsPaused": True}},
     ]
     jf_fallback = [
         {"Id": "s4", "DeviceName": "Living Room Android TV", "Client": "Jellyfin Android TV",
-         "RemoteEndPoint": "10.0.0.9",
+         "RemoteEndPoint": "192.0.2.9",
          "NowPlayingItem": {"Type": "Episode", "SeriesName": "Example Show", "Name": "Pilot",
                             "ParentIndexNumber": 1, "IndexNumber": 1},
          "PlayState": {"IsPaused": False}},

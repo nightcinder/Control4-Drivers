@@ -1,6 +1,6 @@
 --[[
   Whisker Litter-Robot 4 cat visit counter via LAN HTTP bridge (Control4 DriverWorks, OS 3.4.x)
-  Version: 1.0.4  (UNTESTED on real Composer/Director)
+  Version: 1.0.5  (UNTESTED on real Composer/Director)
   1.0.4: descriptions show device name and parameter values in Composer programming.
 
   Polls GET /status on litter-bridge every Poll Interval seconds (5 s minimum).
@@ -10,8 +10,8 @@
   retried without firing the event again.
 ]]
 
-local DRIVER_VERSION = "1.0.4"
-local DEFAULT_HOST = "172.21.1.157"
+local DRIVER_VERSION = "1.0.5"
+local DEFAULT_HOST = ""
 local DEFAULT_PORT = "8793"
 local DEFAULT_POLL = 15
 local MIN_POLL = 5
@@ -91,6 +91,7 @@ end
 local function bridgeBase()
   local host = prop("Bridge Host")
   if host == "" then host = DEFAULT_HOST end
+  if host == "" then return nil end
   local port = tonumber(prop("Bridge Port")) or tonumber(DEFAULT_PORT)
   return "http://" .. host .. ":" .. tostring(port)
 end
@@ -119,7 +120,12 @@ end
 -- HTTP
 -- ============================================================================
 local function httpRequest(method, path, body, cb)
-  local url = bridgeBase() .. path
+  local base = bridgeBase()
+  if not base then
+    cb(false, nil, 0, "Bridge Host is not set")
+    return
+  end
+  local url = base .. path
   local headers = { ["Accept"] = "application/json" }
 
   local function onReply(_, data, code, _, err)

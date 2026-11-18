@@ -8,7 +8,7 @@ arrival turns the lights on immediately instead of waiting for the phone to leav
 Android Auto and join home Wi-Fi.
 
 Env (EnvironmentFile):
-  TAILWIND_IP      172.21.1.130
+  TAILWIND_IP      LAN address of the iQ3 (required)
   TAILWIND_TOKEN   6-digit Local Control Key from web.gotailwind.com
   ARRIVAL_URL      http://127.0.0.1:8731/arrival
   ARRIVAL_TOKEN    shared secret, same as in dls-presence.env
@@ -24,7 +24,7 @@ import time
 import urllib.error
 import urllib.request
 
-IP = os.environ.get("TAILWIND_IP", "172.21.1.130").strip()
+IP = os.environ.get("TAILWIND_IP", "").strip()
 TOKEN = os.environ.get("TAILWIND_TOKEN", "").strip()
 ARRIVAL_URL = os.environ.get("ARRIVAL_URL", "http://127.0.0.1:8731/arrival").strip()
 ARRIVAL_TOKEN = os.environ.get("ARRIVAL_TOKEN", "").strip()
@@ -93,6 +93,8 @@ def arrival(payload):
 
 def main():
     global TOKEN
+    if not IP:
+        sys.exit("TAILWIND_IP is empty: set it to the iQ3 LAN address in the environment file")
     if "--once" in sys.argv:
         if not TOKEN:
             TOKEN = read_token()

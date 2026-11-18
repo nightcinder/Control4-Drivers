@@ -1,6 +1,6 @@
 --[[
   SwitchBot Curtain (child) driver for Control4 (OS 3.4.x)
-  Version: 2.1.2
+  Version: 2.1.3
   Changelog 2.1.2: descriptions show device name and parameter values in Composer programming
   One instance = one window: a SwitchBot Curtain/Blind (Device), optionally a second unpaired motor
   (Second Device ID). It has no Token or Secret: bind its SwitchBot connection to a "SwitchBot Cloud"
@@ -11,7 +11,7 @@
     from parent: SB_STATUS {DEVICE_ID, POSITION, MOVING, BATTERY}, SB_PARENT_STATUS {TEXT}, SB_HELLO
 ]]
 
-local DRIVER_VERSION = "2.1.2"
+local DRIVER_VERSION = "2.1.3"
 local PROXY_BINDING = 5001
 local CLOUD_BINDING = 1
 local COMMAND_DEBOUNCE_MS = 800   -- rapid button presses collapse into the last one
@@ -32,6 +32,7 @@ local state = {
   holdUntil = 0,       -- os.time() until which a non-matching idle status is treated as stale
   dev = {},            -- latest status per device ID
 }
+local startTimers = {}
 
 local function prop(name)
   local ok, v = pcall(function() return Properties[name] end)
@@ -309,12 +310,24 @@ function OnDriverInit()
   setStatus("Starting")
 end
 
+local function startTimer(ms, fn)
+  local ok, timer = pcall(function() return C4:SetTimer(ms, fn) end)
+  if ok then startTimers[#startTimers + 1] = timer end
+end
+
 function OnDriverLateInit()
   state.proxySetup = false
   sendProxySetup()
-  pcall(function() C4:SetTimer(5000, function() sendProxySetup() end) end)
+  startTimer(5000, function() sendProxySetup() end)
   -- Give the parent a moment to start, then tell it which devices to poll.
-  pcall(function() C4:SetTimer(3000, function() register() end) end)
+  startTimer(3000, function() register() end)
+end
+
+function OnDriverDestroyed()
+  if state.followTimer then pcall(function() state.followTimer:Cancel() end); state.followTimer = nil end
+  if state.cmdTimer then pcall(function() state.cmdTimer:Cancel() end); state.cmdTimer = nil end
+  for _, timer in ipairs(startTimers) do pcall(function() timer:Cancel() end) end
+  startTimers = {}
 end
 
 function OnBindingChanged(idBinding, strClass, bIsBound, otherDeviceId, otherBindingId)

@@ -6,7 +6,7 @@
 -- proxy (5003, "Shield Remote") that opens the phone remote web page www/remote1.html.
 -- The App N Package properties are fallbacks, used only when no mini app is bound to the slot.
 
-local DRIVER_VERSION = "1.5.1"
+local DRIVER_VERSION = "1.5.2"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -277,6 +277,7 @@ end
 -- Builds base + path + ?query&shield=<name>.
 local function bridgeUrl(path, query)
   local base = trim(prop("Bridge URL"))
+  if base == "" then return nil end
   base = base:gsub("/+$", "")
   local q = "shield=" .. urlEncode(shieldName())
   if query and query ~= "" then
@@ -293,8 +294,13 @@ local function authHeaders()
 end
 
 local function httpGet(path, query, onDone)
-  pcall(function() C4:urlSetTimeout(10) end)
   local url = bridgeUrl(path, query)
+  if not url then
+    logMsg(LOG_WARN, "Bridge URL is not set")
+    pcall(onDone or function() end, nil, 0, "Bridge URL is not set")
+    return
+  end
+  pcall(function() C4:urlSetTimeout(10) end)
   local ok, err = pcall(function()
     C4:urlGet(url, authHeaders(), false, function(ticketId, strData, responseCode, tHeaders, strError)
       local okCb, cbErr = pcall(onDone or function() end, strData, responseCode, strError)
@@ -305,8 +311,13 @@ local function httpGet(path, query, onDone)
 end
 
 local function httpPost(path, query, onDone)
-  pcall(function() C4:urlSetTimeout(10) end)
   local url = bridgeUrl(path, query)
+  if not url then
+    logMsg(LOG_WARN, "Bridge URL is not set")
+    pcall(onDone or function() end, nil, 0, "Bridge URL is not set")
+    return
+  end
+  pcall(function() C4:urlSetTimeout(10) end)
   local ok, err = pcall(function()
     C4:urlPost(url, "", authHeaders(), false, function(ticketId, strData, responseCode, tHeaders, strError)
       local okCb, cbErr = pcall(onDone or function() end, strData, responseCode, strError)
@@ -439,6 +450,7 @@ local npCurrent = nil        -- { title, artist, album, state, art } or nil when
 local function artUrl(path, plain)
   if not path or path == "" then return "" end
   local base = string.gsub(trim(prop("Bridge URL")), "/+$", "")
+  if base == "" then return "" end
   local url = base .. path
   if not plain and prop("Cover Art Mode") ~= "Plain URL" then
     return C4:Base64Encode(url)
@@ -1042,6 +1054,7 @@ fetchInlineArt = function(path)
   artInline.pending = path
   artInline.pendingAt = os.time()
   local base = string.gsub(trim(prop("Bridge URL")), "/+$", "")
+  if base == "" then return end
   pcall(function()
     C4:urlGet(base .. path .. "?w=" .. ART_WIDTH, {}, false, function(ticket, data, code, headers, err)
       if artInline.pending ~= path then return end
