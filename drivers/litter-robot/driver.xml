@@ -5,8 +5,8 @@
 	<name>litter-robot</name>
 	<model>Whisker Litter-Robot 4 (LAN Bridge)</model>
 	<created>11/15/2026 09:00 AM</created>
-	<modified>11/18/2026 12:01 AM</modified>
-	<version>6</version>
+	<modified>11/18/2026 12:03 AM</modified>
+	<version>7</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
