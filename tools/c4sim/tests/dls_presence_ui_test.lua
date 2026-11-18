@@ -49,12 +49,14 @@ local function setprop(name, value)
   sim.call("OnPropertyChanged", name)
 end
 
-t.test("the room list is populated from the Rooms JSON", function()
+t.test("the room picker is a text field that starts on the first room", function()
   start()
-  local list = sim.prop_lists["Presence Room"]
-  t.ok(type(list) == "table", "Presence Room got a dynamic list")
-  t.eq(list and list[1], "Kitchen", "first room listed")
-  t.eq(list and list[2], "Hall", "second room listed")
+  -- 1.16.9: this firmware ignores dynamic LIST items in both call forms, so the picker is a STRING.
+  t.eq(sim._store["Presence Room"], "Kitchen", "defaults to the first room in the Rooms JSON")
+  setprop("Presence Room", "Hall")
+  t.eq(sim._store["Presence Room State"] ~= nil, true, "state refreshes for a typed room name")
+  setprop("Presence Room", "NoSuchRoom")
+  t.ok(tostring(sim._store["Presence Room State"]):find("Vacant") == nil, "an unknown room does not pretend to be another")
 end)
 
 t.test("selecting a room shows its follow mode, off delay and state", function()
