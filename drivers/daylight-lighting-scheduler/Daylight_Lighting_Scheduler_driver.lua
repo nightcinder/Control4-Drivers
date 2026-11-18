@@ -1,7 +1,11 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.4
+  DRIVER_VERSION: 1.16.5
 
+  1.16.5: scoped-audit fixes. No fade can start while the switch is Off (an AWAY edge used to reach prStartFade),
+  the gate timeout and the lost-feed detector keep running while Off, switching back On re-occupies from the last
+  occupancy without waiting for a new sensor edge, a release no longer wipes a per-light hold one cycle later,
+  a small hand-dim clears the outstanding command, and the offline note never overwrites a Disabled status.
   1.16.4: Presence Lighting Off now really hands the room back. The schedule owns every follow room while the
   switch is Off, presence issues no ramps at all, and the switch no longer reloads the rooms (which re-closed
   the 180 s gate and faded the room to black three minutes later). Only a hand-off hold survives the release.
@@ -89,7 +93,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.4"
+DRIVER_VERSION = "1.16.5"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -519,7 +523,9 @@ local function checkLightConfirmations(now)
     end
     table.sort(ids)
     C4:UpdateProperty("Offline Lights", table.concat(ids, ", "))
-    setStatus("Running")                                       -- 1.16.3: show the note immediately, not at the next tick
+    if Properties["Enabled"] == "On" then                       -- 1.16.5: never overwrite Disabled/Bad lat-lon
+      setStatus("Running")
+    end
   end
 end
 
@@ -653,7 +659,8 @@ local function releasePresenceRooms()
       pr.fadeAt, pr.offAt = nil, nil
       for _, l in ipairs(room.lights or {}) do l.preFade = nil; l.pending = nil end
       if not held and pr.state ~= PR_VACANT then
-        pr.state, pr.occIn = PR_VACANT, false
+        pr.state, pr.occIn = PR_VACANT, false   -- rawOcc is kept: switch-On recomputes from it, no new edge needed
+        room.released = true
         released[#released + 1] = room
       end
     end
@@ -718,6 +725,7 @@ end
 
 -- T5 / T10: clear every hold in the room and fade all lights that are on to 0 over fadeOutSec.
 local function prStartFade(room, now)
+  if Properties["Presence Lighting"] ~= "On" then return end   -- 1.16.5: not even from an AWAY edge
   local pr = room.pr
   if not gateOpen then return end                    -- no ramps while the gate is closed (reconcile does it)
   room.overrideUntil = nil
@@ -804,6 +812,7 @@ local function prReconcile(now)
     local pr = room.pr
     if pr then
       if pr.occIn then
+        room.released = nil
         pr.offAt = nil
         if pr.state ~= PR_HOLD then
           pr.state = PR_OCCUPIED
@@ -824,7 +833,10 @@ local function prReconcile(now)
           local wasVacant = (pr.state == PR_VACANT)
           pr.state = PR_VACANT
           if not wasVacant then fire("Room Vacant", room.name) end
-          for _, l in ipairs(room.lights) do l.offHold = nil end   -- no off hold outlives a vacancy
+          -- 1.16.5: a release must not destroy a per-light hold one switch-cycle later
+          if not room.released then
+            for _, l in ipairs(room.lights) do l.offHold = nil end
+          end
         end
       end
     end
@@ -871,7 +883,6 @@ local function presenceTick()
   tickCount = (tickCount or 0) + 1
   if tickCount % 5 == 0 then syncPresenceUI() end   -- 1.16.1: the state property is otherwise frozen
   checkLightConfirmations(now)
-  if Properties["Presence Lighting"] ~= "On" then return end   -- 1.16.4: no presence work while Off
   if not gateOpen and now >= gateUntil then
     gateOpen = true
     dbg("presence gate open (timeout)")
@@ -887,7 +898,8 @@ local function presenceTick()
       end
     end
     Update()   -- refresh Status now so "Presence feed lost" shows without waiting for the main timer
-  end
+  end  if Properties["Presence Lighting"] ~= "On" then return end   -- 1.16.5: the schedule owns every room while Off
+
   if not gateOpen then return end
   for _, room in ipairs(rooms) do
     local pr = room.pr
@@ -1400,6 +1412,12 @@ end
 -- override detection
 ---------------------------------------------------------------------------
 function OnWatchedVariableChanged(idDevice, idVariable, strValue)
+  -- 1.16.5: a hand on the dimmer that moves away from the pending target is not an outage, even by a few points
+  local earlyLight = lightIndex[tonumber(idDevice) or 0] and lightIndex[tonumber(idDevice) or 0].lights
+  for _, ml in ipairs((lightIndex[tonumber(idDevice) or 0] or {lights = {}}).lights or {}) do
+    if ml.id == tonumber(idDevice) and ml.pending and
+       math.abs((tonumber(strValue) or 0) - ml.pending.level) > 2 then ml.pending = nil end
+  end
   for _, r in ipairs(rooms) do
     if r.occ and r.occ.dev == idDevice and r.occ.var == idVariable then
       if strValue ~= nil then onOccupancy(r, parseOcc(strValue, r)) end
@@ -1646,7 +1664,15 @@ end
 function OnPropertyChanged(name)
   if name == "Rooms JSON" then loadRooms(true)
   elseif name == "Presence Lighting" then
-    if Properties["Presence Lighting"] ~= "On" then releasePresenceRooms() end   -- 1.16.4: no reload, no gate re-close
+    if Properties["Presence Lighting"] ~= "On" then
+      releasePresenceRooms()                                                     -- 1.16.4: no reload, no gate re-close
+    else
+      local now2 = os.time()
+      for _, room in ipairs(rooms) do                                           -- 1.16.5: hand it back to presence
+        room.released = nil
+        if room.pr then prRecompute(room, now2, false) end
+      end
+    end
   elseif name == "Vacancy Delay (min)" then
     loadRooms(true)
   elseif name == "Latitude" or name == "Longitude" then sunEvents.day = nil pollCloud()

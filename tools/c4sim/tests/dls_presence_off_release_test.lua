@@ -105,5 +105,15 @@ t.test("a per-light hand hold does not block the room release", function()
   t.ok(fired_vacant(), "the room is still released")
 end)
 
+t.test("returning to On re-occupies from the last occupancy, with no new edge", function()
+  start()
+  setprop("Presence Lighting", "Off")
+  setprop("Presence Lighting", "On")
+  sim.advance(3 * SEC)
+  local st = sim.persist and sim.persist.presence and sim.persist.presence["Kitchen"]
+  t.eq(st and st.state, "OCCUPIED", "the room is driven again without waiting for another OCC line")
+end)
+
 t.finish("dls-presence-off-release")
+
 
