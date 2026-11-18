@@ -64,6 +64,14 @@ t.test("AddTimer calls OnTimerExpired with its id, and KillTimer stops it", func
   t.eq(#sim.errors, 0, "no Lua errors: " .. tostring(sim.errors[1]))
 end)
 
+t.test("UpdatePropertyList rejects a table value list", function()
+  sim.reset()
+  local ok = pcall(function() C4:UpdatePropertyList("X", { "a", "b" }) end)
+  t.ok(not ok, "table form raises like the controller")
+  C4:UpdatePropertyList("X", "a,b")
+  t.eq(sim.prop_lists.X, "a,b", "comma string accepted")
+end)
+
 t.test("UpdateProperty sets value and logs it", function()
   sim.reset()
   C4:UpdateProperty("Status", "up")

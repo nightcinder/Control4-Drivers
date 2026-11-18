@@ -766,6 +766,16 @@ function SendDataToUI(...)
 end
 
 function UpdatePropertyList(name, list)
+  -- The controller raises "strValueList should be a string" for the table form, and an uncaught raise
+  -- during OnDriverLateInit leaves the driver loaded but not running.
+  if type(name) ~= "string" then
+    add_warn("UpdatePropertyList: name is not a string")
+    error("UpdatePropertyList: name must be a string", 2)
+  end
+  if type(list) ~= "string" then
+    add_warn("UpdatePropertyList: value list is not a string")
+    error("UpdatePropertyList: value list must be a comma-separated string", 2)
+  end
   sim.prop_lists[name] = list
 end
 

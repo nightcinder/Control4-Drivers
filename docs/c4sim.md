@@ -62,6 +62,8 @@ Logs: `sim.sent`, `sim.props`, `sim.events`, `sim.logs`, `sim.errors`, `sim.warn
   variables, Debug/ErrorLog, Persist. Print is captured. Other `C4:Name` calls return nil and warn.
 - `C4:AddTimer(interval, units, repeating)` returns an id and calls `OnTimerExpired(id)`, matching DriverWorks;
   a handler named in a 4th argument is never called. `C4:KillTimer(id)` cancels it.
+- `C4:UpdatePropertyList` requires a comma-separated string, as the controller does; a table raises, so an
+  uncaught table-form call fails the test instead of passing silently.
 - JsonEncode/JsonDecode (pure Lua; decode errors on bad input; surrogate pairs not joined).
 - Base64Encode/Base64Decode.
 - urlGet/urlPost/urlDo/urlSetTimeout: each request goes into `sim.http`. Answers come from `sim.queue_http`
