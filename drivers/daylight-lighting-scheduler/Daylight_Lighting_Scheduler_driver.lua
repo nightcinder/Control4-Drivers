@@ -1,6 +1,11 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.9
+  DRIVER_VERSION: 1.16.10
+
+  1.16.10: sun times are no longer 5 minutes late. computeSunEvents sampled the sun every 5 minutes and
+  kept the first sample past the -0.833 horizon, so sunrise 07:16 was recorded as 07:20 and every
+  sunrise/sunset-relative time (curtains open_at, room on/off, wake, daylight trigger) drifted up to 5 min
+  late. The bracket is now bisected to the crossing (2026-11-18: curtains opened 07:35 instead of 07:31).
 
   1.16.9: "Presence Room" is a STRING, not a LIST. This firmware ignores C4:UpdatePropertyList in both
   documented forms (the picker showed only "-"), so the room is chosen by typing its name from the Rooms
@@ -107,7 +112,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.9"
+DRIVER_VERSION = "1.16.10"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -246,20 +251,38 @@ local function localMidnight(t)
   return os.time({ year = d.year, month = d.month, day = d.day, hour = 0, min = 0, sec = 0 })
 end
 
+local SUN_HORIZON = -0.833
+
+-- 1.16.10: bisect a 5-minute bracket down to the crossing. The scan used to record the first sample
+-- past the horizon, so every sun time was up to 5 min late (2026-11-18: sunrise 07:16 recorded as 07:20,
+-- which opened the curtains at 07:35 instead of 07:31). The bisection keeps sub-second precision and
+-- reports the local clock minute that contains the crossing, not the next whole minute.
+local function refineSunCrossing(a, b, lat, lon, rising)
+  for _ = 1, 20 do
+    if b - a <= 1 then break end
+    local mid = (a + b) / 2
+    local above = SunPosition(mid, lat, lon) >= SUN_HORIZON
+    if above == rising then b = mid else a = mid end
+  end
+  local tm = os.date("*t", math.floor(b))
+  return tm.hour * 60 + tm.min
+end
+
 -- returns sunrise, sunset as minutes after local midnight (or nil in polar cases)
 local function computeSunEvents(now, lat, lon)
   local m0 = localMidnight(now)
   local rise, set
-  local prev = SunPosition(m0, lat, lon)
+  local prev, prevT = SunPosition(m0, lat, lon), m0
   for m = 5, 1440, 5 do
     local t = m0 + m * 60
     local el = SunPosition(t, lat, lon)
-    -- 1.11.9: return the local clock minute, not the elapsed minute, so DST changeover days are not 60 min off
-    local tm = os.date("*t", t)
-    local clockMin = tm.hour * 60 + tm.min
-    if prev < -0.833 and el >= -0.833 and not rise then rise = clockMin end
-    if prev >= -0.833 and el < -0.833 then set = clockMin end
-    prev = el
+    if not rise and prev < SUN_HORIZON and el >= SUN_HORIZON then
+      rise = refineSunCrossing(prevT, t, lat, lon, true)
+    end
+    if prev >= SUN_HORIZON and el < SUN_HORIZON then
+      set = refineSunCrossing(prevT, t, lat, lon, false)
+    end
+    prev, prevT = el, t
   end
   return rise, set
 end
