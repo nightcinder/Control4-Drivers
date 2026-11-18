@@ -20,6 +20,14 @@ local function start(extra, extraProps)
   t.ok(ok, "load: " .. tostring(sim.errors[1]))
 end
 
+local function expected_version()
+  local f = assert(io.open(XML, "rb"))
+  local xml = f:read("*a")
+  f:close()
+  local block = xml:match("<property>%s*<name>Driver Version</name>.-</property>") or ""
+  return block:match("<default>%s*(.-)%s*</default>")
+end
+
 local function send_input(input)
   sim.call("ReceivedFromProxy", 5002, "SET_INPUT", { INPUT = tostring(input), OUTPUT = "4000" })
 end
@@ -460,9 +468,9 @@ t.test("room mute variable is watched and reaches UI_STATE", function()
   t.ok(string.find(v, '"vol":35', 1, true) ~= nil, "volume 35")
 end)
 
-t.test("Driver Version is 1.5.2", function()
+t.test("Driver Version matches driver.xml", function()
   start(nil)
-  t.eq(sim._store["Driver Version"], "1.5.2", "driver version property")
+  t.eq(sim._store["Driver Version"], expected_version(), "driver version property")
 end)
 
 t.finish("shield-tv-bridge")
