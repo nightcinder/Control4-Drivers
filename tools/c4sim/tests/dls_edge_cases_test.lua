@@ -35,7 +35,7 @@ local function ramps_off() return ramps(function(l) return l == 0 end) end
 local function start(h, m, rooms)
   local ok = sim.load_driver(DRV, {
     xml = XML,
-    properties = { ["Enabled"] = "On", ["Update Interval (min)"] = "1", ["Ramp Time (sec)"] = "90", ["Override Hold (min)"] = "120", ["Rooms JSON"] = rooms, ["Presence"] = "Home", ["Latitude"] = "51.5", ["Longitude"] = "-0.1" },
+    properties = { ["Enabled"] = "On", ["Presence Lighting"] = "On", ["Update Interval (min)"] = "1", ["Ramp Time (sec)"] = "90", ["Override Hold (min)"] = "120", ["Rooms JSON"] = rooms, ["Presence"] = "Home", ["Latitude"] = "51.5", ["Longitude"] = "-0.1" },
     start_ms = local_sec(h, m) * SEC,
     before = function(s) s.set_var(U, VAR, "40") end,
   })
@@ -99,7 +99,7 @@ end)
 local function restart_at(day_offset, h, m, persist)
   local ok = sim.load_driver(DRV, {
     xml = XML,
-    properties = { ["Enabled"] = "On", ["Update Interval (min)"] = "1", ["Ramp Time (sec)"] = "90", ["Override Hold (min)"] = "120", ["Rooms JSON"] = ROOM_DAYLIGHT_WRAP, ["Presence"] = "Home", ["Latitude"] = "51.5", ["Longitude"] = "-0.1" },
+    properties = { ["Enabled"] = "On", ["Presence Lighting"] = "On", ["Update Interval (min)"] = "1", ["Ramp Time (sec)"] = "90", ["Override Hold (min)"] = "120", ["Rooms JSON"] = ROOM_DAYLIGHT_WRAP, ["Presence"] = "Home", ["Latitude"] = "51.5", ["Longitude"] = "-0.1" },
     persist = persist,
     start_ms = (local_sec(h, m) + day_offset * 86400) * SEC,
     before = function(s) s.set_var(U, VAR, "40") end,
