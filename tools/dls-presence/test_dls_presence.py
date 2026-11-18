@@ -2,6 +2,7 @@
 
 Run:  python test_dls_presence.py      (or: python -m unittest -v test_dls_presence)
 """
+import csv
 import json
 import os
 import sys
@@ -428,6 +429,21 @@ class StatusViewTest(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(body)["state"], "AWAY")
 
+
+    def test_tail_reads_a_large_log_without_loading_it_all(self):
+        with open(self.tmp.name, "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["ts", "kind", "person", "source", "value", "detail"])
+            for i in range(4000):
+                w.writerow([f"2026-01-01T00:00:{i % 60:02d}", "source", "nick", "unifi", str(i % 2), ""])
+        ev = dp._tail_events(25)
+        self.assertEqual(len(ev), 25)
+        self.assertEqual(ev[0]["value"], "1")  # 3999 % 2
+
+    def test_tail_returns_empty_without_a_header(self):
+        with open(self.tmp.name, "w", newline="") as fh:
+            fh.write("garbage,line\n")
+        self.assertEqual(dp._tail_events(), [])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

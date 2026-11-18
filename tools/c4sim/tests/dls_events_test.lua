@@ -59,7 +59,7 @@ local function last_event_prop()
   return sim._store and sim._store["Last Event"]
 end
 
-local function start()
+local function start(keep_events)
   local props = { ["Presence Port"] = PORT, ["Presence Token"] = TOK, ["Rooms JSON"] = ROOMS,
     ["Presence"] = "Home", ["Latitude"] = "51.5", ["Longitude"] = "-0.1" }
   local ok = sim.load_driver(DRV, {
@@ -68,7 +68,7 @@ local function start()
   })
   t.ok(ok, "load: " .. tostring(sim.errors[1]))
   send(ln("PRESENCE", "HOME", TOK) .. ln("HELLO", "1", "1", TOK) .. ln("OCC", "Kitchen", "0", "clear", TOK))
-  sim.events = {}
+  if not keep_events then sim.events = {} end
   return ok
 end
 
@@ -76,7 +76,7 @@ t.test("presence away fires Presence Away and records it in Last Event", functio
   start()
   send(ln("PRESENCE", "AWAY", TOK))
   t.ok(fired("Presence Away"), "Presence Away fired")
-  t.eq(last_event_prop(), "Away", "Last Event carries the new presence")
+  t.eq(last_event_prop(), "Presence Away", "Last Event names the event")
 end)
 
 t.test("presence home fires Presence Home", function()
@@ -85,14 +85,14 @@ t.test("presence home fires Presence Home", function()
   sim.events = {}
   send(ln("PRESENCE", "HOME", TOK))
   t.ok(fired("Presence Home"), "Presence Home fired")
-  t.eq(last_event_prop(), "Home", "Last Event carries Home")
+  t.eq(last_event_prop(), "Presence Home", "Last Event names the event")
 end)
 
 t.test("room occupancy change fires Room Occupied with the room name", function()
   start()
   send(ln("OCC", "Kitchen", "1", "esp", TOK))
   t.ok(fired("Room Occupied"), "Room Occupied fired")
-  t.eq(last_event_prop(), "Kitchen", "Last Event names the room")
+  t.eq(last_event_prop(), "Room Occupied: Kitchen", "Last Event names event and room")
 end)
 
 t.test("occupancy events do not repeat while the room stays occupied", function()
@@ -100,6 +100,34 @@ t.test("occupancy events do not repeat while the room stays occupied", function(
   send(ln("OCC", "Kitchen", "1", "esp", TOK))
   send(ln("OCC", "Kitchen", "1", "esp", TOK))
   t.eq(count_fired("Room Occupied"), 1, "one Room Occupied per transition")
+end)
+
+
+t.test("no spurious Room Vacant at driver start or on the initial snapshot", function()
+  start(true)
+  t.eq(count_fired("Room Vacant"), 0, "startup reconcile must not fire Room Vacant")
+end)
+
+t.test("vacancy through the fade fires Room Vacant exactly once", function()
+  start()
+  send(ln("OCC", "Kitchen", "1", "esp", TOK))
+  sim.advance(5 * SEC)
+  sim.events = {}
+  send(ln("OCC", "Kitchen", "0", "esp", TOK))
+  sim.advance(180 * SEC)          -- off delay
+  sim.advance(60 * SEC)           -- fade out + tick slack
+  t.eq(count_fired("Room Vacant"), 1, "one Room Vacant for one vacancy")
+  t.eq(last_event_prop(), "Room Vacant: Kitchen", "Last Event names event and room")
+end)
+
+t.test("Lighting Held fires when a light is switched off by hand", function()
+  start()
+  send(ln("OCC", "Kitchen", "1", "esp", TOK))
+  sim.advance(5 * SEC)
+  sim.events = {}
+  sim.fire_var(K, VAR, "0")       -- hand-off in an occupied room: T8/T9 hold
+  t.eq(count_fired("Lighting Held"), 1, "one Lighting Held for the gesture")
+  t.eq(last_event_prop(), "Lighting Held: Kitchen", "Last Event names event and room")
 end)
 
 t.finish("dls-events")

@@ -373,25 +373,37 @@ def _tail_events(n=25):
     if not EVENT_LOG or not os.path.exists(EVENT_LOG):
         return []
     try:
-        with _fresh_lock, open(EVENT_LOG, newline="", encoding="utf-8") as fh:
-            rows = list(csv.reader(fh))
+        with open(EVENT_LOG, newline="", encoding="utf-8") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            # read a bounded tail: the log is append-only and never rotated
+            start = max(0, size - 65536)
+            fh.seek(start)
+            chunk = fh.read()
     except Exception:
         return []
-    if len(rows) < 2:
-        return []
-    hdr = rows[0]
-    out = [dict(zip(hdr, r)) for r in rows[1:][-n:]]
+    lines = chunk.splitlines()
+    if start > 0 and lines:
+        lines = lines[1:]                      # drop the partial first line
+    rows = list(csv.reader(lines))
+    if rows and rows[0] and rows[0][0] == "ts":
+        hdr, body = rows[0], rows[1:]
+    else:                                      # tail started past the header line
+        hdr, body = ["ts", "kind", "person", "source", "value", "detail"], rows
+    body = [r for r in body if len(r) == len(hdr)]   # drop a half-written trailing row
+    out = [dict(zip(hdr, r)) for r in body[-n:]]
     out.reverse()
     return out
 
 
 def _status_snapshot():
     now = time.time()
+    srcs = freshness()
     return {
-        "ok": True,
+        "ok": not any(v["stale"] for v in srcs.values()),
         "state": _last_state,
         "forced_until": _force_home_until if _force_home_until > now else None,
-        "sources": freshness(),
+        "sources": srcs,
         "events": _tail_events(25),
         "generated": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)),
     }
@@ -473,7 +485,7 @@ class _FreshHandler(BaseHTTPRequestHandler):
         if path == "/status.json":
             self._json(200, _status_snapshot())
             return
-        if path in ("/status", "/"):
+        if path.rstrip("/") == "/status":
             body = _status_html(_status_snapshot()).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
