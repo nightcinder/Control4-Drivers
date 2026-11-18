@@ -1,7 +1,10 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.14.0
+  DRIVER_VERSION: 1.15.0
 
+  1.15.0: vacation pattern. "Vacation Pattern" (Off/On) shifts each room's scheduled off time — including the
+  Away off window — by a deterministic per-day jitter of up to "Vacation Jitter (min)", so an empty house does
+  not switch off at the same minute nightly. Clamped so it never crosses noon.
   1.14.0: offline-light alert. Every level command is confirmed against the light's reported level; a light that
   does not reach it inside "Light Timeout (sec)" fires Light Not Responding once, appears in the read-only
   "Offline Lights" property and the Status line, and fires Light Responding Again when it obeys again.
@@ -72,7 +75,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.14.0"
+DRIVER_VERSION = "1.15.0"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -205,6 +208,39 @@ local function resolveTimeSpec(spec, now, lat, lon)
   off = tonumber(off) or 0
   if sign == "-" then off = -off end
   return base + off
+end
+
+
+-- 1.15.0: vacation pattern. Shifts each room's scheduled off time by a deterministic per-day amount so an
+-- empty house does not turn the lights off at the same minute every night. Off by default; the shift never
+-- crosses noon, so a normal evening off stays an evening off and an after-midnight off stays after midnight.
+local function vacationOn() return Properties["Vacation Pattern"] == "On" end
+
+local function vacationOffset(now)
+  if not vacationOn() then return 0 end
+  local jitter = tonumber(Properties["Vacation Jitter (min)"]) or 15
+  if jitter <= 0 then return 0 end
+  local day = math.floor(localMidnight(now) / 86400)
+  local h = (day * 2654435761) % 1000003
+  return h % (jitter + 1)
+end
+
+local function shiftOffMin(m, now)
+  if m == nil then return nil end
+  local off = vacationOffset(now)
+  if off == 0 then return m end
+  local n = m + off
+  if m < 720 and n >= 720 then return 719 end
+  if m >= 720 and n >= 1440 then return 1439 end
+  return n
+end
+
+local function offMinFor(spec, now, lat, lon)
+  return shiftOffMin(resolveTimeSpec(spec, now, lat, lon), now)
+end
+
+if _G.DLS_TEST_SYNC then                       -- test hook: the c4sim suite pins the jitter behaviour
+  _G.DLS_vacation = { offset = vacationOffset, shift = shiftOffMin }
 end
 
 ---------------------------------------------------------------------------
@@ -572,7 +608,7 @@ local function prInWindow(room, now, lat, lon)
   if not dayOk(room.days, now) then return false end
   local minNow = minuteOf(now)
   if room.on_daylight then
-    local offMin = resolveTimeSpec(room.off or "23:00", now, lat, lon)
+    local offMin = offMinFor(room.off or "23:00", now, lat, lon)
     if offMin == nil then return false end
     if offMin < 720 then                     -- 1.11.7: off after midnight: open from noon to midnight, then to off
       return room.dayTriggered == true and (minNow >= 720 or minNow < offMin)
@@ -580,7 +616,7 @@ local function prInWindow(room, now, lat, lon)
     return room.dayTriggered == true and minNow < offMin
   end
   local onMin = resolveTimeSpec(room.on, now, lat, lon)
-  local offMin = resolveTimeSpec(room.off, now, lat, lon)
+  local offMin = offMinFor(room.off, now, lat, lon)
   if onMin == nil or offMin == nil then return true end
   if onMin <= offMin then return minNow >= onMin and minNow < offMin end
   return minNow >= onMin or minNow < offMin
@@ -1056,7 +1092,7 @@ function Update()
       local active = false
       if cfg then
         local onMin = resolveTimeSpec(room.on or "sunset-30", now, lat, lon)
-        local offMin = resolveTimeSpec(cfg.off or room.off or "22:30", now, lat, lon)
+        local offMin = offMinFor(cfg.off or room.off or "22:30", now, lat, lon)
         if onMin and offMin then
           if onMin <= offMin then active = (minNow >= onMin and minNow < offMin)
           else active = (minNow >= onMin or minNow < offMin) end
@@ -1103,7 +1139,7 @@ function Update()
     -- after midnight is still put back off
     local keepWrap = false
     if room.on_daylight and room.off then
-      local o = resolveTimeSpec(room.off, now, lat, lon)
+      local o = offMinFor(room.off, now, lat, lon)
       keepWrap = o ~= nil and o < noon and minNow < o
     end
     if minNow < noon - 60 and not keepWrap then room.dayTriggered = false end
@@ -1152,7 +1188,7 @@ function Update()
     elseif not inWake then
       local onMin  = resolveTimeSpec(room.on, now, lat, lon)
       local offSpec = room.off or (room.on_daylight and "23:00") or nil
-      local offMin = resolveTimeSpec(offSpec, now, lat, lon)
+      local offMin = offMinFor(offSpec, now, lat, lon)
       local scheduled = (onMin ~= nil and offMin ~= nil) or (room.on_daylight ~= nil and offMin ~= nil)
       local inWindow = true
       if room.on_daylight then
@@ -1447,7 +1483,7 @@ local function loadRooms(closeGate)
       local fired = PersistData.daylightFired[room.name]
       if type(fired) == "string" then
         local nowT = os.time()
-        local offMin = resolveTimeSpec(room.off or "23:00", nowT, latlon())
+        local offMin = offMinFor(room.off or "23:00", nowT, latlon())
         local firedToday = fired == os.date("%Y%m%d", nowT)
         local firedYesterdayWrap = fired == os.date("%Y%m%d", nowT - 86400) and offMin ~= nil and offMin < 720
           and minuteOf(nowT) < offMin

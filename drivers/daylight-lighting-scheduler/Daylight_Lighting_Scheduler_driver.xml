@@ -1,11 +1,11 @@
 <devicedata>
-  <version>28</version>
+  <version>30</version>
   <manufacturer>Nick Adamany</manufacturer>
   <name>Daylight Lighting Scheduler</name>
   <model>DLS</model>
   <creator>Nick Adamany</creator>
   <created>10/19/2026 7:30 PM</created>
-  <modified>11/17/2026 08:09 PM</modified>
+  <modified>11/17/2026 08:12 PM</modified>
   <control>lua_gen</control>
   <controlmethod>other</controlmethod>
   <driver>DriverWorks</driver>
@@ -18,7 +18,7 @@
       <property>
         <name>Driver Version</name>
         <type>STRING</type>
-        <default>1.14.0</default>
+        <default>1.15.0</default>
         <readonly>true</readonly>
       </property>
       <property>
@@ -56,6 +56,22 @@
         <minimum>10</minimum>
         <maximum>3600</maximum>
         <default>180</default>
+      </property>
+      <property>
+        <name>Vacation Pattern</name>
+        <type>LIST</type>
+        <default>Off</default>
+        <items>
+          <item>Off</item>
+          <item>On</item>
+        </items>
+      </property>
+      <property>
+        <name>Vacation Jitter (min)</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>0</minimum>
+        <maximum>60</maximum>
+        <default>15</default>
       </property>
       <property>
         <name>Light Timeout (sec)</name>
