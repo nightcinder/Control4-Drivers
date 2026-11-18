@@ -512,6 +512,8 @@ PROP_READ_RE = re.compile(r"\bProperties\s*\[\s*([\"'])([^\"'\n]+)\1\s*\](?!\s*=
 PROP_DOT_READ_RE = re.compile(r"\bProperties\.([A-Za-z_]\w*)\b(?!\s*=(?!=))")
 PROP_DOT_WRITE_RE = re.compile(r"\bProperties\.([A-Za-z_]\w*)\s*=(?!=)")
 UPDATE_PROP_RE = re.compile(r"C4:UpdateProperty\s*\(\s*(['\"])([^'\"\n]+)\1")
+UPDATE_PROP_LIST_RE = re.compile(r"C4:UpdatePropertyList\s*\(\s*(['\"])([^'\"\n]+)\1")
+UPDATE_PROP_LIST_TABLE_RE = re.compile(r"C4:UpdatePropertyList\s*\(\s*(['\"])([^'\"\n]+)\1\s*,\s*\{")
 FIRE_EVENT_RE = re.compile(r"C4:FireEvent\s*\(\s*(['\"])([^'\"\n]+)\1")
 LOCAL_HANDLER_RE = re.compile(
     r"\blocal\s+function\s+(ExecuteCommand|OnPropertyChanged|OnDriverLateInit|OnDriverInit)\b"
@@ -661,6 +663,13 @@ def check_lua_vs_xml(root, xml_rel, lua_rel, lua_text, fail, warn):
             if m.group(2) not in props:
                 fail("L003", f"{lua_rel}:{lineno} calls C4:UpdateProperty('{m.group(2)}'), "
                              f"which is not a property in {xml_rel}")
+        for m in UPDATE_PROP_LIST_RE.finditer(line):
+            if m.group(2) not in props:
+                fail("L003", f"{lua_rel}:{lineno} calls C4:UpdatePropertyList('{m.group(2)}'), "
+                             f"which is not a property in {xml_rel}")
+        for m in UPDATE_PROP_LIST_TABLE_RE.finditer(line):
+            fail("L011", f"{lua_rel}:{lineno} passes a table to C4:UpdatePropertyList('{m.group(2)}'); "
+                         "the controller requires a comma-separated string")
 
     def defined(fn):
         return re.search(r"\bfunction\s+%s\s*\(|\b%s\s*=\s*function\b" % (fn, fn), code) is not None

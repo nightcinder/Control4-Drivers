@@ -259,6 +259,27 @@ class CommandHandlerTests(unittest.TestCase):
         self.assertEqual(self.fails(xml, lua), [])
 
 
+class UpdatePropertyListTests(unittest.TestCase):
+    def run_check(self, lua):
+        root = ET.fromstring(
+            "<devicedata><properties><property><name>P</name><type>STRING</type></property></properties></devicedata>")
+        fails = []
+        check_lua_vs_xml(root, "driver.xml", "driver.lua", lua,
+                         lambda c, m: fails.append(m), lambda c, m: None)
+        return fails
+
+    def test_table_literal_fails(self):
+        fails = self.run_check('function OnPropertyChanged() end\nC4:UpdatePropertyList("P", {"a", "b"})')
+        self.assertTrue(any("comma-separated string" in f for f in fails), fails)
+
+    def test_string_passes(self):
+        self.assertEqual(self.run_check('function OnPropertyChanged() end\nC4:UpdatePropertyList("P", "a,b")'), [])
+
+    def test_unknown_property_name_fails(self):
+        fails = self.run_check('function OnPropertyChanged() end\nC4:UpdatePropertyList("Q", "a")')
+        self.assertTrue(any("not a property" in f for f in fails), fails)
+
+
 class ParamTests(unittest.TestCase):
     def run_check(self, xml_text):
         root = ET.fromstring(xml_text)
