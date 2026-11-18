@@ -1,7 +1,10 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.12.0
+  DRIVER_VERSION: 1.13.0
 
+  1.13.0: presence UI. Composer properties "Presence Room" (list of the configured presence rooms), "Presence
+  Follow", "Presence Off Delay (sec)" and a read-only "Presence Room State" let an installer see and adjust a
+  room without hand-editing the Rooms JSON. Changes persist in PersistData and override the JSON defaults.
   1.12.0: programming events. The driver now fires Room Occupied, Room Vacant, Presence Home, Presence Away
   and Lighting Held, and writes a read-only "Last Event" property ("Event: Room") because DriverWorks events
   carry no parameters. Vacancy fires on the real edges only (fade completion, nothing-on, and a reconcile that
@@ -66,7 +69,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.12.0"
+DRIVER_VERSION = "1.13.0"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -105,6 +108,7 @@ local function fire(name, detail)
   end)
   if not ok then dbg("FireEvent failed", name, tostring(err)) end
 end
+
 
 local function parseHM(s)
   local h, m = tostring(s or ""):match("^(%d+):(%d+)$")
@@ -396,6 +400,49 @@ end
 -- expired, ramping to 0), HOLD (occupied and turned off by hand: stays off until vacancy or a manual on).
 ---------------------------------------------------------------------------
 local PR_VACANT, PR_OCCUPIED, PR_FADING, PR_HOLD = "VACANT", "OCCUPIED", "FADING", "HOLD"
+
+-- Presence UI (1.13.0): the Rooms JSON is the source of truth, but an installer needs to see and
+-- adjust a room's presence settings in Composer. DriverWorks cannot create properties at runtime,
+-- so this is a fixed set of properties pointed at one room at a time.
+local function presSelectedRoom()
+  local want = Properties["Presence Room"]
+  for _, r in ipairs(rooms) do if r.name == want then return r end end
+  return rooms[1]
+end
+
+local function syncPresenceUI()
+  local room = presSelectedRoom()
+  if not room or not room.pr then
+    C4:UpdateProperty("Presence Room State", "-")
+    return
+  end
+  C4:UpdateProperty("Presence Follow", room.pr.follow and "Follow" or "Off")
+  C4:UpdateProperty("Presence Off Delay (sec)", tostring(room.pr.offDelaySec))
+  local names = { [PR_VACANT] = "Vacant", [PR_OCCUPIED] = "Occupied", [PR_FADING] = "Fading", [PR_HOLD] = "Held" }
+  C4:UpdateProperty("Presence Room State",
+    (names[room.pr.state] or "?") .. (room.pr.occIn and " / occupied" or " / vacant"))
+end
+
+local function refreshPresenceRoomList()
+  local names = {}
+  for _, r in ipairs(rooms) do names[#names + 1] = r.name end
+  if #names == 0 then return end
+  C4:UpdatePropertyList("Presence Room", names)
+  if not Properties["Presence Room"] or Properties["Presence Room"] == "" then
+    C4:UpdateProperty("Presence Room", names[1])
+  end
+end
+
+local function savePresenceUI()
+  local out = {}
+  for _, r in ipairs(rooms) do
+    if r.pr then
+      out[r.pr.key or r.name] = { follow = r.pr.follow, offDelaySec = r.pr.offDelaySec }
+    end
+  end
+  if type(PersistData) == "table" then PersistData.presenceUI = out end
+end
+
 local OWN_BAND = 8                -- section 7: own-ramp range and manual threshold, in level points
 local PRES_SOURCES = { esp = true, robot = true }
 local presenceByKey = {}          -- lower-case roomKey -> room (rooms with a valid presence object)
@@ -1363,6 +1410,13 @@ local function loadRooms(closeGate)
         if room.occ then warns[#warns + 1] = room.name .. ".occ (ignored, presence in use)" end
         room.occ = nil
         presenceByKey[key:lower()] = room
+        local uiov = type(PersistData) == "table" and type(PersistData.presenceUI) == "table"
+          and PersistData.presenceUI[key] or nil
+        if type(uiov) == "table" then
+          if type(uiov.follow) == "boolean" then room.pr.follow = uiov.follow end
+          local d = tonumber(uiov.offDelaySec)
+          if d then room.pr.offDelaySec = clamp(d, 10, 3600) end
+        end
         local saved = PersistData and type(PersistData.presence) == "table" and PersistData.presence[key]
         if type(saved) == "table" then                       -- T14: restore HOLD and its per-light off holds
           if saved.state == PR_HOLD then room.pr.state = PR_HOLD end
@@ -1418,6 +1472,8 @@ function OnDriverLateInit()
   C4:UpdateProperty("Presence", presenceAway and "Away" or "Home")
   lastAcceptedAt = os.time()
   loadRooms(true)
+  refreshPresenceRoomList()
+  syncPresenceUI()
   startTimers()
   if presenceTimer then presenceTimer:Cancel() end
   presenceTimer = C4:SetTimer(1000, function() safePresenceTick() end, true)
@@ -1432,7 +1488,22 @@ function OnPropertyChanged(name)
   elseif name == "Latitude" or name == "Longitude" then sunEvents.day = nil pollCloud()
   elseif name == "Update Interval (min)" or name == "Cloud Poll Interval (min)" then startTimers()
   elseif name == "Cloud Cover Source" then pollCloud()
-  elseif name == "Presence Port" then startPresenceServer() end
+  elseif name == "Presence Port" then startPresenceServer()
+  elseif name == "Presence Room" then syncPresenceUI()
+  elseif name == "Presence Follow" then
+    local room = presSelectedRoom()
+    if room and room.pr then
+      room.pr.follow = (Properties["Presence Follow"] == "Follow")
+      prSave() savePresenceUI() syncPresenceUI()
+    end
+  elseif name == "Presence Off Delay (sec)" then
+    local room = presSelectedRoom()
+    local d = tonumber(Properties["Presence Off Delay (sec)"]) or 180
+    if room and room.pr then
+      room.pr.offDelaySec = clamp(d, 10, 3600)
+      prSave() savePresenceUI() syncPresenceUI()
+    end
+  end
   if name ~= "Status" and name ~= "Driver Version" and name ~= "Presence" then
     C4:SetTimer(2000, function() safeUpdate() end, false)
   end
