@@ -1,7 +1,10 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.3
+  DRIVER_VERSION: 1.16.4
 
+  1.16.4: Presence Lighting Off now really hands the room back. The schedule owns every follow room while the
+  switch is Off, presence issues no ramps at all, and the switch no longer reloads the rooms (which re-closed
+  the 180 s gate and faded the room to black three minutes later). Only a hand-off hold survives the release.
   1.16.3: offline-alert hardening. A light that confirmed before a reload can still be flagged after it
   (the confirmation is remembered in PersistData); a repeated identical command no longer pushes the timeout
   out, so a dead light is caught at a 1-minute update interval; a hand on the dimmer clears the outstanding
@@ -86,7 +89,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.3"
+DRIVER_VERSION = "1.16.4"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -646,8 +649,9 @@ local function releasePresenceRooms()
   for _, room in ipairs(rooms) do
     local pr = room.pr
     if pr then
-      local held = (pr.state == PR_HOLD) or anyHeld(room)
+      local held = (pr.state == PR_HOLD)          -- 1.16.4: a per-light hold must not block the room release
       pr.fadeAt, pr.offAt = nil, nil
+      for _, l in ipairs(room.lights or {}) do l.preFade = nil; l.pending = nil end
       if not held and pr.state ~= PR_VACANT then
         pr.state, pr.occIn = PR_VACANT, false
         released[#released + 1] = room
@@ -680,6 +684,7 @@ end
 
 -- OCCUPIED follow room: lights at the DLS target (in window) or nightLevel (off window). Holds are respected.
 local function presenceDrive(room, now, inWindow)
+  if Properties["Presence Lighting"] ~= "On" then return end   -- 1.16.4: switch Off = schedule owns the room
   local pr = room.pr
   local lat, lon = latlon()
   if not (lat and lon and gateOpen and pr.follow and pr.state == PR_OCCUPIED and Properties["Enabled"] == "On") then return end
@@ -866,6 +871,7 @@ local function presenceTick()
   tickCount = (tickCount or 0) + 1
   if tickCount % 5 == 0 then syncPresenceUI() end   -- 1.16.1: the state property is otherwise frozen
   checkLightConfirmations(now)
+  if Properties["Presence Lighting"] ~= "On" then return end   -- 1.16.4: no presence work while Off
   if not gateOpen and now >= gateUntil then
     gateOpen = true
     dbg("presence gate open (timeout)")
@@ -1275,7 +1281,7 @@ function Update()
 
       -- presence rooms (1.11.0): a follow room is driven by its presence state only; a non-follow room keeps the
       -- schedule except while FADING or HOLD
-      local prOwns = room.pr and room.pr.follow
+      local prOwns = room.pr and room.pr.follow and presenceOn()
       local prBlocks = room.pr and not room.pr.follow and (room.pr.state == PR_FADING or room.pr.state == PR_HOLD)
       if prOwns then
         if room.pr.state == PR_OCCUPIED then presenceDrive(room, now, inWindow) end
@@ -1639,8 +1645,9 @@ end
 
 function OnPropertyChanged(name)
   if name == "Rooms JSON" then loadRooms(true)
-  elseif name == "Presence Lighting" or name == "Vacancy Delay (min)" then
-    if name == "Presence Lighting" and Properties["Presence Lighting"] ~= "On" then releasePresenceRooms() end
+  elseif name == "Presence Lighting" then
+    if Properties["Presence Lighting"] ~= "On" then releasePresenceRooms() end   -- 1.16.4: no reload, no gate re-close
+  elseif name == "Vacancy Delay (min)" then
     loadRooms(true)
   elseif name == "Latitude" or name == "Longitude" then sunEvents.day = nil pollCloud()
   elseif name == "Update Interval (min)" or name == "Cloud Poll Interval (min)" then startTimers()
