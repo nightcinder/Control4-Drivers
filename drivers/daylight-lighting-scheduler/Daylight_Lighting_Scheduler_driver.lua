@@ -1,7 +1,10 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.13.0
+  DRIVER_VERSION: 1.14.0
 
+  1.14.0: offline-light alert. Every level command is confirmed against the light's reported level; a light that
+  does not reach it inside "Light Timeout (sec)" fires Light Not Responding once, appears in the read-only
+  "Offline Lights" property and the Status line, and fires Light Responding Again when it obeys again.
   1.13.0: presence UI. Composer properties "Presence Room" (list of the configured presence rooms), "Presence
   Follow", "Presence Off Delay (sec)" and a read-only "Presence Room State" let an installer see and adjust a
   room without hand-editing the Rooms JSON. Changes persist in PersistData and override the JSON defaults.
@@ -69,7 +72,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.13.0"
+DRIVER_VERSION = "1.14.0"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -370,6 +373,8 @@ local function sendLevel(light, level, ms)
   light.rampEnd = os.time() + math.ceil(ms / 1000)
   light.fbLast = light.rampFrom
   light.ignoreUntil = os.time() + math.ceil(ms / 1000) + 10
+  -- 1.14.0: did the light actually take the command? Checked once a second in the presence tick.
+  light.pending = { level = lvl, deadline = os.time() + (tonumber(Properties["Light Timeout (sec)"]) or 90) }
   dbg("level", tostring(light.id), tostring(math.floor(level + 0.5)), "ms", tostring(ms))
 end
 
@@ -392,6 +397,52 @@ end
 
 local function curLevel(light)
   return tonumber(C4:GetDeviceVariable(light.id, LIGHT_LEVEL_VAR)) or 0
+end
+
+-- 1.14.0: offline-light alert. A light that never confirms a level command is flagged once per outage
+-- (event + "Offline Lights" property) and cleared the next time it does what it was told.
+local function checkLightConfirmations(now)
+  local changed = false
+  for _, room in ipairs(rooms) do
+    for _, light in ipairs(room.lights or {}) do
+      local p = light.pending
+      if not p and light.offline and light.rampTo
+         and math.abs(math.floor(curLevel(light) + 0.5) - light.rampTo) <= 2 then
+        light.offline = false                                 -- it took the last command after all
+        changed = true
+        fire("Light Responding Again", tostring(light.id))
+      end
+      if p then
+        local lvl = math.floor(curLevel(light) + 0.5)
+        if math.abs(lvl - p.level) <= 2 then
+          light.pending = nil
+          if light.offline then
+            light.offline = false
+            changed = true
+            fire("Light Responding Again", tostring(light.id))
+          end
+        elseif now > p.deadline then
+          light.pending = nil
+          if not light.offline then
+            light.offline = true
+            changed = true
+            fire("Light Not Responding", tostring(light.id))
+          end
+        end
+      end
+    end
+  end
+  if changed then
+    local ids = {}
+    for _, room in ipairs(rooms) do
+      for _, light in ipairs(room.lights or {}) do
+        if light.offline then ids[#ids + 1] = tostring(light.id) end
+      end
+    end
+    table.sort(ids)
+    C4:UpdateProperty("Offline Lights", table.concat(ids, ", "))
+    setStatus(#ids > 0 and ("Running (" .. #ids .. " light(s) not responding)") or "Running")
+  end
 end
 
 ---------------------------------------------------------------------------
@@ -717,6 +768,7 @@ end
 -- 1 s timer: off delays, fades, feed silence (section 3), gate timeout (T14), vacancy fade for manual-on lights.
 local function presenceTick()
   local now = os.time()
+  checkLightConfirmations(now)
   if not gateOpen and now >= gateUntil then
     gateOpen = true
     dbg("presence gate open (timeout)")
