@@ -79,6 +79,7 @@ function sim.reset(deviceId)
   sim.timers = {}
   sim.named = {}
   sim.seq = 0
+  sim._timerSeq = 0
   sim.sent = {}
   sim.events = {}
   sim.props = {}
@@ -332,24 +333,26 @@ function C4:SetTimer(ms, fn, repeating)
   return add_timer(ms, fn, repeating, nil)
 end
 
--- AddTimer(name, time, units, repeating): fires global OnTimerExpired(name).
-function C4:AddTimer(name, time, units, repeating)
-  local mult = UNITS[string.upper(tostring(units or "SECONDS"))] or 1000
-  if sim.named[name] then sim.named[name]:Cancel() end
-  local tm = add_timer((tonumber(time) or 0) * mult, function()
+-- AddTimer(interval, units, repeating): returns an id and fires global OnTimerExpired(id).
+-- Control4 never calls a handler named in a 4th argument (see the intellifire driver notes).
+function C4:AddTimer(interval, units, repeating)
+  local mult = UNITS[string.upper(tostring(units or "MILLISECONDS"))] or 1
+  sim._timerSeq = sim._timerSeq + 1
+  local id = sim._timerSeq
+  local tm = add_timer((tonumber(interval) or 0) * mult, function()
     local env = sim.env
     if env and type(env.OnTimerExpired) == "function" then
-      xcall("OnTimerExpired", env.OnTimerExpired, name)
+      xcall("OnTimerExpired", env.OnTimerExpired, id)
     end
-  end, repeating, name)
-  sim.named[name] = tm
-  return tm
+  end, repeating, id)
+  sim.named[id] = tm
+  return id
 end
 
-function C4:KillTimer(name)
-  if sim.named[name] then
-    sim.named[name]:Cancel()
-    sim.named[name] = nil
+function C4:KillTimer(id)
+  if sim.named[id] then
+    sim.named[id]:Cancel()
+    sim.named[id] = nil
   end
 end
 
