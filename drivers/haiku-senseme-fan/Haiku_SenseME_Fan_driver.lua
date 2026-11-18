@@ -88,7 +88,7 @@ PF_IP_ADDRESS                = 120 -- string
 
 -- Root2 / Commit / Query / QueryResult field numbers
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION    = "402"
+DRIVER_VERSION    = "403"
 
 RF_ROOT2          = 2
 R2F_COMMIT        = 2
@@ -462,7 +462,7 @@ end
 function StartPolling()
 	StopPolling()
 	if (g_pollInt <= 0) then return end
-	g_pollTimerId = C4:AddTimer(g_pollInt * 1000, "SECONDS", true, "OnPollTimer")
+	g_pollTimerId = C4:AddTimer(g_pollInt, "SECONDS", true)
 end
 
 function StopPolling()
@@ -474,6 +474,11 @@ end
 
 function OnPollTimer(idTimer)
 	RequestFullStatus()
+end
+
+-- Control4 calls this for every AddTimer; the handler name in a 4th argument is ignored.
+function OnTimerExpired(idTimer)
+	if (idTimer == g_pollTimerId) then OnPollTimer(idTimer) end
 end
 
 -- ===================== Receiving from the fan (TCP + SLIP + protobuf) ========

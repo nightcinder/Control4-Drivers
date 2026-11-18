@@ -60,6 +60,8 @@ Logs: `sim.sent`, `sim.props`, `sim.events`, `sim.logs`, `sim.errors`, `sim.warn
 
 - Timers, UpdateProperty, SendToDevice/Proxy, FireEvent, variable listeners, GetDeviceVariable, bindings, GetTime,
   variables, Debug/ErrorLog, Persist. Print is captured. Other `C4:Name` calls return nil and warn.
+- `C4:AddTimer(interval, units, repeating)` returns an id and calls `OnTimerExpired(id)`, matching DriverWorks;
+  a handler named in a 4th argument is never called. `C4:KillTimer(id)` cancels it.
 - JsonEncode/JsonDecode (pure Lua; decode errors on bad input; surrogate pairs not joined).
 - Base64Encode/Base64Decode.
 - urlGet/urlPost/urlDo/urlSetTimeout: each request goes into `sim.http`. Answers come from `sim.queue_http`
