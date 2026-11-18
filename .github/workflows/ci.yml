@@ -60,6 +60,7 @@ jobs:
           python tools/dls-presence/test_dls_presence.py
           python -m unittest discover -s tools/roborock-bridge -p "test_*.py"
           python tools/shield-bridge/test_bridge.py
+          python tools/moen-bridge/test_mock_client.py --port 18799
 
       - name: Build-hook tests
         run: python tools/c4sim/test_build_hook.py
