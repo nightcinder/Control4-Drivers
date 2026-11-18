@@ -500,7 +500,7 @@ local PR_VACANT, PR_OCCUPIED, PR_FADING, PR_HOLD = "VACANT", "OCCUPIED", "FADING
 local function presSelectedRoom()
   local want = Properties["Presence Room"]
   for _, r in ipairs(rooms) do if r.name == want then return r end end
-  return rooms[1]
+  return nil                                   -- 1.16.1: never silently retarget another room
 end
 
 local function syncPresenceUI()
@@ -830,6 +830,8 @@ end
 -- 1 s timer: off delays, fades, feed silence (section 3), gate timeout (T14), vacancy fade for manual-on lights.
 local function presenceTick()
   local now = os.time()
+  tickCount = (tickCount or 0) + 1
+  if tickCount % 5 == 0 then syncPresenceUI() end   -- 1.16.1: the state property is otherwise frozen
   checkLightConfirmations(now)
   if not gateOpen and now >= gateUntil then
     gateOpen = true
@@ -1554,6 +1556,8 @@ local function loadRooms(closeGate)
   resetOccupancy()
   presenceWarn = table.concat(warns, "; ")
   dbg("rooms loaded", tostring(#rooms), "curtains", tostring(#curtains))
+  refreshPresenceRoomList()                    -- 1.16.1: a JSON edit can rename or delete the selected room
+  syncPresenceUI()
 end
 
 -- 1.11.9: one Lua error used to stop the repeating timer silently. Keep the timer alive and print the error.
