@@ -89,7 +89,7 @@ local function feed(light, level) sim.fire_var(light, VAR, level) end
 
 local function start(o)
   o = o or {}
-  local props = { ["Presence Port"] = PORT, ["Presence Token"] = o.token or TOK,
+  local props = { ["Presence Lighting"] = "On", ["Presence Port"] = PORT, ["Presence Token"] = o.token or TOK,
     ["Rooms JSON"] = o.rooms or ROOMS, ["Presence"] = "Home",
     ["Latitude"] = "51.5", ["Longitude"] = "-0.1" }
   local ok = sim.load_driver(DRV, {

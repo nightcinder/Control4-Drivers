@@ -45,7 +45,7 @@ local function fired(name)
 end
 
 local function start()
-  local props = { ["Presence Port"] = PORT, ["Presence Token"] = TOK, ["Rooms JSON"] = ROOMS,
+  local props = { ["Presence Lighting"] = "On", ["Presence Port"] = PORT, ["Presence Token"] = TOK, ["Rooms JSON"] = ROOMS,
     ["Presence"] = "Home", ["Latitude"] = "51.5", ["Longitude"] = "-0.1",
     ["Light Timeout (sec)"] = "12" }
   local ok = sim.load_driver(DRV, {
