@@ -794,6 +794,11 @@ do
   end)
 end
 
+-- drivers-common-public/global/timer.lua installs CancelTimer as a global.
+if _G.CancelTimer == nil then
+  _G.CancelTimer = function() return true end
+end
+
 -- Drivers call most of these as C4:Name(...) and some as globals. Both forms reach the same stub.
 do
   local names = { "JsonEncode", "JsonDecode", "Base64Encode", "Base64Decode", "urlGet", "urlPost", "urlDo",

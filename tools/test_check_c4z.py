@@ -14,8 +14,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from check_c4z import (  # noqa: E402
-    check_c4_methods, check_command_descriptions, check_duplicate_functions, check_lua51, check_lua_sandbox,
-    check_lua_vs_xml, check_params, check_unique,
+    check_c4_methods, check_command_descriptions, check_command_handlers, check_destroy, check_duplicate_functions,
+    check_lua51, check_lua_sandbox, check_lua_vs_xml, check_params, check_unique,
 )
 
 
@@ -216,6 +216,47 @@ class C4MethodTests(unittest.TestCase):
 
     def test_string_is_not_a_call(self):
         self.assertEqual(self.run_check('local s = "C4:UpdatePropery"'), ([], []))
+
+
+class DestroyTests(unittest.TestCase):
+    def fails(self, text):
+        out = []
+        check_destroy("driver.lua", text, lambda c, m: out.append(m))
+        return out
+
+    def test_timer_without_destroy_fails(self):
+        self.assertTrue(self.fails("C4:SetTimer(1000, function() end)"))
+        self.assertTrue(self.fails("C4:CreateServer(1234, 'TCP')"))
+
+    def test_destroy_handler_passes(self):
+        text = "C4:SetTimer(1000, function() end)\nfunction OnDriverDestroyed() end"
+        self.assertEqual(self.fails(text), [])
+
+    def test_url_only_driver_does_not_need_destroy(self):
+        self.assertEqual(self.fails("C4:urlGet('http://x', {}, false, function() end)"), [])
+
+
+class CommandHandlerTests(unittest.TestCase):
+    def fails(self, xml_text, lua_text):
+        root = ET.fromstring(xml_text)
+        out = []
+        check_command_handlers(root, "driver.xml", "driver.lua", lua_text, lambda c, m: out.append(m))
+        return out
+
+    def test_command_present_passes(self):
+        xml = nested(commands(command("Play/Pause", "Pause NAME")))
+        self.assertEqual(self.fails(xml, 'if key == "PLAYPAUSE" then end'), [])
+
+    def test_command_missing_fails(self):
+        xml = nested(commands(command("Set Level", "Set NAME to PARAM1", 1)))
+        fails = self.fails(xml, "function ExecuteCommand() end")
+        self.assertEqual(len(fails), 1)
+        self.assertIn("nothing handles", fails[0])
+
+    def test_common_handlers_are_exempt(self):
+        xml = nested(commands(command("Set Level", "Set NAME to PARAM1", 1)))
+        lua = "require ('drivers-common-public.global.handlers')"
+        self.assertEqual(self.fails(xml, lua), [])
 
 
 class ParamTests(unittest.TestCase):

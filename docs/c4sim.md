@@ -10,7 +10,8 @@ Logic-only simulator for driver Lua. Code is in `tools/c4sim/`.
     python tools/c4sim/run.py test all
 
 Output is terse: `ok <dir>`, `ERR <dir>: <first error line>`, `warn <dir>: ...`.
-Exit code is non-zero on any ERR or failed test.
+Exit code is non-zero on any ERR or failed test. After 10 simulated minutes, smoke calls `OnDriverDestroyed`
+and advances another minute; a timer that still fires after destroy is reported as an error.
 
 `commands` calls every `<command>` defined in driver.xml with typed dummy parameters (`"x"` for strings, `1` for
 numbers, `true` for booleans) after load. This catches a handler that throws on a parameter shape the unit tests
@@ -71,7 +72,8 @@ Logs: `sim.sent`, `sim.props`, `sim.events`, `sim.logs`, `sim.errors`, `sim.warn
   with no argument uses the simulated time, so a test does not need its own override.
 - `pairs(Properties)` works under Lua 5.4 (`__pairs`).
 - `require("drivers-common-public.*")` loads a stub when no real file is on the path. Calls return nil, and smoke
-  prints `warn <dir>: stubbed common-library module X`.
+  prints `warn <dir>: stubbed common-library module X`. `CancelTimer` is a no-op global because the common timer
+  module installs it.
 
 ## Known limits
 
