@@ -1,7 +1,10 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.15.0
+  DRIVER_VERSION: 1.16.0
 
+  1.16.0: Presence Lighting Off now releases presence-driven rooms back to the schedule (see
+  docs/presence-lighting-off.md). Manual holds and per-light holds survive; a Room Vacant event fires for each
+  room released, so automation sees the hand-back.
   1.15.0: vacation pattern. "Vacation Pattern" (Off/On) shifts each room's scheduled off time — including the
   Away off window — by a deterministic per-day jitter of up to "Vacation Jitter (min)", so an empty house does
   not switch off at the same minute nightly. Clamped so it never crosses noon.
@@ -75,7 +78,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.15.0"
+DRIVER_VERSION = "1.16.0"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -601,6 +604,26 @@ local function prSave()
   end
   PersistData.presence = t
   saveHolds()                                  -- 1.11.6: keep per-light manual holds with it
+end
+
+-- 1.16.0: Presence Lighting Off releases presence-driven rooms back to the schedule (manual holds stay).
+-- A parked room would have nothing left to turn its lights off, which is the failure this switch prevents.
+local function releasePresenceRooms()
+  local released = {}
+  for _, room in ipairs(rooms) do
+    local pr = room.pr
+    if pr then
+      local held = (pr.state == PR_HOLD) or anyHeld(room)
+      pr.fadeAt, pr.offAt = nil, nil
+      if not held and pr.state ~= PR_VACANT then
+        pr.state, pr.occIn = PR_VACANT, false
+        released[#released + 1] = room
+      end
+    end
+  end
+  prSave()
+  for _, room in ipairs(released) do fire("Room Vacant", room.name) end
+  if #released > 0 then dbg("presence off: released rooms", #released) end
 end
 
 -- T1/T2 window test: is the room inside its on window (section 6 uses the off window for night level)?
@@ -1575,7 +1598,9 @@ end
 
 function OnPropertyChanged(name)
   if name == "Rooms JSON" then loadRooms(true)
-  elseif name == "Presence Lighting" or name == "Vacancy Delay (min)" then loadRooms(true)
+  elseif name == "Presence Lighting" or name == "Vacancy Delay (min)" then
+    if name == "Presence Lighting" and Properties["Presence Lighting"] ~= "On" then releasePresenceRooms() end
+    loadRooms(true)
   elseif name == "Latitude" or name == "Longitude" then sunEvents.day = nil pollCloud()
   elseif name == "Update Interval (min)" or name == "Cloud Poll Interval (min)" then startTimers()
   elseif name == "Cloud Cover Source" then pollCloud()
