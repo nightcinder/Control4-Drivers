@@ -1,11 +1,11 @@
 <devicedata>
-  <version>22</version>
+  <version>24</version>
   <manufacturer>Nick Adamany</manufacturer>
   <name>Daylight Lighting Scheduler</name>
   <model>DLS</model>
   <creator>Nick Adamany</creator>
   <created>10/19/2026 7:30 PM</created>
-  <modified>11/17/2026 01:07 AM</modified>
+  <modified>11/17/2026 08:01 PM</modified>
   <control>lua_gen</control>
   <controlmethod>other</controlmethod>
   <driver>DriverWorks</driver>
@@ -18,13 +18,19 @@
       <property>
         <name>Driver Version</name>
         <type>STRING</type>
-        <default>1.11.10</default>
+        <default>1.12.0</default>
         <readonly>true</readonly>
       </property>
       <property>
         <name>Status</name>
         <type>STRING</type>
         <default>Starting</default>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Last Event</name>
+        <type>STRING</type>
+        <default></default>
         <readonly>true</readonly>
       </property>
       <property>
@@ -225,4 +231,31 @@
       </command>
     </commands>
   </config>
+  <events>
+    <event>
+      <id>1</id>
+      <name>Room Occupied</name>
+      <description>A presence room went from vacant to occupied. The room name is in the Last Event property.</description>
+    </event>
+    <event>
+      <id>2</id>
+      <name>Room Vacant</name>
+      <description>A presence room went vacant after its occupancy silence window.</description>
+    </event>
+    <event>
+      <id>3</id>
+      <name>Presence Home</name>
+      <description>The house presence changed to Home.</description>
+    </event>
+    <event>
+      <id>4</id>
+      <name>Presence Away</name>
+      <description>The house presence changed to Away.</description>
+    </event>
+    <event>
+      <id>5</id>
+      <name>Lighting Held</name>
+      <description>A light was changed by hand and is being held at that level. The room is in Last Event.</description>
+    </event>
+  </events>
 </devicedata>
