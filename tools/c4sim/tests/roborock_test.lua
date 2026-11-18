@@ -121,6 +121,14 @@ local function fired(id)
 end
 
 local function P(name) return sim._store[name] end
+
+local function expected_version()
+  local f = assert(io.open(XML, "rb"))
+  local xml = f:read("*a")
+  f:close()
+  local block = xml:match("<property>%s*<name>Driver Version</name>.-</property>") or ""
+  return block:match("<default>%s*(.-)%s*</default>")
+end
 local function V(name) return sim.dvars[name] end
 
 local function last_icon()
@@ -131,7 +139,7 @@ end
 t.test("loads; version label and every updated property exist in driver.xml", function()
   start()
   step({ state = "charging" })
-  t.eq(P("Driver Version"), "0.7.2", "Driver Version")
+  t.eq(P("Driver Version"), expected_version(), "Driver Version")
   t.eq(P("Status"), "Connected", "Status")
   local declared = {}
   for _, n in ipairs(sim.xml_names) do declared[n] = true end

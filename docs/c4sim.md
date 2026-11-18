@@ -23,7 +23,8 @@ numeric ranges are respected), and calls `OnPropertyChanged` for each. This catc
 on a value the unit tests never used.
 
 CI (`.github/workflows/ci.yml`) runs `check_c4z --all`, the checker tests, `smoke all`, `commands all`, `props all`
-and `test all` on every push. The same job runs the build-hook tests and the dls-presence, roborock-bridge and
+and `test all` on every push, then repeats the smoke and the test suite under `lua5.1`, the controller's runtime
+(`C4SIM_LUA=lua5.1`). The same job runs the build-hook tests and the dls-presence, roborock-bridge and
 shield-bridge unit tests (Pillow is installed for the icon tests).
 The suite assumes `TZ=America/New_York` (the controller's timezone): several DLS tests pin local-clock times. CI sets it.
 

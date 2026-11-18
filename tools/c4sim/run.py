@@ -21,6 +21,9 @@ LUA_WIN = os.path.expanduser(r"~\AppData\Local\Microsoft\WinGet\Links\lua.exe")
 
 
 def find_lua():
+    override = os.environ.get("C4SIM_LUA")
+    if override:
+        return override
     p = shutil.which("lua") or (LUA_WIN if os.path.exists(LUA_WIN) else None)
     if not p:
         sys.exit("ERR lua interpreter not found")

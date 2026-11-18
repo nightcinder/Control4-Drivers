@@ -40,6 +40,12 @@ jobs:
       - name: Public scan regression tests
         run: python tools/test_check_public.py
 
+      - name: Tool syntax
+        run: |
+          python -m compileall -q tools
+          for f in $(git ls-files '*.sh'); do bash -n "$f"; done
+          for f in $(git ls-files '*.json'); do python -m json.tool "$f" >/dev/null; done
+
       - name: Driver pre-flight checks
         run: python tools/check_c4z.py --all
 
@@ -69,3 +75,12 @@ jobs:
 
       - name: Simulator tests
         run: python tools/c4sim/run.py test all
+
+      - name: Simulator tests on the controller Lua
+        env:
+          C4SIM_LUA: lua5.1
+        run: |
+          python tools/c4sim/run.py smoke all
+          python tools/c4sim/run.py commands all
+          python tools/c4sim/run.py props all
+          python tools/c4sim/run.py test all
