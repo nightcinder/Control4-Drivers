@@ -372,6 +372,39 @@ t.test("UI_KEY_* with the room elsewhere selects the Shield and drops the key", 
   t.ok(not any_url_has("name=DPAD_LEFT"), "key dropped on the selecting press")
 end)
 
+t.test("opening the page (tile SELECT) with the room elsewhere selects the Shield and wakes it", function()
+  start(nil)
+  remote_room(false)
+  feed_status('{"awake":false}')
+  sim.call("ReceivedFromProxy", REMOTE, "SELECT", {})
+  local sel = sim.last_sent("SELECT_VIDEO_DEVICE")
+  t.ok(sel ~= nil and sel.id == 77 and sel.params.deviceid == 900, "SELECT_VIDEO_DEVICE to room 77")
+  t.ok(any_url_has("/v1/wake"), "asleep Shield woken")
+  t.ok(not any_url_has("/v1/key"), "no key sent")
+  t.eq(#sim.errors, 0, "no driver error")
+end)
+
+t.test("opening the page with the room already on the Shield changes no source", function()
+  start(nil)
+  remote_room(true)
+  sim.call("ReceivedFromProxy", REMOTE, "SELECT", {})
+  t.ok(sim.last_sent("SELECT_VIDEO_DEVICE") == nil, "no source change")
+  t.ok(not any_url_has("/v1/key"), "no key sent")
+end)
+
+t.test("page HELLO right after the tile SELECT does not select twice", function()
+  start(nil)
+  remote_room(false)
+  sim.call("ReceivedFromProxy", REMOTE, "SELECT", {})
+  local n = 0
+  for _, s in ipairs(sim.sent) do if s.cmd == "SELECT_VIDEO_DEVICE" then n = n + 1 end end
+  sim.exec("UI_HELLO_3", {})
+  local m = 0
+  for _, s in ipairs(sim.sent) do if s.cmd == "SELECT_VIDEO_DEVICE" then m = m + 1 end end
+  t.eq(n, 1, "one select from the tile")
+  t.eq(m, 1, "HELLO within 15 s adds none")
+end)
+
 t.test("UI_KEY_* refuses keys outside the allow list", function()
   start(nil)
   remote_room(true)
@@ -382,13 +415,12 @@ t.test("UI_KEY_* refuses keys outside the allow list", function()
   t.eq(#sim.errors, 0, "no driver error")
 end)
 
-t.test("opening the tile (SELECT on 5003) sends no key and no source change", function()
+t.test("opening the tile (SELECT on 5003) selects the Shield but sends no key", function()
   start(nil)
   remote_room(false)
-  local before = #sim.http
   sim.call("ReceivedFromProxy", REMOTE, "SELECT", {})
-  t.eq(#sim.http, before, "no http request")
-  t.ok(sim.last_sent("SELECT_VIDEO_DEVICE") == nil, "no source change")
+  t.ok(sim.last_sent("SELECT_VIDEO_DEVICE") ~= nil, "Shield selected in the room")
+  t.ok(not any_url_has("/v1/key"), "no key sent")
   t.ok(not has_unknown_log("SELECT"), "not treated as a key")
 end)
 

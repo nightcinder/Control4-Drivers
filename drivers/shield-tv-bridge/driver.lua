@@ -6,7 +6,7 @@
 -- proxy (5003, "Shield Remote") that opens the phone remote web page www/remote1.html.
 -- The App N Package properties are fallbacks, used only when no mini app is bound to the slot.
 
-local DRIVER_VERSION = "1.5.2"
+local DRIVER_VERSION = "1.5.3"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -959,7 +959,8 @@ end
 -- ---------------------------------------------------------------- Shield Remote web page (1.5.0)
 -- uibutton proxy 5003 opens www/remote3.html. The page sends parameter-free UI_* commands
 -- (UI_KEY_<KEY>, UI_VOL_UP/DOWN, UI_MUTE, UI_REFRESH, UI_HELLO_<build>) and reads the UI_STATE
--- variable / SendDataToUI snapshot. Opening the page (SELECT on 5003) never sends a key.
+-- variable / SendDataToUI snapshot. Opening the page (SELECT on 5003, or the page's UI_HELLO) selects the
+-- Shield in this room and wakes it (launchOnOpen), but never sends a key.
 local PROXY_REMOTE = 5003
 local PAGE_BUILD = 3            -- must match PAGE_BUILD in www/remote3.html (file renamed per release)
 local uiSeq = 0
@@ -1102,6 +1103,25 @@ local function myRoomId()
   return ok and tonumber(r) or nil
 end
 
+-- Opening the Shield Remote page selects the Shield as this room's source and wakes it, the same as
+-- the first key press already does, but without a key. When the room is already on the Shield it only
+-- wakes a sleeping Shield. A source change happens at most once per 15 s, so a page refresh or a
+-- UI_HELLO right after the tile SELECT does not repeat it.
+local lastOpenLaunch = 0
+local function launchOnOpen(why)
+  local rid = myRoomId()
+  if not rid then return end
+  if roomIsOnMe(rid) then
+    if lastAwake == false then httpPost("/v1/wake", nil, nil) end
+    return
+  end
+  local now = os.time()
+  if now - lastOpenLaunch < 15 then return end
+  lastOpenLaunch = now
+  logMsg(LOG_INFO, "Shield Remote opened (%s): selecting Shield in room %d", why, rid)
+  ensureRoomSelected(rid)
+end
+
 -- Room mute/volume state for the page: find the room's variables by name and watch them.
 local roomAudio = { room = nil, mute = nil, vol = nil }
 
@@ -1171,6 +1191,7 @@ local function handleUi(cmd)
       pcall(function() C4:UpdateProperty("Web Page Status",
         "PAGE IS STALE: page " .. b .. ", driver expects " .. PAGE_BUILD) end)
     end
+    launchOnOpen("page")
     publishArt(true)
     publishRemoteState(true)
   else
@@ -1199,9 +1220,15 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
     tParams = tParams or {}
     local cmd = tostring(strCommand or "")
 
-    -- Shield Remote tile/page (uibutton 5003): UI_* commands act; SELECT and anything else only republish.
+    -- Shield Remote tile/page (uibutton 5003): UI_* commands act; SELECT (page opened) selects the Shield
+    -- in the room and republishes; anything else only republishes.
     if tonumber(idBinding) == PROXY_REMOTE then
-      if string.sub(cmd, 1, 3) == "UI_" then handleUi(cmd) else publishRemoteState(true) end
+      if string.sub(cmd, 1, 3) == "UI_" then
+        handleUi(cmd)
+      else
+        if cmd == "SELECT" then launchOnOpen("tile") end
+        publishRemoteState(true)
+      end
       return
     end
 
