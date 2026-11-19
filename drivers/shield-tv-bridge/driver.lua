@@ -6,7 +6,7 @@
 -- proxy (5003, "Shield Remote") that opens the phone remote web page www/remote1.html.
 -- The App N Package properties are fallbacks, used only when no mini app is bound to the slot.
 
-local DRIVER_VERSION = "1.5.3"
+local DRIVER_VERSION = "1.5.4"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -957,12 +957,12 @@ local function ensureRoomSelected(roomId)
 end
 
 -- ---------------------------------------------------------------- Shield Remote web page (1.5.0)
--- uibutton proxy 5003 opens www/remote3.html. The page sends parameter-free UI_* commands
+-- uibutton proxy 5003 opens www/remote4.html. The page sends parameter-free UI_* commands
 -- (UI_KEY_<KEY>, UI_VOL_UP/DOWN, UI_MUTE, UI_REFRESH, UI_HELLO_<build>) and reads the UI_STATE
 -- variable / SendDataToUI snapshot. Opening the page (SELECT on 5003, or the page's UI_HELLO) selects the
 -- Shield in this room and wakes it (launchOnOpen), but never sends a key.
 local PROXY_REMOTE = 5003
-local PAGE_BUILD = 3            -- must match PAGE_BUILD in www/remote3.html (file renamed per release)
+local PAGE_BUILD = 4            -- must match PAGE_BUILD in www/remote4.html (file renamed per release)
 local uiSeq = 0
 
 local REMOTE_KEYS = {
@@ -1177,6 +1177,19 @@ local function handleUi(cmd)
       -- No room mute variable to watch: flip our own idea of it so the icon still follows.
       roomMuted = not (roomMuted == true)
       publishRemoteState(false)
+    end
+  elseif cmd == "UI_POWER" then
+    -- Power button: room on the Shield and the Shield awake -> room off; otherwise select the Shield and wake it.
+    local rid = myRoomId()
+    if rid then
+      if roomIsOnMe(rid) and lastAwake ~= false then
+        logMsg(LOG_INFO, "Shield Remote power: room %d off", rid)
+        pcall(function() C4:SendToDevice(rid, "ROOM_OFF", {}) end)
+      else
+        logMsg(LOG_INFO, "Shield Remote power: selecting Shield in room %d", rid)
+        lastOpenLaunch = os.time()
+        ensureRoomSelected(rid)
+      end
     end
   elseif cmd == "UI_REFRESH" then
     publishArt(true)
