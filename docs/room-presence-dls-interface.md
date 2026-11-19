@@ -2,7 +2,7 @@
 
 Status: FINAL design, agreed with the owner 2026-11-14. Supersedes the earlier draft that split
 on/off decisions into Room Light Helper (RLH). No code is changed by this document.
-Covers: `drivers/daylight-lighting-scheduler` (DLS, v1.10.1), `tools/dls-presence/dls_presence.py`
+Covers: `drivers/daylight-lighting-scheduler` (DLS, 1.16.x), `tools/dls-presence/dls_presence.py`
 (poller, v1.3.0, runs on liesa), `tools/c4sim`. RLH (`drivers/room-light-helper`) stays as it is.
 UNTESTED: nothing here is proven on hardware. Section 2 must pass before any driver code is written.
 
