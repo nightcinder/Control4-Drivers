@@ -1,7 +1,10 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.10
+  DRIVER_VERSION: 1.16.12
 
+  1.16.12: a cloud reply whose cloud_cover is not a number (e.g. a string or object) no longer overwrites the
+  last good cloud reading with nil; the value is ignored and the last good one kept.
+  1.16.11: presence replies are wrapped in pcall (ERR INTERNAL on failure); the dead listRefused flag is gone.
   1.16.10: sun times are no longer 5 minutes late. computeSunEvents sampled the sun every 5 minutes and
   kept the first sample past the -0.833 horizon, so sunrise 07:16 was recorded as 07:20 and every
   sunrise/sunset-relative time (curtains open_at, room on/off, wake, daylight trigger) drifted up to 5 min
@@ -112,7 +115,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.11"
+DRIVER_VERSION = "1.16.12"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -1561,9 +1564,14 @@ function ReceivedAsync(ticketId, strData, responseCode, tHeaders, strError)
   end
   local ok, data = pcall(function() return C4:JsonDecode(strData, false) end)
   if ok and type(data) == "table" and data.current and data.current.cloud_cover then
-    cloudPct = tonumber(data.current.cloud_cover)
-    cloudStamp = os.time()
-    dbg("cloud cover", tostring(cloudPct))
+    local pct = tonumber(data.current.cloud_cover)
+    if pct then
+      cloudPct = pct
+      cloudStamp = os.time()
+      dbg("cloud cover", tostring(cloudPct))
+    else
+      dbg("cloud cover not numeric, keeping last value", tostring(data.current.cloud_cover))
+    end
   end
 end
 
