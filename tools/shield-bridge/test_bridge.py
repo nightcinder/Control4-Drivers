@@ -5,6 +5,7 @@ import asyncio
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -311,6 +312,60 @@ class ArtResolverTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertIsNotNone(art_id)
             self.assertEqual(calls, ["http://192.0.2.10:32400/library/metadata/99/thumb/1"])
+
+    async def test_spotify_finder_runs_before_itunes_when_credentials_set(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            resolver = art.ArtResolver(
+                {"spotify_client_id": "cid", "spotify_client_secret": "secret"},
+                Path(td),
+                AsyncMock(return_value=None),
+            )
+            resolver._plex = AsyncMock(return_value=None)  # type: ignore[method-assign]
+            resolver._spotify = AsyncMock(return_value=b"SPOTIFY_JPG")  # type: ignore[method-assign]
+            resolver._itunes = AsyncMock(return_value=b"ITUNES_JPG")  # type: ignore[method-assign]
+            with patch.object(art, "_square", side_effect=lambda b: b):
+                art_id = await resolver.resolve(
+                    "com.spotify.tv.android", "Dead Man Walking", "Against The Current", "")
+            self.assertIsNotNone(art_id)
+            resolver._spotify.assert_awaited_once()  # type: ignore[attr-defined]
+            resolver._itunes.assert_not_awaited()  # type: ignore[attr-defined]
+
+    async def test_spotify_finder_skipped_without_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            resolver = art.ArtResolver({}, Path(td), AsyncMock(return_value=None))
+            resolver._plex = AsyncMock(return_value=None)  # type: ignore[method-assign]
+            resolver._spotify = AsyncMock(return_value=b"SPOTIFY_JPG")  # type: ignore[method-assign]
+            resolver._itunes = AsyncMock(return_value=b"ITUNES_JPG")  # type: ignore[method-assign]
+            with patch.object(art, "_square", side_effect=lambda b: b):
+                art_id = await resolver.resolve(
+                    "com.spotify.tv.android", "Dead Man Walking", "Against The Current", "")
+            self.assertIsNotNone(art_id)
+            resolver._spotify.assert_not_awaited()  # type: ignore[attr-defined]
+            resolver._itunes.assert_awaited_once()  # type: ignore[attr-defined]
+
+    async def test_spotify_token_is_cached_between_lookups(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            resolver = art.ArtResolver(
+                {"spotify_client_id": "cid", "spotify_client_secret": "secret"},
+                Path(td),
+                AsyncMock(return_value=None),
+            )
+            resolver._spotify_token_cache = ("tok", time.monotonic() + 600)
+            calls: list[str] = []
+
+            async def fake_fetch(url: str, headers: dict[str, str] | None = None) -> bytes | None:
+                calls.append(url)
+                if "api.spotify.com/v1/search" in url:
+                    self.assertEqual((headers or {}).get("Authorization"), "Bearer tok")
+                    return json.dumps({"tracks": {"items": [
+                        {"artists": [{"name": "Against The Current"}],
+                         "album": {"images": [{"url": "http://192.0.2.20/cover.jpg"}]}}]}}).encode()
+                return b"COVER"
+
+            resolver._fetch = fake_fetch  # type: ignore[method-assign]
+            found = await resolver._spotify("Dead Man Walking", "Against The Current", "")
+            self.assertEqual(found, b"COVER")
+            self.assertEqual(calls[0].split("?")[0], "https://api.spotify.com/v1/search")
 
     async def test_update_art_retries_after_fallback_ttl_expires(self) -> None:
         with tempfile.TemporaryDirectory() as td:

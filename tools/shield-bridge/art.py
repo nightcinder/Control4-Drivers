@@ -4,6 +4,9 @@ Order: Plex poster (only if art.plex_url and art.plex_token are set in config.js
 then an Apple (iTunes Search) lookup for music, then the open app's own icon
 (pulled from its APK over ADB), then a generic streaming-box picture (shield_tile). Images are served by the bridge
 at /art/<id>; ids are random per image, so the URL carries no secret.
+
+With art.spotify_client_id and art.spotify_client_secret set, a Spotify catalogue lookup runs
+before the iTunes one.
 """
 from __future__ import annotations
 
@@ -155,6 +158,7 @@ class ArtResolver:
         self._images: OrderedDict[str, tuple[bytes, str]] = OrderedDict()
         self._keys: dict[str, str] = {}
         self._fallback_until: dict[str, tuple[str, float]] = {}
+        self._spotify_token_cache: tuple[str, float] | None = None
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def get(self, art_id: str) -> tuple[bytes, str] | None:
@@ -202,10 +206,11 @@ class ArtResolver:
         finders: list[tuple[str, Callable[[], Awaitable[bytes | None]]]] = []
         if thumb:
             finders.append(("_plex_thumb", lambda: self._plex_thumb(thumb)))
-        finders.extend((
-            ("_plex", lambda: self._plex(title, artist, album)),
-            ("_itunes", lambda: self._itunes(title, artist, album)),
-        ))
+        finders.append(("_plex", lambda: self._plex(title, artist, album)))
+        # Spotify's own catalogue beats a title-and-artist guess in Apple's when Spotify is playing.
+        if self._cfg.get("spotify_client_id") and self._cfg.get("spotify_client_secret"):
+            finders.append(("_spotify", lambda: self._spotify(title, artist, album)))
+        finders.append(("_itunes", lambda: self._itunes(title, artist, album)))
         for label, attempt in finders:
             try:
                 found = await asyncio.wait_for(attempt(), HTTP_TIMEOUT + 4)
@@ -263,6 +268,84 @@ class ArtResolver:
                     else item.get("parentThumb") if kind == "track" else None) or item.get("thumb")
             if path:
                 return await self._fetch(f"{str(base).rstrip('/')}{path}", headers)
+        return None
+
+    async def _spotify_token(self) -> str | None:
+        """Client-credentials token for the Spotify Web API, cached until a minute before expiry."""
+        cid = str(self._cfg.get("spotify_client_id") or "").strip()
+        secret = str(self._cfg.get("spotify_client_secret") or "").strip()
+        if not cid or not secret:
+            return None
+        now = time.monotonic()
+        if self._spotify_token_cache and now < self._spotify_token_cache[1]:
+            return self._spotify_token_cache[0]
+        import base64
+
+        import aiohttp
+
+        basic = base64.b64encode(f"{cid}:{secret}".encode()).decode()
+        timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                    "https://accounts.spotify.com/api/token",
+                    data={"grant_type": "client_credentials"},
+                    headers={"Authorization": f"Basic {basic}"},
+                ) as resp:
+                    if resp.status != 200:
+                        log.debug("spotify token: HTTP %s", resp.status)
+                        return None
+                    body = await resp.json()
+        except Exception as exc:  # noqa: BLE001
+            log.debug("spotify token: %s", exc)
+            return None
+        token = str(body.get("access_token") or "")
+        if not token:
+            return None
+        ttl = float(body.get("expires_in") or 3600)
+        self._spotify_token_cache = (token, now + max(60.0, ttl - 60.0))
+        return token
+
+    async def _spotify(self, title: str, artist: str, album: str) -> bytes | None:
+        """Album art straight from Spotify's catalogue, which is the app actually playing the track.
+
+        Needs an app in the Spotify developer dashboard (development mode requires Premium on
+        the app owner). Without spotify_client_id/spotify_client_secret this finder is skipped.
+        """
+        if not title or not artist:
+            return None
+        token = await self._spotify_token()
+        if not token:
+            return None
+        from urllib.parse import quote
+
+        query = quote(f'track:"{title}" artist:"{artist}"')
+        raw = await self._fetch(
+            f"https://api.spotify.com/v1/search?type=track&limit=5&q={query}",
+            {"Authorization": f"Bearer {token}"},
+        )
+        if not raw:
+            # Expired or rejected token: drop it so the next poll mints a fresh one.
+            self._spotify_token_cache = None
+            return None
+        import json
+
+        try:
+            items = (json.loads(raw).get("tracks") or {}).get("items") or []
+        except ValueError:
+            return None
+        want_artist = artist.strip().lower()
+        for hit in items:
+            hit_artists = " ".join(str(a.get("name", "")) for a in hit.get("artists") or [])
+            if want_artist not in hit_artists.lower():
+                continue
+            for image in (hit.get("album") or {}).get("images") or []:
+                url = str(image.get("url") or "")
+                if not url:
+                    continue
+                found = await self._fetch(url)
+                if found:
+                    return found
         return None
 
     async def _itunes(self, title: str, artist: str, album: str) -> bytes | None:

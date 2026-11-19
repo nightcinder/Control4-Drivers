@@ -11,3 +11,23 @@ Pair the v2 client once with androidtvremote2 (async_start_pairing / async_finis
 
 Self test (no network): python bridge.py --selftest
 Token and certs never go in git.
+
+## Cover art
+
+`art.resolve()` tries, in order: the Plex thumb the session already carries, a Plex session
+lookup by title, the Spotify catalogue, then an iTunes lookup by title and artist, then the
+playing app's own icon from its APK, then a generic streaming-box tile.
+
+Set these in `config.json` under `art` to enable the Spotify step (it is skipped when empty):
+
+```json
+"art": {
+  "spotify_client_id": "…",
+  "spotify_client_secret": "…"
+}
+```
+
+Create the app at developer.spotify.com/dashboard (Web API). Development mode requires the app
+owner to hold Spotify Premium and allows five allowlisted users; client-credentials is enough for
+`GET /search`, which is all this step uses. Because Spotify is the app actually playing, its
+catalogue matches remixes and live versions that an Apple lookup resolves to the wrong release.

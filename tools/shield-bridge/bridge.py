@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from aiohttp import web
 
-VERSION = "0.4.3"
+VERSION = "0.4.4"
 CLIENT_NAME = "shield-bridge"
 HEALTH_INTERVAL = 2.0
 BACKOFF_MIN = 1.0
