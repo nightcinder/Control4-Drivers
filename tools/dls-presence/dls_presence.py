@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DLS presence bridge v1.4.1 - feeds the Daylight Lighting Scheduler (Control4 EA-1) Home/Away and per-room occupancy.
+"""DLS presence bridge v1.5.0 - feeds the Daylight Lighting Scheduler (Control4 EA-1) Home/Away and per-room occupancy.
 
 Household (PRESENCE, v1.3.0 behaviour):
   unifi   - phone present in UniFi Poller metrics in Prometheus (stdlib only)
@@ -28,6 +28,7 @@ Env:  PROM_URL (default http://localhost:9090)  EA1_HOST  EA1_PORT (8730)  DLS_T
       LIFE360_POLL_SEC (default 120)  LIFE360_STALE_MIN (default 45: older fixes are ignored)
       NOTIFY_TO (e.g. idrac@mailrise.xyz; empty = no alerts)  NOTIFY_SMTP (default localhost:8025)  NOTIFY_FROM
       LIFE360_ALERT_AFTER_MIN (default 30: alert once Life360 has failed this long; repeats every 6 h, plus a recovery notice)
+      DLS_ALERT_AFTER_MIN (default 10: alert once the DLS link has refused/failed sends this long; repeats every 6 h, plus a recovery notice)
       FRESH_PORT (default 8731, 0 = off)  FRESH_BIND (default 127.0.0.1)
       ROOMS_FILE (default /etc/dls-presence.rooms.json; missing = no OCC lines, v1.3.0 behaviour)
       OCC_REPEAT_SEC (60)  STUCK_ON_MIN (240)  SRC_UNKNOWN_SEC (180)  ESPHOME_PORT (6053)
@@ -39,7 +40,7 @@ import csv, json, math, os, re, smtplib, socket, sys, threading, time, urllib.pa
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 PROM = os.environ.get("PROM_URL", "http://localhost:9090").rstrip("/")
 HOST = os.environ.get("EA1_HOST", "")
 PORT = int(os.environ.get("EA1_PORT", "8730"))
@@ -62,6 +63,7 @@ NOTIFY_TO = os.environ.get("NOTIFY_TO", "").strip()
 NOTIFY_SMTP = os.environ.get("NOTIFY_SMTP", "localhost:8025").strip()
 NOTIFY_FROM = os.environ.get("NOTIFY_FROM", "dls-presence@liesa").strip()
 L360_ALERT_AFTER = float(os.environ.get("LIFE360_ALERT_AFTER_MIN", "30")) * 60
+DLS_ALERT_AFTER = float(os.environ.get("DLS_ALERT_AFTER_MIN", "10")) * 60
 
 # v1.4.0 per-room occupancy
 ROOMS_FILE = os.environ.get("ROOMS_FILE", "/etc/dls-presence.rooms.json")
@@ -868,6 +870,9 @@ class Poller:
         self.last_snapshot = None
         self.next_try = 0.0
         self.fail_idx = 0
+        self.link_since = None      # first failed send of the current outage
+        self.link_alerted = 0.0     # last time the outage email went out
+        self.link_down = False      # an outage email was sent and not yet recovered
         self.auth_since = None
         self.auth_alerted = False
         self._logged = set()
@@ -939,6 +944,17 @@ class Poller:
         self.fail_idx += 1
         self.next_try = now + wait
         self.log(f"DLS send {why}; retry in {wait} s with a full snapshot")
+        self.link_since = self.link_since or now
+        if now - self.link_since >= DLS_ALERT_AFTER and now - self.link_alerted >= 6 * 3600:
+            sent = self.notify(
+                "DLS presence: link down",
+                f"DLS has refused or not accepted presence lines for {int((now - self.link_since) / 60)} min "
+                f"({why}) at {HOST or 'EA-1'}:{PORT}.\n"
+                "DLS keeps the last presence and per-room state, then shows 'Presence feed lost' after 180 s. "
+                "Check the EA-1 is up and the DLS driver is running: the presence listener only opens after a clean "
+                "driver load, and a load error leaves it loaded but dead (see the driver's Status property).")
+            self.link_alerted = now
+            self.link_down = self.link_down or sent
 
     def _send(self, now, lines, cur, snapshot, changed):
         try:
@@ -948,6 +964,10 @@ class Poller:
         if len(replies) < len(lines):
             return self._fail(now, f"short reply ({len(replies)} of {len(lines)})")
         self.fail_idx = 0
+        if self.link_down:
+            self.notify("DLS presence: link recovered",
+                        f"DLS is accepting presence lines again after {int((now - (self.link_since or now)) / 60)} min down.")
+        self.link_since, self.link_alerted, self.link_down = None, 0.0, False
         auth = resync = False
         for line, rep in zip(lines, replies):
             head = line.split(" ", 1)[0]
