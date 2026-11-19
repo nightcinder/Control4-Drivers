@@ -1,7 +1,15 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.12
+  DRIVER_VERSION: 1.16.13
 
+  1.16.13: a long scheduled off really fades. One RAMP_TO_LEVEL 0 with a TIME of minutes is not honoured
+  end to end: on 2026-11-18 the Den's 30-minute off (off_ramp_min 30) reached the Chair Lamp as an instant
+  power-off (trace: on 20% at 23:47:15, off 20% at 23:47:30, brightness never moved). An off longer than
+  two minutes is now stepped by the driver, one level closer to 0 every minute, each step sent with a 60 s
+  ramp, so no light is asked to glide for more than a minute. A light that is already off is never seeded
+  from its remembered last level (a hand-off leaves lastLevel set while the bulb is dark, so the old seed
+  would have turned the room back on at the off edge). A hand on the dimmer or a hand-off drops that light
+  out of the fade; a new on window, a wake ramp, a scene, ReleaseAll, a Rooms JSON save or a reload cancels it.
   1.16.12: a cloud reply whose cloud_cover is not a number (e.g. a string or object) no longer overwrites the
   last good cloud reading with nil; the value is ignored and the last good one kept.
   1.16.11: presence replies are wrapped in pcall (ERR INTERNAL on failure); the dead listRefused flag is gone.
@@ -115,7 +123,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.12"
+DRIVER_VERSION = "1.16.13"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -1220,6 +1228,80 @@ local function runCurtains(now, lat, lon)
   end
 end
 
+-- ---------------------------------------------------------------------------
+-- long off fades (1.16.13)
+-- ---------------------------------------------------------------------------
+-- One RAMP_TO_LEVEL with a TIME of minutes is not honoured end to end on this project. The Den's
+-- 30-minute scheduled off (off_ramp_min 30) reached the Chair Lamp as an instant power-off: the LIFX
+-- trace shows on 20% at 23:47:15 and off 20% at 23:47:30 on 2026-11-18, brightness never moved.
+-- Long off fades are therefore stepped here: every OFF_FADE_STEP_MS the next level goes out with a
+-- ramp time of one step, so a light only ever has to glide for 60 s.
+local OFF_FADE_STEP_MS = 60000
+local offFades = {}                 -- room.name -> { steps, done, from = {id -> level}, sent = {id -> level}, timer }
+
+local function cancelOffFade(room)
+  local f = offFades[room.name]
+  if not f then return end
+  if f.timer then pcall(function() f.timer:Cancel() end) end
+  offFades[room.name] = nil
+end
+
+local function cancelAllOffFades()
+  local names = {}
+  for name in pairs(offFades) do names[#names + 1] = name end
+  for _, name in ipairs(names) do
+    local f = offFades[name]
+    if f and f.timer then pcall(function() f.timer:Cancel() end) end
+    offFades[name] = nil
+  end
+end
+
+local function offFadeStep(room)
+  local f = offFades[room.name]
+  if not f then return end
+  if Properties["Enabled"] ~= "On" or presenceAway or room.overrideUntil then cancelOffFade(room) return end
+  f.done = f.done + 1
+  local last = f.done >= f.steps
+  for _, l in ipairs(room.lights) do
+    local from = f.from[l.id]
+    if from then
+      if l.overrideUntil or l.offHold then
+        f.from[l.id] = nil                    -- a hand on the dimmer, or a hand-off, takes the light out
+      else
+        local lvl = 0
+        if not last then lvl = math.floor(from * (1 - f.done / f.steps) + 0.5) end
+        if f.sent[l.id] ~= lvl then
+          f.sent[l.id] = lvl
+          sendLevel(l, lvl, OFF_FADE_STEP_MS)
+        end
+      end
+    end
+  end
+  if last then cancelOffFade(room) end
+end
+
+-- Returns true only when a fade is actually running. A light that is already off is never seeded from
+-- lastLevel: after a hand-off, lastLevel still carries the old level while the bulb is dark, and seeding
+-- from it would turn the room back on at the off edge and dim it for half an hour.
+local function startOffFade(room, sec)
+  cancelOffFade(room)
+  local f = { steps = math.max(1, math.ceil(sec / (OFF_FADE_STEP_MS / 1000))), done = 0, from = {}, sent = {}, timer = nil }
+  for _, l in ipairs(room.lights) do
+    if not l.overrideUntil and not l.offHold then
+      local lvl = curLevel(l)
+      if lvl > 0.5 then f.from[l.id] = lvl end
+    end
+  end
+  if next(f.from) == nil then return false end
+  offFades[room.name] = f
+  f.timer = C4:SetTimer(OFF_FADE_STEP_MS, function(t)
+    if offFades[room.name] ~= f then pcall(function() t:Cancel() end) return end
+    pcall(offFadeStep, room)
+  end, true)
+  offFadeStep(room)                                  -- first step now, not a minute later
+  return true
+end
+
 function Update()
   if Properties["Enabled"] ~= "On" then setStatus("Disabled") return end
   local lat = tonumber(Properties["Latitude"])
@@ -1314,6 +1396,7 @@ function Update()
       local we = resolveTimeSpec(w.stop, now, lat, lon)
       if ws and we then
         inWake = (minNow >= ws and minNow < we)
+        if inWake then cancelOffFade(room) end      -- 1.16.13: never step an off down under a wake ramp
         if inWake and not room.overrideUntil then
           local frac = clamp((minNow - ws) / math.max(1, tonumber(w.ramp_min) or 30), 0, 1)
           local lvl = math.max(1, (tonumber(w.level) or 40) * frac)
@@ -1380,13 +1463,21 @@ function Update()
       -- hand. A pending off now comes only from a real on-window -> off-window edge.
       if scheduled and not inWindow and room.wasInWindow then
         local offMs = room.off_ramp_min and (room.off_ramp_min * 60000) or rampMs
-        for _, l in ipairs(room.lights) do
-          if not l.overrideUntil then sendLevel(l, 0, offMs) end
+        local started
+        if offMs > OFF_FADE_STEP_MS * 2 then
+          started = startOffFade(room, math.ceil(offMs / 1000))    -- 1.16.13: stepped, see the block above Update()
+        else
+          for _, l in ipairs(room.lights) do
+            if not l.overrideUntil and not l.offHold then sendLevel(l, 0, offMs) end
+          end
+          started = true
         end
         room.offEnforce = true
-        room.offFadeUntil = now + math.ceil(offMs / 1000) + 30   -- keep 'follow' from fighting the fade-out
+        -- only hold off enforcement (and 'follow') back while a fade is really running
+        if started then room.offFadeUntil = now + math.ceil(offMs / 1000) + 30 end
         dbg("scheduled off", room.name, "fade min", tostring(offMs / 60000))
       end
+      if inWindow then cancelOffFade(room) end                   -- 1.16.13: a new on window ends any off fade
       if inWindow and not room.wasInWindow and not room.pr then      -- 1.11.3: the on edge clears manual-off holds
         for _, l in ipairs(room.lights) do l.offHold = nil end
       end
@@ -1589,6 +1680,7 @@ local function parseWindows(list)
 end
 
 local function loadRooms(closeGate)
+  cancelAllOffFades()                     -- 1.16.13: a step timer must not outlive the room tables it steps
   for _, r in ipairs(rooms) do
     if r.vacancyTimer then r.vacancyTimer:Cancel() r.vacancyTimer = nil end
     for _, l in ipairs(r.lights) do C4:UnregisterVariableListener(l.id, LIGHT_LEVEL_VAR) end   -- 1.11.7: drop listeners for lights/rooms removed from the JSON
@@ -1801,6 +1893,7 @@ function OnDriverDestroyed()
   if mainTimer then mainTimer:Cancel() mainTimer = nil end
   if cloudTimer then cloudTimer:Cancel() cloudTimer = nil end
   if presenceTimer then presenceTimer:Cancel() presenceTimer = nil end
+  cancelAllOffFades()
   for _, r in ipairs(rooms) do
     if r.vacancyTimer then r.vacancyTimer:Cancel() r.vacancyTimer = nil end
   end
@@ -1829,10 +1922,12 @@ local function applyScene(roomName, sceneName)
       local rampMs = (tonumber(Properties["Ramp Time (sec)"]) or 90) * 1000
       local sceneMs = tonumber(sc.ramp_ms) or 2000
       if sc.off then
+        cancelOffFade(room)
         for _, l in ipairs(room.lights) do sendLevel(l, 0, sceneMs) end
         room.overrideUntil = nextOnTime(room, now, lat, lon)
         room.dayTriggered = false
       else
+        cancelOffFade(room)
         local _, cct = ComputeRoomTarget(room, now, lat, lon)
         for _, l in ipairs(room.lights) do
           local pct = sc.levels and (sc.levels[tostring(l.id)] or sc.levels[l.id])
@@ -1855,6 +1950,7 @@ local function applyScene(roomName, sceneName)
 end
 
 local function releaseAll()
+  cancelAllOffFades()
   for _, r in ipairs(rooms) do r.overrideUntil = nil end
   for _, r in ipairs(rooms) do for _, l in ipairs(r.lights) do l.overrideUntil, l.offHold, l.lastLevel, l.lastCCT = nil, nil, nil, nil end end
   for _, r in ipairs(rooms) do
