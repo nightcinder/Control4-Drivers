@@ -8,6 +8,7 @@ Custom Control4 Lua drivers. Source is in `drivers/<name>/`, built packages in `
 3. Run the simulator tests in `tools/c4sim/tests` if the driver has them.
 4. `python tools\build_c4z.py <name>`. The build must succeed. The package lands in `c4z/<name>.c4z`.
 5. Bump the driver version: set `Driver Version` `<default>` in the `.xml` and `DRIVER_VERSION` in the `.lua` by hand. `tools\build_c4z.py` bumps the XML `<version>` and `<modified>` itself on every build, so never edit those two by hand.
+   Version scheme: three-part `major.minor.patch`, patch bump (last number + 1) for every change, never reuse a number. Raise the minor only when the owner asks for a new feature set, and the major only for a breaking rewrite. Both `Driver Version` and `DRIVER_VERSION` must carry the same string, and the `.c4z` must be rebuilt after the bump so the package matches the source — a bumped source with an unbuilt package counts as untested.
 
 ## Git
 - Complete, tested code and its built `.c4z` go to `main` (`git push origin HEAD:main`).
