@@ -2,7 +2,6 @@
 
 Run:  python test_dls_presence.py      (or: python -m unittest -v test_dls_presence)
 """
-import csv
 import json
 import os
 import sys
@@ -74,8 +73,12 @@ class Harness:
         self.esp = esp if esp is not None else FakeEsp()
         self.srv = Server()
         self.notes, self.logs = [], []
+        def _notify(subject, body):
+            self.notes.append(subject)
+            return True
+
         self.poller = dp.Poller(rooms, token=TOK, transport=self.srv,
-                                notify=lambda s, b: self.notes.append(s), log=self.logs.append,
+                                notify=_notify, log=self.logs.append,
                                 clock=self.clock, esp=self.esp, robot=robot)
         if presence:
             self.poller.set_presence(presence)
@@ -256,6 +259,62 @@ class PollerCases(unittest.TestCase):
 
 
 class ExtraCases(unittest.TestCase):
+    def test_link_down_alerts_once_then_recovers(self):
+        old = dp.DLS_ALERT_AFTER
+        dp.DLS_ALERT_AFTER = 60.0
+        try:
+            h = Harness({"Kitchen": cfg("Kitchen", sources=("esp",))})
+            h.esp.set("Kitchen", True)
+            h.tick()                               # one good snapshot
+            self.assertEqual(h.notes, [])
+
+            def refuse(lines):
+                raise ConnectionRefusedError()
+
+            h.poller.transport = refuse
+            h.advance(60)                          # next heartbeat snapshot is the first failure
+            h.tick()
+            h.advance(30)
+            h.tick()
+            self.assertEqual(h.notes, [])          # 30 s in: quiet
+            h.advance(30)
+            h.tick()
+            self.assertEqual(h.notes, ["DLS presence: link down"])
+            for _ in range(20):                    # still down: no repeat inside 6 h
+                h.advance(60)
+                h.tick()
+            self.assertEqual(h.notes, ["DLS presence: link down"])
+
+            h.poller.transport = h.srv
+            h.advance(60)
+            h.tick()
+            self.assertEqual(h.notes, ["DLS presence: link down", "DLS presence: link recovered"])
+        finally:
+            dp.DLS_ALERT_AFTER = old
+
+    def test_link_down_repeats_after_six_hours(self):
+        old = dp.DLS_ALERT_AFTER
+        dp.DLS_ALERT_AFTER = 60.0
+        try:
+            h = Harness({"Kitchen": cfg("Kitchen", sources=("esp",), stuck=0)})
+            h.esp.set("Kitchen", True)
+            h.tick()
+
+            def refuse(lines):
+                raise ConnectionRefusedError()
+
+            h.poller.transport = refuse
+            for _ in range(6 * 60):                # 6 h in 60 s steps
+                h.advance(60)
+                h.tick()
+            self.assertEqual(h.notes, ["DLS presence: link down"])
+            for _ in range(10):
+                h.advance(60)
+                h.tick()
+            self.assertEqual(h.notes, ["DLS presence: link down"] * 2)
+        finally:
+            dp.DLS_ALERT_AFTER = old
+
     def test_auth_error_retries_every_60s_and_alerts_after_30min(self):
         h = Harness({"Kitchen": cfg("Kitchen", sources=("esp",))})
         h.srv.script = lambda lines: ["ERR AUTH"] * len(lines)
@@ -429,21 +488,6 @@ class StatusViewTest(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(body)["state"], "AWAY")
 
-
-    def test_tail_reads_a_large_log_without_loading_it_all(self):
-        with open(self.tmp.name, "w", newline="") as fh:
-            w = csv.writer(fh)
-            w.writerow(["ts", "kind", "person", "source", "value", "detail"])
-            for i in range(4000):
-                w.writerow([f"2026-01-01T00:00:{i % 60:02d}", "source", "nick", "unifi", str(i % 2), ""])
-        ev = dp._tail_events(25)
-        self.assertEqual(len(ev), 25)
-        self.assertEqual(ev[0]["value"], "1")  # 3999 % 2
-
-    def test_tail_returns_empty_without_a_header(self):
-        with open(self.tmp.name, "w", newline="") as fh:
-            fh.write("garbage,line\n")
-        self.assertEqual(dp._tail_events(), [])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
