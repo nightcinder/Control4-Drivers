@@ -1,12 +1,12 @@
 <devicedata>
   <copyright>Copyright (c) 2026 - Custom / Unofficial Driver - Not affiliated with Control4</copyright>
-  <version>9</version>
+  <version>10</version>
   <manufacturer>Custom</manufacturer>
   <name>Media Remote Bridge</name>
   <model>Media Remote Bridge</model>
   <creator>Custom</creator>
   <created>11/01/2026 12:00 PM</created>
-  <modified>11/05/2026 12:30 PM</modified>
+  <modified>11/18/2026 12:45 AM</modified>
   <control>lua_gen</control>
   <controlmethod>other</controlmethod>
   <driver>DriverWorks</driver>
@@ -19,7 +19,7 @@
       <property>
         <name>Driver Version</name>
         <type>STRING</type>
-        <default />
+        <default>0.4.4</default>
         <readonly>true</readonly>
       </property>
       <property>

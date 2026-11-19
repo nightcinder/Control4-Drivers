@@ -5,8 +5,8 @@
 	<name>UniFi_Outlet</name>
 	<model>UniFi Outlet</model>
 	<created>11/11/2026 12:00 PM</created>
-	<modified>11/18/2026 12:03 AM</modified>
-	<version>5</version>
+	<modified>11/18/2026 09:49 PM</modified>
+	<version>6</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
