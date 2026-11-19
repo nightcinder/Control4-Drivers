@@ -85,11 +85,14 @@
     -webkit-backdrop-filter:blur(20px); backdrop-filter:blur(20px); }
   .pill .ghost { width:44px; height:44px; }
   #mute.on { color:#ff8a7a; }
+  .pwr { position:absolute; top:max(14px, env(safe-area-inset-top)); right:14px; z-index:2;
+    background:var(--glass); border:1px solid var(--line); -webkit-backdrop-filter:blur(20px); backdrop-filter:blur(20px); }
 </style>
 </head>
 <body>
 <div id="bg"></div><div id="shade"></div>
 <div class="app">
+  <button class="ghost pwr" data-cmd="UI_POWER" aria-label="Power"><svg viewBox="0 0 24 24"><path d="M11 3h2v10h-2zm5.83 2.17 1.41-1.41A9 9 0 0 1 12 21 9 9 0 0 1 5.76 3.76l1.41 1.41A7 7 0 1 0 16.83 5.17z"/></svg></button>
   <section class="hero" id="hero">
     <div class="art" id="artbox">
       <div class="ph"><svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg></div>
@@ -136,7 +139,7 @@
 <script>
 (function () {
   "use strict";
-  var PAGE_BUILD = 3;                    // must match PAGE_BUILD in driver.lua
+  var PAGE_BUILD = 4;                    // must match PAGE_BUILD in driver.lua
   var S = null, lastSeq = null, gotState = false;
   var artCache = { key: "", data: "" }, shownArt = null, muteGuessUntil = 0, muteGuess = null;
   var hasC4 = !!(window.C4 && typeof window.C4.sendCommand === "function");
