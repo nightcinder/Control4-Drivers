@@ -557,5 +557,319 @@ class ArtResolverTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(us_res)
 
 
+class V2WatchdogTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _fake_remote_module(
+        remotes: list[object],
+        events: list[tuple[str, int]],
+        state: dict[str, int],
+        connect_hook: object = None,
+    ) -> object:
+        import types
+
+        class FakeRemote:
+            def __init__(self, client_name: str, cert: str, key: str, host: str) -> None:
+                self.idx = len(remotes)
+                self.client_name = client_name
+                self.cert = cert
+                self.key = key
+                self.host = host
+                self.is_available = True
+                self.disconnected = False
+                self.disconnect_calls = 0
+                self.keys_sent: list[tuple[str, str]] = []
+                remotes.append(self)
+
+            async def async_generate_cert_if_missing(self) -> None:
+                await asyncio.sleep(0)
+
+            async def async_connect(self) -> None:
+                state["live"] += 1
+                state["max_live"] = max(state["max_live"], state["live"])
+                try:
+                    if connect_hook is not None:
+                        await connect_hook(self)  # type: ignore[misc]
+                except BaseException:
+                    raise
+                events.append(("connect", self.idx))
+
+            def disconnect(self) -> None:
+                self.disconnect_calls += 1
+                if not self.disconnected:
+                    self.disconnected = True
+                    state["live"] = max(0, state["live"] - 1)
+                    events.append(("disconnect", self.idx))
+
+            def send_key_command(self, key: str, direction: str = "SHORT") -> None:
+                if self.disconnected or not self.is_available:
+                    raise RuntimeError("disconnected")
+                self.keys_sent.append((key, direction))
+
+        mod = types.ModuleType("androidtvremote2")
+        mod.AndroidTVRemote = FakeRemote  # type: ignore[attr-defined]
+        return mod
+
+    @staticmethod
+    async def _wait_until(pred: object, timeout: float = 1.5) -> None:
+        deadline = time.monotonic() + timeout
+        while not pred():  # type: ignore[operator]
+            if time.monotonic() >= deadline:
+                raise TimeoutError("condition not met before timeout")
+            await asyncio.sleep(0.005)
+
+    async def test_adb_reconnect_forces_v2_clean_reconnect(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            shield = _make_shield(Path(td), with_plex=False)
+            remotes: list[object] = []
+            events: list[tuple[str, int]] = []
+            state = {"live": 0, "max_live": 0}
+            mod = self._fake_remote_module(remotes, events, state)
+
+            adb_state = {"up": False}
+
+            async def fake_adb_connect() -> None:
+                adb_state["up"] = True
+
+            async def fake_adb_close() -> None:
+                adb_state["up"] = False
+
+            shield.adb._connect = fake_adb_connect
+            shield.adb._close = fake_adb_close
+            shield.adb._healthy = lambda: adb_state["up"]
+
+            with patch.dict(sys.modules, {"androidtvremote2": mod}):
+                shield._tasks = [
+                    asyncio.create_task(shield.v2.run()),
+                    asyncio.create_task(shield.adb.run()),
+                ]
+                try:
+                    await self._wait_until(lambda: shield.v2.up and shield.adb.up)
+                    self.assertEqual(len(remotes), 1)
+                    self.assertFalse(remotes[0].disconnected)  # type: ignore[attr-defined]
+
+                    st1 = shield.status()
+                    self.assertTrue(st1["v2_connected"])
+                    self.assertEqual(st1["v2_reconnects"], 0)
+                    self.assertIsNotNone(st1["v2_last_ok"])
+                    for key in (
+                        "shield", "v2_connected", "adb_connected", "awake",
+                        "app", "now_playing", "art", "version",
+                    ):
+                        self.assertIn(key, st1)
+                    first_last_ok = st1["v2_last_ok"]
+
+                    # Shield power cycle: ADB drops and recovers while v2 still looks available.
+                    shield.adb.fail("connection lost")
+                    await self._wait_until(lambda: len(remotes) >= 2 and shield.v2.up and shield.adb.up)
+
+                    self.assertTrue(remotes[0].disconnected)  # type: ignore[attr-defined]
+                    self.assertFalse(remotes[1].disconnected)  # type: ignore[attr-defined]
+                    self.assertLess(
+                        events.index(("disconnect", 0)),
+                        events.index(("connect", 1)),
+                    )
+                    st2 = shield.status()
+                    self.assertTrue(st2["v2_connected"])
+                    self.assertEqual(st2["v2_reconnects"], 1)
+                    self.assertIsNotNone(st2["v2_last_ok"])
+                    self.assertGreaterEqual(st2["v2_last_ok"], first_last_ok)
+                finally:
+                    await shield.stop()
+
+    async def test_probe_timeout_marks_status_down_and_reconnects(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            shield = _make_shield(Path(td), with_plex=False)
+            shield.v2.probe_interval = 0.02
+            shield.v2.probe_timeout = 0.03
+            remotes: list[object] = []
+            events: list[tuple[str, int]] = []
+            state = {"live": 0, "max_live": 0}
+            allow_reconnect = asyncio.Event()
+
+            async def connect_hook(remote: object) -> None:
+                if remote.idx == 1:  # type: ignore[attr-defined]
+                    await allow_reconnect.wait()
+
+            mod = self._fake_remote_module(remotes, events, state, connect_hook=connect_hook)
+
+            probe_calls = 0
+            probe_cancelled = False
+
+            async def fake_probe() -> bool:
+                nonlocal probe_calls, probe_cancelled
+                probe_calls += 1
+                if probe_calls == 1:
+                    try:
+                        await asyncio.sleep(10.0)
+                    except asyncio.CancelledError:
+                        probe_cancelled = True
+                        raise
+                return True
+
+            shield._v2_probe = fake_probe  # type: ignore[method-assign]
+
+            with patch.dict(sys.modules, {"androidtvremote2": mod}):
+                shield._tasks = [asyncio.create_task(shield.v2.run())]
+                try:
+                    await self._wait_until(lambda: len(remotes) == 1 and shield.v2.up)
+                    await self._wait_until(lambda: remotes[0].disconnected)  # type: ignore[attr-defined]
+
+                    self.assertTrue(probe_cancelled)
+                    st_down = shield.status()
+                    self.assertFalse(st_down["v2_connected"])
+                    with self.assertRaises(bridge.LinkDown):
+                        shield.send_key("HOME")
+
+                    allow_reconnect.set()
+                    await self._wait_until(lambda: len(remotes) >= 2 and shield.v2.up)
+                    st_up = shield.status()
+                    self.assertTrue(st_up["v2_connected"])
+                    self.assertEqual(st_up["v2_reconnects"], 1)
+                finally:
+                    allow_reconnect.set()
+                    await shield.stop()
+
+    async def test_backoff_schedule_and_no_reconnect_storm(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            shield = _make_shield(Path(td), with_plex=False)
+            remotes: list[object] = []
+            events: list[tuple[str, int]] = []
+            state = {"live": 0, "max_live": 0}
+
+            async def fail_connect(_remote: object) -> None:
+                raise OSError("host unreachable")
+
+            mod = self._fake_remote_module(remotes, events, state, connect_hook=fail_connect)
+            delays: list[float] = []
+
+            async def fake_sleep(seconds: float) -> None:
+                delays.append(seconds)
+                shield.v2.fail("extra noise during backoff")
+                await asyncio.sleep(0)
+                if len(delays) >= 4:
+                    raise asyncio.CancelledError
+
+            shield.v2._sleep_backoff = fake_sleep  # type: ignore[method-assign]
+
+            with patch.dict(sys.modules, {"androidtvremote2": mod}):
+                task = asyncio.create_task(shield.v2.run())
+                try:
+                    try:
+                        await asyncio.wait_for(task, timeout=0.5)
+                    except asyncio.CancelledError:
+                        pass
+                    self.assertEqual(delays, [5.0, 15.0, 60.0, 60.0])
+                    self.assertEqual(len(remotes), 4)
+                    self.assertTrue(all(r.disconnected for r in remotes))  # type: ignore[attr-defined]
+                    st = shield.status()
+                    self.assertFalse(st["v2_connected"])
+                    self.assertEqual(st["v2_reconnects"], 0)
+                    self.assertIsNone(st["v2_last_ok"])
+                finally:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    await shield.v2.close()
+
+        # Real _sleep_backoff must ignore fail() calls so rapid failures cannot storm.
+        attempts = 0
+
+        async def always_fail() -> None:
+            nonlocal attempts
+            attempts += 1
+            raise OSError("refused")
+
+        link = bridge.Link(
+            "storm-check v2",
+            always_fail,
+            AsyncMock(),
+            lambda: True,
+            backoffs=(0.25, 0.5),
+        )
+        task = asyncio.create_task(link.run())
+        try:
+            await self._wait_until(lambda: attempts == 1)
+            for _ in range(5):
+                link.fail("spam")
+                await asyncio.sleep(0.01)
+            self.assertEqual(attempts, 1)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await link.close()
+
+    async def test_clean_teardown_closes_old_client_and_leaks_no_tasks(self) -> None:
+        before = set(asyncio.all_tasks())
+        with tempfile.TemporaryDirectory() as td:
+            shield = _make_shield(Path(td), with_plex=False)
+            shield.v2.connect_timeout = 0.03
+            shield.v2._backoffs = (0.01, 0.01)
+            shield.poll_once = AsyncMock()  # type: ignore[method-assign]
+
+            adb_state = {"up": False}
+
+            async def fake_adb_connect() -> None:
+                adb_state["up"] = True
+
+            async def fake_adb_close() -> None:
+                adb_state["up"] = False
+
+            shield.adb._connect = fake_adb_connect
+            shield.adb._close = fake_adb_close
+            shield.adb._healthy = lambda: adb_state["up"]
+
+            remotes: list[object] = []
+            events: list[tuple[str, int]] = []
+            state = {"live": 0, "max_live": 0}
+
+            async def connect_hook(remote: object) -> None:
+                if remote.idx == 1:  # type: ignore[attr-defined]
+                    await asyncio.sleep(10.0)
+
+            mod = self._fake_remote_module(remotes, events, state, connect_hook=connect_hook)
+
+            with patch.dict(sys.modules, {"androidtvremote2": mod}):
+                shield.start()
+                try:
+                    await self._wait_until(lambda: len(remotes) == 1 and shield.v2.up)
+                    shield.v2.fail("stale")
+                    await self._wait_until(lambda: len(remotes) >= 3 and shield.v2.up, timeout=2.0)
+
+                    self.assertEqual(state["max_live"], 1)
+                    self.assertTrue(remotes[0].disconnected)  # type: ignore[attr-defined]
+                    self.assertTrue(remotes[1].disconnected)  # type: ignore[attr-defined]
+                    self.assertFalse(remotes[2].disconnected)  # type: ignore[attr-defined]
+                finally:
+                    await shield.stop()
+
+            self.assertTrue(remotes[2].disconnected)  # type: ignore[attr-defined]
+            self.assertIsNone(shield._remote)
+            self.assertFalse(shield.status()["v2_connected"])
+            await asyncio.sleep(0)
+            self.assertEqual(set(asyncio.all_tasks()) - before, set())
+
+    async def test_power_state_wake_requests_immediate_v2_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            shield = _make_shield(Path(td), with_plex=False)
+            shield.awake = False
+            shield.adb.up = True
+            shield.v2.up = True
+            shield.v2.probe_interval = 60.0
+
+            async def fake_adb(cmd: str) -> str:
+                if "mWakefulness" in cmd:
+                    return "  mWakefulness=Awake\n"
+                if "mCurrentFocus" in cmd:
+                    return "  mCurrentFocus=null\n"
+                if "media_session" in cmd:
+                    return ""
+                raise AssertionError(f"unexpected adb command: {cmd}")
+
+            shield.adb_shell = fake_adb  # type: ignore[method-assign]
+            await shield.poll_once()
+
+            self.assertTrue(shield.awake)
+            self.assertTrue(shield.v2._probe_now.is_set())
+
+
 if __name__ == "__main__":
     unittest.main()

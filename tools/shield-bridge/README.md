@@ -31,3 +31,17 @@ Create the app at developer.spotify.com/dashboard (Web API). Development mode re
 owner to hold Spotify Premium and allows five allowlisted users; client-credentials is enough for
 `GET /search`, which is all this step uses. Because Spotify is the app actually playing, its
 catalogue matches remixes and live versions that an Apple lookup resolves to the wrong release.
+
+## v2 link watchdog
+
+The bridge watches the Android TV Remote v2 session so half-dead sockets after a Shield power cycle
+are torn down and replaced automatically without blocking `/v1/key` or `/v1/status`:
+
+- When ADB reconnects after a drop, the bridge closes the old v2 client and opens a fresh one (or
+  wakes v2 reconnect backoff if it was already down).
+- When polled power state transitions from asleep to awake, an immediate v2 probe is triggered.
+- A periodic v2 liveness probe runs every 30 s with a 5 s timeout (`15 s` connect timeout), backing
+  off `5 s`, `15 s`, `60 s` (cap) when the Shield is offline.
+- `GET /v1/status` reports `v2_connected: false` as soon as a probe or send fails, and adds
+  `v2_last_ok` (UTC Unix timestamp of the last verified v2 connect or probe, or `null`) and
+  `v2_reconnects` (count of completed v2 reconnections).

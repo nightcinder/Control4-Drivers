@@ -10,11 +10,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hmac
+import inspect
 import io
 import json
 import logging
 import re
 import sys
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,11 +25,15 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from aiohttp import web
 
-VERSION = "0.4.4"
+VERSION = "0.4.5"
 CLIENT_NAME = "shield-bridge"
 HEALTH_INTERVAL = 2.0
 BACKOFF_MIN = 1.0
 BACKOFF_MAX = 30.0
+V2_PROBE_INTERVAL = 30.0
+V2_PROBE_TIMEOUT = 5.0
+V2_CONNECT_TIMEOUT = 15.0
+V2_BACKOFFS = (5.0, 15.0, 60.0)
 SHELL_TIMEOUT = 15.0
 ALLOWED_KEYS = frozenset({
     "DPAD_UP", "DPAD_DOWN", "DPAD_LEFT", "DPAD_RIGHT", "DPAD_CENTER", "BACK", "HOME", "MENU",
@@ -187,18 +193,49 @@ def load_config(path: Path) -> Config:
 
 # ---------------------------------------------------------------- connections
 
+async def _disconnect_remote(remote: Any) -> None:
+    res = remote.disconnect()
+    if inspect.isawaitable(res):
+        await res
+
+
 class Link:
     """One persistent connection, re-opened forever with exponential backoff."""
 
-    def __init__(self, label: str, connect: Callable[[], Awaitable[None]],
-                 close: Callable[[], Awaitable[None]], healthy: Callable[[], bool]) -> None:
+    def __init__(
+        self,
+        label: str,
+        connect: Callable[[], Awaitable[None]],
+        close: Callable[[], Awaitable[None]],
+        healthy: Callable[[], bool],
+        *,
+        probe: Callable[[], Awaitable[bool]] | None = None,
+        probe_interval: float = HEALTH_INTERVAL,
+        probe_timeout: float = V2_PROBE_TIMEOUT,
+        connect_timeout: float | None = None,
+        backoffs: tuple[float, ...] | None = None,
+        on_reconnect: Callable[[], None] | None = None,
+    ) -> None:
         self.label = label
         self.up = False
+        self.last_ok: float | None = None
+        self.reconnects = 0
+        self.probe_interval = probe_interval
+        self.probe_timeout = probe_timeout
+        self.connect_timeout = connect_timeout
         self._connect = connect
         self._close = close
         self._healthy = healthy
+        self._probe = probe
+        self._backoffs = backoffs
+        self._on_reconnect = on_reconnect
+        self._ever_connected = False
         self._dirty = False
         self._kick = asyncio.Event()
+        self._wake = asyncio.Event()
+        self._probe_now = asyncio.Event()
+        self._last_probe_mono = 0.0
+        self._probe_ok_since_connect = False
 
     def fail(self, reason: object) -> None:
         """Mark the link down (sync, safe from request handlers); run() reconnects."""
@@ -208,29 +245,134 @@ class Link:
         self._dirty = True
         self._kick.set()
 
+    def request_probe(self) -> None:
+        """Request an immediate liveness probe if the link is currently up."""
+        if self.up and self._probe is not None:
+            self._probe_now.set()
+
+    def wake_reconnect(self) -> None:
+        """Interrupt reconnect backoff when an external signal says the target is back."""
+        if not self.up:
+            self._wake.set()
+
+    def _backoff_for(self, attempt: int) -> float:
+        if self._backoffs:
+            return self._backoffs[min(attempt, len(self._backoffs) - 1)]
+        return min(BACKOFF_MAX, BACKOFF_MIN * (2 ** min(attempt, 20)))
+
+    async def _sleep_backoff(self, seconds: float) -> None:
+        self._wake.clear()
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._wake.wait(), seconds)
+        self._wake.clear()
+
+    async def _run_probe(self) -> bool | None:
+        assert self._probe is not None
+        self._probe_now.clear()
+        self._kick.clear()
+        probe_task = asyncio.create_task(self._probe())
+        kick_task = asyncio.create_task(self._kick.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {probe_task, kick_task},
+                timeout=self.probe_timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for task in (probe_task, kick_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(probe_task, kick_task, return_exceptions=True)
+
+        if not self.up:
+            return None
+        if probe_task not in done:
+            self.fail(f"liveness probe timed out after {self.probe_timeout:.1f}s")
+            return False
+        if probe_task.cancelled():
+            self.fail("liveness probe cancelled")
+            return False
+        exc = probe_task.exception()
+        if exc is not None:
+            self.fail(f"liveness probe error: {exc}")
+            return False
+        if not probe_task.result():
+            self.fail("liveness probe failed")
+            return False
+        self.last_ok = time.time()
+        self._last_probe_mono = time.monotonic()
+        self._probe_ok_since_connect = True
+        return True
+
     async def run(self) -> None:
-        backoff = BACKOFF_MIN
+        backoff_attempt = 0
+        unverified_failures = 0
         while True:
             if self.up and not self._healthy():
+                unverified_failures = 0 if self._probe_ok_since_connect else unverified_failures + 1
                 self.fail("health check failed")
+            if self.up and self._probe is not None and (
+                self._probe_now.is_set()
+                or time.monotonic() - self._last_probe_mono >= self.probe_interval
+            ):
+                outcome = await self._run_probe()
+                if outcome is True:
+                    backoff_attempt = 0
+                    unverified_failures = 0
+                elif outcome is False:
+                    unverified_failures = 0 if self._probe_ok_since_connect else unverified_failures + 1
             if self._dirty:
                 self._dirty = False
                 await self._close_quietly()
             if not self.up:
+                if unverified_failures >= 2:
+                    delay = self._backoff_for(backoff_attempt)
+                    log.warning("%s flapping; retry in %.0fs", self.label, delay)
+                    await self._sleep_backoff(delay)
+                    backoff_attempt += 1
                 try:
-                    await self._connect()
+                    if self.connect_timeout is not None:
+                        await asyncio.wait_for(self._connect(), self.connect_timeout)
+                    else:
+                        await self._connect()
                 except Exception as exc:
-                    log.warning("%s connect failed (%s); retry in %.0fs", self.label, exc, backoff)
-                    await self._wait(backoff)
-                    backoff = min(BACKOFF_MAX, backoff * 2)
+                    await self._close_quietly()
+                    delay = self._backoff_for(backoff_attempt)
+                    log.warning("%s connect failed (%s); retry in %.0fs", self.label, exc, delay)
+                    await self._sleep_backoff(delay)
+                    backoff_attempt += 1
                     continue
+                was_reconnect = self._ever_connected
+                self._ever_connected = True
+                if was_reconnect:
+                    self.reconnects += 1
                 self.up = True
-                backoff = BACKOFF_MIN
-                log.info("%s connected", self.label)
-            await self._wait(HEALTH_INTERVAL)
+                self.last_ok = time.time()
+                self._last_probe_mono = time.monotonic()
+                self._probe_ok_since_connect = False
+                self._kick.clear()
+                self._probe_now.clear()
+                if self._probe is None or unverified_failures == 0:
+                    backoff_attempt = 0
+                log.info("%s %s", self.label, "reconnected" if was_reconnect else "connected")
+                if was_reconnect and self._on_reconnect is not None:
+                    try:
+                        self._on_reconnect()
+                    except Exception as exc:
+                        log.debug("%s on_reconnect: %s", self.label, exc)
+            wait_s = HEALTH_INTERVAL
+            if self._probe is not None:
+                wait_s = min(
+                    HEALTH_INTERVAL,
+                    max(0.0, self.probe_interval - (time.monotonic() - self._last_probe_mono)),
+                )
+            await self._wait(wait_s)
+            if self._probe is None and self.up and self._healthy():
+                unverified_failures = 0
 
     async def close(self) -> None:
         self.up = False
+        self._dirty = False
         await self._close_quietly()
 
     async def _close_quietly(self) -> None:
@@ -240,8 +382,24 @@ class Link:
             log.debug("%s close: %s", self.label, exc)
 
     async def _wait(self, seconds: float) -> None:
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(self._kick.wait(), seconds)
+        if self._probe is None:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._kick.wait(), seconds)
+            self._kick.clear()
+            return
+        kick_task = asyncio.create_task(self._kick.wait())
+        probe_task = asyncio.create_task(self._probe_now.wait())
+        try:
+            await asyncio.wait(
+                {kick_task, probe_task},
+                timeout=seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for task in (kick_task, probe_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(kick_task, probe_task, return_exceptions=True)
         self._kick.clear()
 
 
@@ -254,8 +412,24 @@ class Shield:
         self._remote: Any = None
         self._dev: Any = None
         self._adb_lock = asyncio.Lock()
-        self.v2 = Link(f"{cfg.name} v2", self._v2_connect, self._v2_close, self._v2_healthy)
-        self.adb = Link(f"{cfg.name} adb", self._adb_connect, self._adb_close, self._adb_healthy)
+        self.v2 = Link(
+            f"{cfg.name} v2",
+            self._v2_connect,
+            self._v2_close,
+            self._v2_healthy,
+            probe=lambda: self._v2_probe(),
+            probe_interval=V2_PROBE_INTERVAL,
+            probe_timeout=V2_PROBE_TIMEOUT,
+            connect_timeout=V2_CONNECT_TIMEOUT,
+            backoffs=V2_BACKOFFS,
+        )
+        self.adb = Link(
+            f"{cfg.name} adb",
+            self._adb_connect,
+            self._adb_close,
+            self._adb_healthy,
+            on_reconnect=self._on_adb_reconnect,
+        )
         self.awake: bool | None = None
         self.app: str | None = None
         self.now_playing: dict[str, Any] = parse_media_session("")
@@ -273,38 +447,62 @@ class Shield:
         self._tasks = [asyncio.create_task(c) for c in coros]
 
     async def stop(self) -> None:
-        for task in self._tasks:
+        tasks = list(self._tasks)
+        if self._art_task is not None and not self._art_task.done():
+            tasks.append(self._art_task)
+        for task in tasks:
             task.cancel()
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._tasks.clear()
         await self.v2.close()
         await self.adb.close()
 
     def status(self) -> dict[str, Any]:
-        return {"shield": self.cfg.name, "v2_connected": self.v2.up, "adb_connected": self.adb.up,
-                "awake": self.awake, "app": self.app, "now_playing": self.now_playing,
-                "art": self.art_path, "version": VERSION}
+        return {
+            "shield": self.cfg.name,
+            "v2_connected": self.v2.up,
+            "v2_last_ok": None if self.v2.last_ok is None else round(self.v2.last_ok, 3),
+            "v2_reconnects": self.v2.reconnects,
+            "adb_connected": self.adb.up,
+            "awake": self.awake,
+            "app": self.app,
+            "now_playing": self.now_playing,
+            "art": self.art_path,
+            "version": VERSION,
+        }
 
     # -- Remote v2 (key presses)
     async def _v2_connect(self) -> None:
         from androidtvremote2 import AndroidTVRemote
 
+        if self._remote is not None:
+            await self._v2_close()
         remote = AndroidTVRemote(CLIENT_NAME, self._bridge.cert, self._bridge.key, self.cfg.host)
         try:
             await remote.async_generate_cert_if_missing()
             await remote.async_connect()
-        except Exception:
+        except BaseException:
             with contextlib.suppress(Exception):
-                remote.disconnect()
+                await _disconnect_remote(remote)
             raise
         self._remote = remote
 
     async def _v2_close(self) -> None:
         remote, self._remote = self._remote, None
         if remote is not None:
-            remote.disconnect()
+            await _disconnect_remote(remote)
 
     def _v2_healthy(self) -> bool:
         return self._remote is not None and bool(getattr(self._remote, "is_available", True))
+
+    async def _v2_probe(self) -> bool:
+        return self._v2_healthy()
+
+    def _on_adb_reconnect(self) -> None:
+        if self.v2.up or self._remote is not None:
+            self.v2.fail("adb reconnected")
+        else:
+            self.v2.wake_reconnect()
 
     def send_key(self, key: str, direction: str = "SHORT") -> None:
         if not self.v2.up or self._remote is None:
@@ -556,9 +754,12 @@ class Shield:
             media_text = await self.adb_shell("dumpsys media_session")
         except LinkDown:
             return  # keep the last good state
+        prev_awake = self.awake
         awake = parse_wakefulness(wake_text)
         if awake is not None:
             self.awake = awake
+            if prev_awake is False and awake is True:
+                self.v2.request_probe()
         self.app = parse_focus(focus_text)
         np = parse_media_session(media_text, self.app)
         plex_thumb = ""
