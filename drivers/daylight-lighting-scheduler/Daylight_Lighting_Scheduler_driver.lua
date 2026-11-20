@@ -1,7 +1,8 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.13
+  DRIVER_VERSION: 1.16.14
 
+  1.16.14 (2026-11-19): audit fixes — preserve pending confirmations during own ramps, include ramp and queue time in light timeout, keep vacant non-follow presence rooms dark, clear/persist presence HOLD on release, honour manual dimmer changes before first command, re-read occ sensors when Presence Lighting toggles, and guard nil Latitude/Longitude in sun helpers/LogStatus/ApplyScene.
   1.16.13: a long scheduled off really fades. One RAMP_TO_LEVEL 0 with a TIME of minutes is not honoured
   end to end: on 2026-11-18 the Den's 30-minute off (off_ramp_min 30) reached the Chair Lamp as an instant
   power-off (trace: on 20% at 23:47:15, off 20% at 23:47:30, brightness never moved). An off longer than
@@ -123,7 +124,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.13"
+DRIVER_VERSION = "1.16.14"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -313,6 +314,7 @@ local function resolveTimeSpec(spec, now, lat, lon)
   local hm = parseHM(spec)
   if hm then return hm end
   local what, sign, off = tostring(spec):match("^(sun%a+)([%+%-]?)(%d*)$")
+  if not what or not (lat and lon) then return nil end
   local rise, set = dayEvents(now, lat, lon)
   local base = (what == "sunrise" and rise) or (what == "sunset" and set)
   if not base then return nil end
@@ -524,7 +526,10 @@ local function sendLevel(light, level, ms)
   -- 1.16.3: re-commanding the same target keeps the original deadline, otherwise a dead light that is
   -- re-commanded every update tick would never time out.
   if not (light.pending and math.abs(light.pending.level - lvl) <= 2) then
-    light.pending = { level = lvl, deadline = os.time() + (tonumber(Properties["Light Timeout (sec)"]) or 90) }
+    local timeout = tonumber(Properties["Light Timeout (sec)"]) or 90
+    local rampSec = math.ceil(ms / 1000)
+    local queueSec = math.ceil(#sendQ * 0.25)
+    light.pending = { level = lvl, deadline = os.time() + math.max(timeout, rampSec + 10) + queueSec }
   end
   dbg("level", tostring(light.id), tostring(math.floor(level + 0.5)), "ms", tostring(ms))
 end
@@ -1448,10 +1453,10 @@ function Update()
       if not dayActive then inWindow = false end
 
       -- presence rooms (1.11.0): a follow room is driven by its presence state only; a non-follow room keeps the
-      -- schedule except while FADING or HOLD
+      -- schedule except while VACANT, FADING or HOLD
       local prOwns = room.pr and room.pr.follow and presenceOn()
       local prBlocks = room.pr and not room.pr.follow and Properties["Presence Lighting"] == "On"
-        and (room.pr.state == PR_FADING or room.pr.state == PR_HOLD)   -- 1.16.6: Off releases HOLD rooms too
+        and (room.pr.state == PR_VACANT or room.pr.state == PR_FADING or room.pr.state == PR_HOLD)   -- 1.16.6: Off releases HOLD rooms too
       if prOwns then
         if room.pr.state == PR_OCCUPIED then presenceDrive(room, now, inWindow) end
         room.wasInWindow = inWindow
@@ -1577,12 +1582,6 @@ end
 -- override detection
 ---------------------------------------------------------------------------
 function OnWatchedVariableChanged(idDevice, idVariable, strValue)
-  -- 1.16.5: a hand on the dimmer that moves away from the pending target is not an outage, even by a few points
-  local earlyLight = lightIndex[tonumber(idDevice) or 0] and lightIndex[tonumber(idDevice) or 0].lights
-  for _, ml in ipairs((lightIndex[tonumber(idDevice) or 0] or {lights = {}}).lights or {}) do
-    if ml.id == tonumber(idDevice) and ml.pending and
-       math.abs((tonumber(strValue) or 0) - ml.pending.level) > 2 then ml.pending = nil end
-  end
   for _, r in ipairs(rooms) do
     if r.occ and r.occ.dev == idDevice and r.occ.var == idVariable then
       if strValue ~= nil then onOccupancy(r, parseOcc(strValue, r)) end
@@ -1621,8 +1620,8 @@ function OnWatchedVariableChanged(idDevice, idVariable, strValue)
     end
   elseif light.lastLevel then
     if math.abs(v - light.lastLevel) <= OWN_BAND and not (v == 0 and light.lastLevel > 0) then return end   -- 1.11.3: a manual off is never DLS's own feedback
-  elseif not room.pr or math.abs(v) <= OWN_BAND then
-    return                                   -- never ramped (baseline 0 for presence rooms)
+  elseif math.abs(v) <= OWN_BAND then
+    return                                   -- never ramped (baseline 0)
   end
   light.pending = nil                              -- 1.16.3: a manual change explains the mismatch
   if room.pr then return prManual(room, light, v, now) end
@@ -1863,6 +1862,7 @@ function OnPropertyChanged(name)
         if room.pr then prRecompute(room, now2, false) end
       end
     end
+    resetOccupancy()
   elseif name == "Vacancy Delay (min)" then
     loadRooms(true)
   elseif name == "Latitude" or name == "Longitude" then sunEvents.day = nil pollCloud()
@@ -1928,7 +1928,8 @@ local function applyScene(roomName, sceneName)
         room.dayTriggered = false
       else
         cancelOffFade(room)
-        local _, cct = ComputeRoomTarget(room, now, lat, lon)
+        local cct
+        if lat and lon then _, cct = ComputeRoomTarget(room, now, lat, lon) end
         for _, l in ipairs(room.lights) do
           local pct = sc.levels and (sc.levels[tostring(l.id)] or sc.levels[l.id])
           if pct ~= nil then
@@ -1954,9 +1955,12 @@ local function releaseAll()
   for _, r in ipairs(rooms) do r.overrideUntil = nil end
   for _, r in ipairs(rooms) do for _, l in ipairs(r.lights) do l.overrideUntil, l.offHold, l.lastLevel, l.lastCCT = nil, nil, nil, nil end end
   for _, r in ipairs(rooms) do
-    if r.pr and r.pr.state == PR_HOLD then r.pr.state = r.pr.occIn and PR_OCCUPIED or PR_VACANT end
+    if r.pr and r.pr.state == PR_HOLD then
+      r.pr.state = r.pr.occIn and PR_OCCUPIED or PR_VACANT
+      r.pr.offAt = nil
+    end
   end
-  saveHolds()
+  prSave()
 end
 
 local function setPresence(state)
@@ -2096,11 +2100,18 @@ function ExecuteCommand(strCommand, tParams)
     elseif a == "ReleaseAll" then releaseAll() Update()
     elseif a == "LogStatus" then
       local lat, lon = tonumber(Properties["Latitude"]), tonumber(Properties["Longitude"])
-      local el, az = SunPosition(os.time(), lat, lon)
-      print(string.format("[DLS] sun el=%.1f az=%.1f cloud=%s", el, az, tostring(cloudPct)))
-      for _, r in ipairs(rooms) do
-        local lv, k = ComputeRoomTarget(r, os.time(), lat, lon)
-        print(string.format("[DLS] %s (%s): target %.0f%% cct=%s held=%s", r.name, r.type, lv, tostring(k and math.floor(k)), tostring(r.overrideUntil ~= nil)))
+      if not (lat and lon) then
+        print(string.format("[DLS] sun n/a (bad lat/lon) cloud=%s", tostring(cloudPct)))
+        for _, r in ipairs(rooms) do
+          print(string.format("[DLS] %s (%s): target n/a held=%s", r.name, r.type, tostring(r.overrideUntil ~= nil)))
+        end
+      else
+        local el, az = SunPosition(os.time(), lat, lon)
+        print(string.format("[DLS] sun el=%.1f az=%.1f cloud=%s", el, az, tostring(cloudPct)))
+        for _, r in ipairs(rooms) do
+          local lv, k = ComputeRoomTarget(r, os.time(), lat, lon)
+          print(string.format("[DLS] %s (%s): target %.0f%% cct=%s held=%s", r.name, r.type, lv, tostring(k and math.floor(k)), tostring(r.overrideUntil ~= nil)))
+        end
       end
     end
   elseif strCommand == "SetPresence" then
@@ -2110,14 +2121,19 @@ function ExecuteCommand(strCommand, tParams)
   elseif strCommand == "Release Room Override" or strCommand == "ReleaseRoomOverride" then
     for _, r in ipairs(rooms) do
       if r.name == (tParams and tParams.ROOM) then
+        cancelOffFade(r)
         r.overrideUntil = nil
         for _, l in ipairs(r.lights) do                 -- 1.11.7: release per-light holds too, not just the scene hold
           l.overrideUntil, l.offHold = nil, nil
           l.lastLevel, l.lastCCT = nil, nil
         end
+        if r.pr and r.pr.state == PR_HOLD then
+          r.pr.state = r.pr.occIn and PR_OCCUPIED or PR_VACANT
+          r.pr.offAt = nil
+        end
       end
     end
-    saveHolds()
+    prSave()
     Update()
   end
 end
