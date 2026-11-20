@@ -340,11 +340,16 @@ def household():
 
 
 # ---------------------------------------------------------------- freshness
-def set_health(name, ok, poll_s):
+def set_health(name, ok, poll_s, reason=None):
     h = _extra_health.setdefault(name, {"last_ok": None, "ok": False, "poll_s": poll_s})
     h["ok"], h["poll_s"] = ok, poll_s
     if ok:
         h["last_ok"] = time.time()
+        h.pop("reason", None)
+    elif reason:
+        h["reason"] = reason
+    else:
+        h.pop("reason", None)
 
 
 def freshness():
@@ -364,8 +369,11 @@ def freshness():
     for name, h in list(_extra_health.items()):
         last = h["last_ok"]
         age = now - (last if last else _started)
-        out[name] = {"last_ok_age_s": round(age), "poll_s": h["poll_s"], "ever_ok": last is not None,
-                     "stale": (not h["ok"]) or age > 3 * h["poll_s"]}
+        entry = {"last_ok_age_s": round(age), "poll_s": h["poll_s"], "ever_ok": last is not None,
+                 "stale": (not h["ok"]) or age > 3 * h["poll_s"]}
+        if h.get("reason"):
+            entry["reason"] = h["reason"]
+        out[name] = entry
     return out
 
 
@@ -551,15 +559,21 @@ def ea1_batch(lines):
     with socket.create_connection((HOST, PORT), timeout=10) as s:
         s.sendall(payload)
         s.settimeout(5)
-        try:
-            while True:
-                chunk = s.recv(4096)
-                if not chunk:
-                    break
-                buf += chunk
-        except socket.timeout:
-            pass
-    return [x.strip() for x in buf.decode(errors="replace").split("\n") if x.strip()]
+        while True:
+            # a complete reply (one newline-terminated line per line sent) ends the read even if the peer
+            # keeps the socket open, so a driver that does not close promptly costs no 5 s timeout
+            if buf.endswith(b"\n") and sum(1 for x in buf.split(b"\n") if x.strip()) >= len(lines):
+                break
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+    if buf and not buf.endswith(b"\n"):
+        raise OSError("truncated reply")
+    replies = [x.strip() for x in buf.decode(errors="replace").split("\n") if x.strip()]
+    if len(replies) < len(lines):
+        raise OSError(f"short reply ({len(replies)} of {len(lines)})")
+    return replies
 
 
 # ---------------------------------------------------------------- per-room config
@@ -578,24 +592,63 @@ def load_rooms(path, log=print):
         return {}
     with open(path, encoding="utf-8") as f:
         doc = json.load(f)
+    if not isinstance(doc, dict):
+        log("rooms: root JSON must be an object")
+        return {}
+    rooms_obj = doc.get("rooms")
+    if rooms_obj is None:
+        return {}
+    if not isinstance(rooms_obj, dict):
+        log("rooms: 'rooms' must be an object")
+        return {}
     out = {}
-    for key, c in (doc.get("rooms") or {}).items():
-        if not KEY_RE.match(key):
+    for key, c in rooms_obj.items():
+        if not isinstance(key, str) or not KEY_RE.match(key):
             log(f"rooms: skipped key {key!r} (1-32 chars of A-Z a-z 0-9 _ -)")
             continue
         if key.lower() in {k.lower() for k in out}:
             log(f"rooms: skipped duplicate key {key!r}")
             continue
+        if not isinstance(c, dict):
+            log(f"rooms: skipped {key!r} (entry must be an object)")
+            continue
         src = c.get("sources", list(ALL_SOURCES))
-        if not isinstance(src, list) or any(s not in ALL_SOURCES for s in src) or len(set(src)) != len(src):
+        if (not isinstance(src, list)
+                or any(not isinstance(s, str) or s not in ALL_SOURCES for s in src)
+                or len(set(src)) != len(src)):
             log(f"rooms: {key}.sources invalid, using default")
             src = list(ALL_SOURCES)
         stuck = c.get("stuckOnMin", STUCK_ON_MIN)
         if not isinstance(stuck, (int, float)) or isinstance(stuck, bool) or stuck < 0:
             log(f"rooms: {key}.stuckOnMin invalid, using default")
             stuck = STUCK_ON_MIN
-        esp = [d for d in (c.get("esp") or []) if isinstance(d, dict) and d.get("host") and d.get("entity")]
-        out[key] = RoomCfg(key, src, stuck, esp, c.get("robot") or [])
+        raw_esp = c.get("esp")
+        esp = []
+        if raw_esp is not None:
+            if not isinstance(raw_esp, list):
+                log(f"rooms: {key}.esp invalid, ignoring")
+            else:
+                for d in raw_esp:
+                    if (isinstance(d, dict) and isinstance(d.get("host"), str) and d["host"].strip()
+                            and isinstance(d.get("entity"), str) and d["entity"].strip()
+                            and (d.get("key") is None or isinstance(d.get("key"), str))
+                            and (d.get("pir") is None or isinstance(d.get("pir"), str))):
+                        esp.append(d)
+                    else:
+                        log(f"rooms: {key}.esp entry invalid, ignored")
+        raw_robot = c.get("robot")
+        robot = []
+        if raw_robot is not None:
+            if isinstance(raw_robot, list) and all(isinstance(r, str) and r.strip() for r in raw_robot):
+                robot = list(raw_robot)
+            else:
+                log(f"rooms: {key}.robot invalid, ignoring")
+        has_esp = "esp" in src and bool(esp)
+        has_robot = "robot" in src and bool(robot)
+        if not src or (("esp" in c or "robot" in c) and not (has_esp or has_robot)):
+            log(f"rooms: skipped {key!r} (no usable sources)")
+            continue
+        out[key] = RoomCfg(key, src, stuck, esp, robot)
     return out
 
 
@@ -648,16 +701,21 @@ class RoomTracker:
             out = (1, ",".join(active))
             self.unknown_since = None
         else:
+            esp_unknown = ("esp" in self.cfg.sources and bool(self.cfg.esp)
+                           and esp_eff is None and not self.tripped)
             none_all = esp_eff is None and rob_eff is None and not self.tripped
-            if none_all:
+            unknown = esp_unknown or none_all
+            if unknown:
                 if self.unknown_since is None:
                     self.unknown_since = now
             else:
                 self.unknown_since = None
-            if none_all and now - self.unknown_since < SRC_UNKNOWN_SEC:
+            if unknown and now - self.unknown_since < SRC_UNKNOWN_SEC:
                 out = self.last_out or (0, "unknown")  # sources unknown but not yet 3 min: hold last state
             elif self.tripped:
                 out = (0, "stuck")
+            elif esp_unknown:
+                out = (0, "unknown")
             elif docked and "robot" in self.cfg.sources:
                 out = (0, "dock")
             elif none_all:
@@ -791,16 +849,20 @@ class EsphomeWatcher:
             return
         delay = 5
         while True:
-            cli = aioesphomeapi.APIClient(host, self.port, "", noise_psk=dev["key"] or None)
+            cli = None
+            failed = False
             try:
+                cli = aioesphomeapi.APIClient(host, self.port, "", noise_psk=dev["key"] or None)
                 await cli.connect(login=True)
                 entities, _services = await cli.list_entities_services()
                 keys = {e.key: e.object_id for e in entities
                         if type(e).__name__ == "BinarySensorInfo" and e.object_id in dev["objs"]}
                 missing = dev["objs"] - set(keys.values())
+                missing_reason = None
                 if missing:
                     have = sorted(e.object_id for e in entities if type(e).__name__ == "BinarySensorInfo")
                     self.log(f"esp {host}: no binary_sensor {sorted(missing)}; device has {have}")
+                    missing_reason = f"esp:{host} missing binary_sensor: {', '.join(sorted(missing))}"
 
                 def on_state(st, keys=keys):
                     oid = keys.get(getattr(st, "key", None))
@@ -818,20 +880,23 @@ class EsphomeWatcher:
                     await res
                 delay = 5
                 while cli.is_connected:
-                    set_health(f"esp:{host}", True, 60)
+                    set_health(f"esp:{host}", not missing, 60, reason=missing_reason)
                     await asyncio.sleep(1)
                 raise ConnectionError("disconnected")
             except Exception as e:
+                failed = True
                 self._set_all(host, None)
                 set_health(f"esp:{host}", False, 60)
                 self.log(f"esp {host}: {type(e).__name__}; retry in {delay} s")
+            finally:
+                if cli is not None:
+                    try:
+                        await cli.disconnect()
+                    except Exception:
+                        pass
+            if failed:
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 60)
-            finally:
-                try:
-                    await cli.disconnect()
-                except Exception:
-                    pass
 
     def readings(self):
         """{roomKey: (esp, pir)}: any device True = True; all unknown = None; else False."""
@@ -865,6 +930,7 @@ class Poller:
         self.boot_id = int(clock())
         self.presence = None
         self.presence_pending = False
+        self._presence_lock = threading.Lock()
         self.sent = {}  # roomKey -> (state, src) last accepted by DLS
         self.need_snapshot = True
         self.last_snapshot = None
@@ -878,22 +944,26 @@ class Poller:
         self._logged = set()
 
     def set_presence(self, state):
-        if state != self.presence:
-            self.presence, self.presence_pending = state, True
+        with self._presence_lock:
+            if state != self.presence:
+                self.presence, self.presence_pending = state, True
 
     def _once(self, key, msg):
         if key not in self._logged:
             self._logged.add(key)
             self.log(msg)
 
-    def _pline(self):
-        return f"PRESENCE {self.presence} {self.token}"
+    def _pline(self, state=None):
+        if state is None:
+            with self._presence_lock:
+                state = self.presence
+        return f"PRESENCE {state} {self.token}"
 
     def _occ(self, key, out):
         return f"OCC {key} {out[0]} {out[1]} {self.token}"
 
-    def _snapshot_lines(self, cur):
-        lines = [self._pline()] if self.presence is not None else []
+    def _snapshot_lines(self, cur, presence=None):
+        lines = [self._pline(presence)] if presence is not None else []
         lines.append(f"HELLO {self.boot_id} {len(cur)} {self.token}")
         lines += [self._occ(k, cur[k]) for k in self.trackers]
         return lines
@@ -922,21 +992,28 @@ class Poller:
     def tick(self, now=None):
         now = self.clock() if now is None else now
         if not self.trackers:  # no rooms: presence only, same as v1.3.0
-            if self.presence_pending and now >= self.next_try:
-                self._send(now, [self._pline()], {}, False, [])
+            with self._presence_lock:
+                pending, pres = self.presence_pending, self.presence
+            if pending and now >= self.next_try:
+                self._send(now, [self._pline(pres)], {}, False, [], pres)
             return
         cur = self._evaluate(now)
         if now < self.next_try:
             return
         snapshot = self.need_snapshot or self.last_snapshot is None or now - self.last_snapshot >= self.occ_repeat
         if snapshot:
-            self._send(now, self._snapshot_lines(cur), cur, True, list(cur))
+            with self._presence_lock:
+                pres = self.presence
+            self._send(now, self._snapshot_lines(cur, pres), cur, True, list(cur), pres)
             return
         changed = [k for k in cur if cur[k] != self.sent.get(k)]
-        lines = [self._pline()] if self.presence_pending else []
+        with self._presence_lock:
+            pending, pres = self.presence_pending, self.presence
+        sent_pres = pres if pending else None
+        lines = [self._pline(pres)] if pending else []
         lines += [self._occ(k, cur[k]) for k in changed]
         if lines:
-            self._send(now, lines, cur, False, changed)
+            self._send(now, lines, cur, False, changed, sent_pres)
 
     def _fail(self, now, why):
         self.need_snapshot = True
@@ -956,7 +1033,7 @@ class Poller:
             self.link_alerted = now
             self.link_down = self.link_down or sent
 
-    def _send(self, now, lines, cur, snapshot, changed):
+    def _send(self, now, lines, cur, snapshot, changed, sent_presence=None):
         try:
             replies = self.transport(lines)
         except Exception as e:
@@ -997,8 +1074,10 @@ class Poller:
                             "Presence Token property. Room occupancy is not reaching DLS.")
             return
         self.auth_since, self.auth_alerted = None, False
-        if any(line.startswith("PRESENCE ") for line in lines):
-            self.presence_pending = False
+        if sent_presence is not None and any(line.startswith("PRESENCE ") for line in lines):
+            with self._presence_lock:
+                if self.presence == sent_presence:
+                    self.presence_pending = False
         if snapshot:
             self.need_snapshot = False
             self.last_snapshot = now
@@ -1008,7 +1087,9 @@ class Poller:
                 self.sent[k] = cur[k]
         if resync and not snapshot and self.trackers:
             self.need_snapshot = True
-            self._send(now, self._snapshot_lines(cur), cur, True, list(cur))
+            with self._presence_lock:
+                pres = self.presence
+            self._send(now, self._snapshot_lines(cur, pres), cur, True, list(cur), pres)
 
 
 # ---------------------------------------------------------------- main
