@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": { "type": "string", "enum": ["high", "medium", "low"] },
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "issue": { "type": "string" },
+          "suggestion": { "type": "string" }
+        },
+        "required": ["severity", "file", "line", "issue", "suggestion"]
+      }
+    }
+  },
+  "required": ["summary", "findings"]
+}

@@ -1,0 +1,8 @@
+#!/bin/sh
+# Advisory agy review of the diff being pushed. It never blocks a push.
+# Opt in per push: AGY_REVIEW=1 git push ...   (without it this hook does nothing)
+[ "$AGY_REVIEW" = "1" ] || exit 0
+root="$(git rev-parse --show-toplevel)" || exit 0
+refs="$(cat)"
+printf '%s\n' "$refs" | powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$root/tools/agy-review/agy-review.ps1" -RepoRoot "$root" || true
+exit 0
