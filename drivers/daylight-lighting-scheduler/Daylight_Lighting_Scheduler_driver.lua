@@ -1,7 +1,8 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.14
+  DRIVER_VERSION: 1.16.15
 
+  1.16.15 (2026-11-20): fix 23:45 off-edge failures — compare pre-first-command feedback against initial load level instead of 0, check l.rampTo == 0 in offEnforce instead of l.lastLevel <= OWN_BAND to stop infinite re-hold loops, track wasInWindow while a scene hold is active across reload, and keep scheduled off active for vacant non-follow presence rooms.
   1.16.14 (2026-11-19): audit fixes — preserve pending confirmations during own ramps, include ramp and queue time in light timeout, keep vacant non-follow presence rooms dark, clear/persist presence HOLD on release, honour manual dimmer changes before first command, re-read occ sensors when Presence Lighting toggles, and guard nil Latitude/Longitude in sun helpers/LogStatus/ApplyScene.
   1.16.13: a long scheduled off really fades. One RAMP_TO_LEVEL 0 with a TIME of minutes is not honoured
   end to end: on 2026-11-18 the Den's 30-minute off (off_ramp_min 30) reached the Chair Lamp as an instant
@@ -124,7 +125,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.14"
+DRIVER_VERSION = "1.16.15"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -1422,6 +1423,19 @@ function Update()
 
     if room.overrideUntil then
       held = held + 1
+      if not inWake and dayActive and not room.wasInWindow then
+        local onMin = resolveTimeSpec(room.on, now, lat, lon)
+        local offMin = offMinFor(room.off or (room.on_daylight and "23:00") or nil, now, lat, lon)
+        local inW = false
+        if room.on_daylight then
+          if offMin ~= nil and offMin < noon then inW = room.dayTriggered and (minNow >= noon or minNow < offMin)
+          else inW = room.dayTriggered and offMin ~= nil and minNow < offMin end
+        elseif onMin ~= nil and offMin ~= nil then
+          if onMin <= offMin then inW = (minNow >= onMin and minNow < offMin)
+          else inW = (minNow >= onMin or minNow < offMin) end
+        end
+        if inW then room.wasInWindow = true end
+      end
     elseif not inWake then
       local onMin  = resolveTimeSpec(room.on, now, lat, lon)
       local offSpec = room.off or (room.on_daylight and "23:00") or nil
@@ -1456,7 +1470,9 @@ function Update()
       -- schedule except while VACANT, FADING or HOLD
       local prOwns = room.pr and room.pr.follow and presenceOn()
       local prBlocks = room.pr and not room.pr.follow and Properties["Presence Lighting"] == "On"
-        and (room.pr.state == PR_VACANT or room.pr.state == PR_FADING or room.pr.state == PR_HOLD)   -- 1.16.6: Off releases HOLD rooms too
+        and (room.pr.state == PR_FADING or room.pr.state == PR_HOLD)   -- 1.16.6: Off releases HOLD rooms too
+      local prVacant = room.pr and not room.pr.follow and Properties["Presence Lighting"] == "On"
+        and room.pr.state == PR_VACANT                                -- 1.16.15: stay dark in-window, still run scheduled off
       if prOwns then
         if room.pr.state == PR_OCCUPIED then presenceDrive(room, now, inWindow) end
         room.wasInWindow = inWindow
@@ -1513,7 +1529,7 @@ function Update()
         for _, l in ipairs(room.lights) do
           local cur = curLevel(l)
           if not l.overrideUntil and cur > 0 and (not l.lastEnforce or now - l.lastEnforce >= 300) then
-            if (l.lastLevel or 0) <= OWN_BAND and math.abs(cur - (l.rampFrom or 0)) > OWN_BAND
+            if l.rampTo == 0 and math.abs(cur - (l.rampFrom or 0)) > OWN_BAND
                and not (l.rampEnd and now <= l.rampEnd + 60) then
               l.overrideUntil = now + (tonumber(Properties["Override Hold (min)"]) or 120) * 60
               saveHolds()
@@ -1527,7 +1543,7 @@ function Update()
         end
       end
 
-      if inWindow and occupied(room) then
+      if inWindow and occupied(room) and not prVacant then
         local level, cct = ComputeRoomTarget(room, now, lat, lon)
         for _, l in ipairs(room.lights) do
           local lv = level
@@ -1549,7 +1565,7 @@ function Update()
           end
         end
       elseif room.follow and not inWindow and dayActive and not (room.offFadeUntil and now < room.offFadeUntil)
-             and (not presenceOn() or occupied(room)) then
+             and not prVacant and (not presenceOn() or occupied(room)) then
         -- outside the on/off schedule: only track daylight for lights that are already on
         local level, cct = ComputeRoomTarget(room, now, lat, lon)
         for _, l in ipairs(room.lights) do
@@ -1620,8 +1636,10 @@ function OnWatchedVariableChanged(idDevice, idVariable, strValue)
     end
   elseif light.lastLevel then
     if math.abs(v - light.lastLevel) <= OWN_BAND and not (v == 0 and light.lastLevel > 0) then return end   -- 1.11.3: a manual off is never DLS's own feedback
-  elseif math.abs(v) <= OWN_BAND then
-    return                                   -- never ramped (baseline 0)
+  else
+    local base = light.initLevel or 0
+    if math.abs(v - base) <= OWN_BAND and not (v == 0 and base > 0) then return end   -- never ramped: compare to level at load
+    light.initLevel = v
   end
   light.pending = nil                              -- 1.16.3: a manual change explains the mismatch
   if room.pr then return prManual(room, light, v, now) end
@@ -1723,6 +1741,7 @@ local function loadRooms(closeGate)
       local id = tonumber(l.id) or 0
       if id > 0 then
         local light = { id = id, kind = l.kind or "lutron", scale = clamp(tonumber(l.scale) or 1, 0.05, 1), max_level = tonumber(l.max_level), window_gain = tonumber(l.window_gain), facing_deg = tonumber(l.facing_deg), windows = parseWindows(l.windows), cct_min = tonumber(l.cct_min) or 1500, cct_max = tonumber(l.cct_max) or 4000 }
+        light.initLevel = curLevel(light)
         local sh = type(savedHolds) == "table" and savedHolds[tostring(id)] or nil
         if type(sh) == "table" then
           local u = tonumber(sh.u)
@@ -1953,7 +1972,7 @@ end
 local function releaseAll()
   cancelAllOffFades()
   for _, r in ipairs(rooms) do r.overrideUntil = nil end
-  for _, r in ipairs(rooms) do for _, l in ipairs(r.lights) do l.overrideUntil, l.offHold, l.lastLevel, l.lastCCT = nil, nil, nil, nil end end
+  for _, r in ipairs(rooms) do for _, l in ipairs(r.lights) do l.overrideUntil, l.offHold, l.lastLevel, l.lastCCT, l.initLevel = nil, nil, nil, nil, curLevel(l) end end
   for _, r in ipairs(rooms) do
     if r.pr and r.pr.state == PR_HOLD then
       r.pr.state = r.pr.occIn and PR_OCCUPIED or PR_VACANT
@@ -1976,7 +1995,7 @@ local function setPresence(state)
       r.overrideUntil = nil
       for _, l in ipairs(r.lights) do
         l.overrideUntil, l.offHold = nil, nil
-        if not r.pr then l.lastLevel, l.lastCCT = nil, nil end    -- presence rooms keep their ramp baseline
+        if not r.pr then l.lastLevel, l.lastCCT, l.initLevel = nil, nil, curLevel(l) end    -- presence rooms keep their ramp baseline
       end
     end
   else
@@ -2125,7 +2144,7 @@ function ExecuteCommand(strCommand, tParams)
         r.overrideUntil = nil
         for _, l in ipairs(r.lights) do                 -- 1.11.7: release per-light holds too, not just the scene hold
           l.overrideUntil, l.offHold = nil, nil
-          l.lastLevel, l.lastCCT = nil, nil
+          l.lastLevel, l.lastCCT, l.initLevel = nil, nil, curLevel(l)
         end
         if r.pr and r.pr.state == PR_HOLD then
           r.pr.state = r.pr.occIn and PR_OCCUPIED or PR_VACANT
