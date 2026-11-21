@@ -1,7 +1,8 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.15
+  DRIVER_VERSION: 1.16.16
 
+  1.16.16 (2026-11-21): trigger Update on non-follow presence VACANT -> OCCUPIED and gate-open reconcile, cancel stepped off-fade on presence fade-out, wrap sendQ callbacks in pcall with safe timer cancel, clear sendTimer/sendQ in OnDriverDestroyed, and call safeUpdate in startVacancyTimer.
   1.16.15 (2026-11-20): fix 23:45 off-edge failures — compare pre-first-command feedback against initial load level instead of 0, check l.rampTo == 0 in offEnforce instead of l.lastLevel <= OWN_BAND to stop infinite re-hold loops, track wasInWindow while a scene hold is active across reload, and keep scheduled off active for vacant non-follow presence rooms.
   1.16.14 (2026-11-19): audit fixes — preserve pending confirmations during own ramps, include ramp and queue time in light timeout, keep vacant non-follow presence rooms dark, clear/persist presence HOLD on release, honour manual dimmer changes before first command, re-read occ sensors when Presence Lighting toggles, and guard nil Latitude/Longitude in sun helpers/LogStatus/ApplyScene.
   1.16.13: a long scheduled off really fades. One RAMP_TO_LEVEL 0 with a TIME of minutes is not honoured
@@ -125,7 +126,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.15"
+DRIVER_VERSION = "1.16.16"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -507,7 +508,14 @@ local function enqueue(fn)
   if not sendTimer then
     sendTimer = C4:SetTimer(250, function(t)        -- one device command per 250 ms
       local f = table.remove(sendQ, 1)
-      if f then f() else t:Cancel() sendTimer = nil end
+      if f then
+        local ok, err = pcall(f)
+        if not ok then print("[DLS] sendQ failed: " .. tostring(err)) end
+      else
+        local tm = t or sendTimer
+        if tm then tm:Cancel() end
+        sendTimer = nil
+      end
     end, true)
   end
 end
@@ -619,6 +627,7 @@ end
 -- expired, ramping to 0), HOLD (occupied and turned off by hand: stays off until vacancy or a manual on).
 ---------------------------------------------------------------------------
 local PR_VACANT, PR_OCCUPIED, PR_FADING, PR_HOLD = "VACANT", "OCCUPIED", "FADING", "HOLD"
+local cancelOffFade, safeUpdate
 
 -- Presence UI (1.13.0): the Rooms JSON is the source of truth, but an installer needs to see and
 -- adjust a room's presence settings in Composer. DriverWorks cannot create properties at runtime,
@@ -814,6 +823,7 @@ local function prStartFade(room, now)
   if Properties["Presence Lighting"] ~= "On" then return end   -- 1.16.5: not even from an AWAY edge
   local pr = room.pr
   if not gateOpen then return end                    -- no ramps while the gate is closed (reconcile does it)
+  cancelOffFade(room)
   room.overrideUntil = nil
   for _, l in ipairs(room.lights) do l.overrideUntil, l.offHold = nil, nil end
   pr.offAt = nil
@@ -841,6 +851,7 @@ end
 local function prSetOcc(room, now, newOcc, src, immediate)
   local pr = room.pr
   local was = pr.occIn
+  local needUpdate = false
   pr.occIn = newOcc
   if newOcc then
     pr.lastOnSrc = src
@@ -849,7 +860,11 @@ local function prSetOcc(room, now, newOcc, src, immediate)
       if pr.state == PR_VACANT then
         pr.state = PR_OCCUPIED                                      -- T1 / T2
         fire("Room Occupied", room.name)
-        presenceDrive(room, now)
+        if pr.follow then
+          presenceDrive(room, now)
+        elseif gateOpen and Properties["Presence Lighting"] == "On" then
+          needUpdate = true
+        end
       elseif pr.state == PR_FADING then
         pr.state = PR_OCCUPIED                                      -- T6
         if pr.follow then
@@ -872,6 +887,7 @@ local function prSetOcc(room, now, newOcc, src, immediate)
     pr.offConfirmed = not prUnconfirmed(src)
   end
   prSave()
+  if needUpdate then safeUpdate() end
 end
 
 -- Turn the raw source (rawOcc, rawSrc) into occIn: allow-list, then the AWAY filter (section 8).
@@ -894,6 +910,7 @@ end
 
 -- Gate opens (snapshot or timeout): bring every room to the state its occupancy now implies.
 local function prReconcile(now)
+  local needUpdate = false
   for _, room in ipairs(rooms) do
     local pr = room.pr
     if pr then
@@ -902,7 +919,11 @@ local function prReconcile(now)
         pr.offAt = nil
         if pr.state ~= PR_HOLD then
           pr.state = PR_OCCUPIED
-          presenceDrive(room, now)
+          if pr.follow then
+            presenceDrive(room, now)
+          elseif gateOpen and Properties["Presence Lighting"] == "On" then
+            needUpdate = true
+          end
         end
       elseif pr.state == PR_HOLD and not anyOn(room) then
         -- restored manual-off hold (T14): only a confirmed vacancy plus the off delay ends it (T10)
@@ -928,6 +949,7 @@ local function prReconcile(now)
     end
   end
   prSave()
+  if needUpdate then safeUpdate() end
 end
 
 -- Manual change on a presence room (section 7 rule 4 onwards). v = new level.
@@ -1104,7 +1126,7 @@ local function startVacancyTimer(room)
     if v ~= nil and presenceOn() and not parseOcc(v, room) then
       room.latchVacant = true
       dbg("vacancy confirmed", room.name)
-      Update()
+      safeUpdate()
     end
   end, false)
 end
@@ -1245,7 +1267,7 @@ end
 local OFF_FADE_STEP_MS = 60000
 local offFades = {}                 -- room.name -> { steps, done, from = {id -> level}, sent = {id -> level}, timer }
 
-local function cancelOffFade(room)
+cancelOffFade = function(room)
   local f = offFades[room.name]
   if not f then return end
   if f.timer then pcall(function() f.timer:Cancel() end) end
@@ -1823,7 +1845,7 @@ local function loadRooms(closeGate)
 end
 
 -- 1.11.9: one Lua error used to stop the repeating timer silently. Keep the timer alive and print the error.
-local function safeUpdate()
+safeUpdate = function()
   local ok, err = pcall(Update)
   if not ok then print("[DLS] Update failed: " .. tostring(err)) end
 end
@@ -1912,6 +1934,8 @@ function OnDriverDestroyed()
   if mainTimer then mainTimer:Cancel() mainTimer = nil end
   if cloudTimer then cloudTimer:Cancel() cloudTimer = nil end
   if presenceTimer then presenceTimer:Cancel() presenceTimer = nil end
+  if sendTimer then sendTimer:Cancel() sendTimer = nil end
+  sendQ = {}
   cancelAllOffFades()
   for _, r in ipairs(rooms) do
     if r.vacancyTimer then r.vacancyTimer:Cancel() r.vacancyTimer = nil end
