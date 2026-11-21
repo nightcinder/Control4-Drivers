@@ -14,6 +14,7 @@ import inspect
 import io
 import json
 import logging
+import os
 import re
 import sys
 import time
@@ -25,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from aiohttp import web
 
-VERSION = "0.4.5"
+VERSION = "0.4.6"
 CLIENT_NAME = "shield-bridge"
 HEALTH_INTERVAL = 2.0
 BACKOFF_MIN = 1.0
@@ -178,6 +179,15 @@ def load_config(path: Path) -> Config:
     }
     if not shields:
         raise ValueError("config must define at least one shield")
+    art = dict(raw.get("art", {}))
+    for cfg_key, env_key in (
+        ("spotify_client_id", "SPOTIFY_CLIENT_ID"),
+        ("spotify_client_secret", "SPOTIFY_CLIENT_SECRET"),
+    ):
+        if not str(art.get(cfg_key) or "").strip():
+            env_val = os.environ.get(env_key, "").strip()
+            if env_val:
+                art[cfg_key] = env_val
     return Config(
         listen_host=str(raw.get("listen_host", "0.0.0.0")),
         listen_port=int(raw.get("listen_port", 8790)),
@@ -187,7 +197,7 @@ def load_config(path: Path) -> Config:
         key=str(base / raw.get("key", "key.pem")),
         adbkey=str(base / raw.get("adbkey", "adbkey")),
         poll_seconds=float(raw.get("poll_seconds", 2)),
-        art=dict(raw.get("art", {})),
+        art=art,
     )
 
 
