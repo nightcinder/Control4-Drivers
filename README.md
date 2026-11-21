@@ -20,8 +20,8 @@ Versions are the XML `<version>` (what Composer compares), with the Lua `DRIVER_
 | `moen-smart-shower` | Moen Smart Shower, standalone (cloud) | 208 | `Moen_Smart_Shower_Standalone_driver_v200.c4z` | Depends on Moen's cloud service |
 | `moenshower` | Moen Smart Shower, web view (local bridge) | 306 | `moenshower.c4z` | Uses `tools/moen-bridge` over HomeKit |
 | `yale-assure-lock-2` | Yale Assure Lock 2 (Wi-Fi Smart Module) | 118 | `Yale_AssureLock2.c4z` | |
-| `switchbot-cloud` | SwitchBot Cloud (parent) | 4 (2.1.0) | `switchbot-cloud.c4z` | Token, API, polling |
-| `switchbot-curtain` | SwitchBot Curtain (child) | 15 (2.1.1) | `switchbot-curtain.c4z` | One per window |
+| `switchbot-cloud` | SwitchBot Cloud (parent) | 8 (2.1.3) | `switchbot-cloud.c4z` | Token, API, polling, optional child auto-create |
+| `switchbot-curtain` | SwitchBot Curtain (child) | 19 (2.1.4) | `switchbot-curtain.c4z` | One per window |
 | `roborock` | Roborock Vacuum | 10 (0.5.1) | `roborock.c4z` | Uses `tools/roborock-bridge`, untested |
 | `smarthq-bridge` | SmartHQ Hub (parent) | 10 (0.3.3) | `smarthq-bridge.c4z` | Uses `tools/smarthq-bridge`, untested |
 | `smarthq-appliance` | SmartHQ Appliance (child) | 2 (0.3.1) | `smarthq-appliance.c4z` | Oven, fridge, dishwasher and more, untested |
@@ -83,14 +83,14 @@ Two drivers. **SwitchBot Cloud** holds the API Token and Secret, signs and sends
 Setup:
 - Get the token and secret in the SwitchBot app: Profile, Preferences, About, tap the app version 10 times, then Developer Options. Add one **SwitchBot Cloud** driver and paste them into **Token** and **Secret**. One token covers every hub and floor
 - Run **Discover Devices** on the parent to list device IDs (paired motors are tagged `master of pair` / `paired`)
-- Add a **SwitchBot Curtain** per window and bind its **SwitchBot Cloud** connection to the parent in Connections (a one-time manual step). **Device** is then a drop-down of the discovered curtains by name. For curtains paired in the SwitchBot app, pick the master alone
+- Add a **SwitchBot Curtain** per window and bind its **SwitchBot Cloud** connection to the parent in Connections (a one-time manual step). **Device** is then a drop-down of the discovered curtains by name. For curtains paired in the SwitchBot app, pick the master alone. Or set **Auto Create Children** to On / run **Create Missing Children** on the parent to auto-create and bind any missing curtains (`C4:AddDevice` + `C4:Bind` + `SB_CONFIGURE`, skipping paired followers and already-registered children; untested in Composer)
 - **Second Device** is only for two unpaired motors on one window: every command goes to both, status is combined (moving if either moves, position averaged, lowest battery)
 - **Invert Level** (per child) defaults to off (SwitchBot position 100 = open). Set True if a curtain reports 0 = open. It depends on how each motor was calibrated in the SwitchBot app
 - The parent polls every 300 s by default. After a command the child shows the expected level at once, sends only the last of rapid presses (0.8 s debounce), and asks the parent for status every few seconds until the curtain stops, ignoring SwitchBot's stale just-after-command status. The account limit is 10,000 API calls per day
-- Parent and child talk with `C4:SendToDevice` (`SB_REGISTER`, `SB_COMMAND`, `SB_POLL` to the parent; `SB_STATUS`, `SB_PARENT_STATUS`, `SB_HELLO` back), with the connection class `SWITCHBOT_CLOUD` linking them
+- Parent and child talk with `C4:SendToDevice` (`SB_REGISTER`, `SB_COMMAND`, `SB_POLL` to the parent; `SB_STATUS`, `SB_PARENT_STATUS`, `SB_HELLO`, `SB_DEVICES`, `SB_CONFIGURE` back), with the connection class `SWITCHBOT_CLOUD` linking them
 - Navigator icons are original generic curtain artwork drawn by `tools/switchbot-curtain/make_icons.py` into `www/icons/`. The `controller://driver/switchbot-curtain/...` path assumes the package is named `switchbot-curtain.c4z`
 - Offline signing test: `lua5.1 tools/switchbot-curtain/test_signing.lua drivers/switchbot-cloud/SwitchBot_Cloud_driver.lua` (SHA-256, HMAC-SHA256, Base64 and signature checks, no network)
-- Still unknown: the proxy's notification names for opening and closing motion, so Navigator jumps to the expected level on a press instead of showing movement. Token and Secret are plain STRING properties, not masked
+- Still unknown: the proxy's notification names for opening and closing motion, so Navigator jumps to the expected level on a press instead of showing movement. Token and Secret use `<type>STRING</type>` with `<password>true</password>` to mask input in Composer (untested in live Composer)
 
 ### Roborock Vacuum
 
