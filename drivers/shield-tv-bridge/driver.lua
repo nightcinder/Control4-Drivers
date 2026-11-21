@@ -6,7 +6,7 @@
 -- proxy (5003, "Shield Remote") that opens the phone remote web page www/remote1.html.
 -- The App N Package properties are fallbacks, used only when no mini app is bound to the slot.
 
-local DRIVER_VERSION = "1.5.4"
+local DRIVER_VERSION = "1.5.5"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -547,15 +547,33 @@ end
 local function npStartTimer()
   npStopTimer()
   npTimer = C4:SetTimer(NP_REPUBLISH_MS, function()
-    if npSelected or npCurrent ~= nil then npPublishAll() end
+    local ok, err = pcall(function()
+      if npSelected or npCurrent ~= nil then npPublishAll() end
+    end)
+    if not ok then logMsg(LOG_ERROR, "Now Playing timer error: %s", tostring(err)) end
   end, true)
 end
 
+local function myProxyId()
+  if not C4.GetBoundConsumerDevices then return nil end
+  local ok, devs = pcall(function() return C4:GetBoundConsumerDevices(C4:GetDeviceID(), PROXY_NOWPLAYING) end)
+  return (ok and type(devs) == "table") and tonumber((next(devs))) or nil
+end
+
+-- True when the room's current video/watch source is this Shield.
+local function roomIsOnMe(roomId)
+  local rid = tonumber(roomId)
+  if not rid then return false end
+  local ok, v = pcall(function() return C4:GetDeviceVariable(rid, VAR_CURRENT_SELECTED_DEVICE) end)
+  local sel = ok and tonumber(v) or nil
+  if not sel or sel == 0 then return false end
+  if sel == tonumber(C4:GetDeviceID()) then return true end
+  local pid = myProxyId()
+  return pid ~= nil and sel == pid
+end
+
 local function npRoomSelectsMe(roomId)
-  local ok, v = pcall(function()
-    return C4:GetDeviceVariable(roomId, VAR_CURRENT_SELECTED_DEVICE)
-  end)
-  return ok and tonumber(v) ~= nil and tonumber(v) == tonumber(C4:GetDeviceID())
+  return roomIsOnMe(roomId)
 end
 
 local npRoomIds = {}
@@ -592,12 +610,19 @@ function OnVariableChanged(idDevice, idVariable, strValue)
 end
 
 local function handleStatus(st)
+  local adbDown = (st.adb == false)
+  if adbDown then
+    st = { awake = nil, app = "", art = "", np = {} }
+    npSelected = false
+  end
+  local prevAwake = lastAwake
   lastAwake = st.awake
   if st.awake == false then
     npSelected = false
   end
   local app = st.app or ""
-  if app ~= lastApp then
+  local appChanged = (app ~= lastApp)
+  if appChanged then
     lastApp = app
     C4:UpdateProperty("Current App", app)
   end
@@ -608,8 +633,11 @@ local function handleStatus(st)
     key = item.title .. "|" .. item.artist .. "|" .. item.album .. "|" .. item.state .. "|" .. tostring(st.art or "")
   end
   if key == lastNowKey then
-    if st.awake == false and not npCurrent and not npSelected then
+    if (st.awake == false or adbDown) and not npCurrent and not npSelected then
       npStopTimer()
+    end
+    if (lastAwake ~= prevAwake or appChanged) and publishRemoteState then
+      publishRemoteState(false)
     end
     return
   end
@@ -948,7 +976,7 @@ local function ensureRoomSelected(roomId)
       pcall(function() C4:SendToDevice(rid, "SELECT_VIDEO_DEVICE", { deviceid = proxyId }) end)
     end
   end
-  if lastAwake == false then
+  if lastAwake ~= true then
     httpPost("/v1/wake", nil, nil)
   end
   npSelected = true
@@ -971,20 +999,6 @@ local REMOTE_KEYS = {
   MEDIA_PLAY = true, MEDIA_PAUSE = true, MEDIA_PLAY_PAUSE = true, MEDIA_NEXT = true,
   MEDIA_PREVIOUS = true, MEDIA_REWIND = true, MEDIA_FAST_FORWARD = true,
 }
-
-local function myProxyId()
-  if not C4.GetBoundConsumerDevices then return nil end
-  local ok, devs = pcall(function() return C4:GetBoundConsumerDevices(C4:GetDeviceID(), PROXY_NOWPLAYING) end)
-  return (ok and type(devs) == "table") and tonumber((next(devs))) or nil
-end
-
--- True when the room's current video/watch source is this Shield.
-local function roomIsOnMe(roomId)
-  local pid = myProxyId()
-  if not pid then return true end   -- unknown: do not force a source change
-  local ok, v = pcall(function() return C4:GetDeviceVariable(tonumber(roomId), VAR_CURRENT_SELECTED_DEVICE) end)
-  return ok and tonumber(v) == pid
-end
 
 local function jsonEsc(s)
   s = tostring(s or "")
@@ -1046,35 +1060,50 @@ local ART_WIDTH = 320
 local ART_MAX_BYTES = 60000
 fetchInlineArt = function(path)
   if path == "" then
+    artInline.failKey = nil
+    artInline.failAt = nil
     if artInline.key ~= "" then artInline = { key = "", data = "" }; publishArt(false); publishRemoteState(false) end
     return
   end
   if path == artInline.key then return end
+  if path == artInline.failKey and os.time() - (artInline.failAt or 0) < 30 then return end
   -- A request that never called back is retried after 15 s.
   if path == artInline.pending and os.time() - (artInline.pendingAt or 0) < 15 then return end
-  artInline.pending = path
-  artInline.pendingAt = os.time()
   local base = string.gsub(trim(prop("Bridge URL")), "/+$", "")
   if base == "" then return end
+  artInline.pending = path
+  artInline.pendingAt = os.time()
   pcall(function()
     C4:urlGet(base .. path .. "?w=" .. ART_WIDTH, {}, false, function(ticket, data, code, headers, err)
-      if artInline.pending ~= path then return end
-      artInline.pending = nil
-      local n = data and #data or 0
-      if tonumber(code) == 200 and n > 0 and n <= ART_MAX_BYTES then
-        local ctype = "image/jpeg"
-        if type(headers) == "table" then
-          for k, v in pairs(headers) do
-            if string.lower(tostring(k)) == "content-type" then ctype = tostring(v) end
+      local okCb, cbErr = pcall(function()
+        if artInline.pending ~= path then return end
+        artInline.pending = nil
+        local c = tonumber(code)
+        local n = data and #data or 0
+        if c == 200 and n > 0 and n <= ART_MAX_BYTES then
+          local ctype = "image/jpeg"
+          if type(headers) == "table" then
+            for k, v in pairs(headers) do
+              if string.lower(tostring(k)) == "content-type" then ctype = tostring(v) end
+            end
+          end
+          artInline = { key = path, data = "data:" .. ctype .. ";base64," .. C4:Base64Encode(data) }
+        elseif c == 200 and n > ART_MAX_BYTES then
+          logMsg(LOG_DEBUG, "Inline art skipped (code %s, %d bytes)", tostring(code), n)
+          artInline = { key = path, data = "" }
+        else
+          logMsg(LOG_DEBUG, "Inline art failed (code %s, %d bytes, %s)", tostring(code), n, tostring(err))
+          artInline.failKey = path
+          artInline.failAt = os.time()
+          if artInline.key ~= "" then
+            artInline.key = ""
+            artInline.data = ""
           end
         end
-        artInline = { key = path, data = "data:" .. ctype .. ";base64," .. C4:Base64Encode(data) }
-      else
-        logMsg(LOG_DEBUG, "Inline art skipped (code %s, %d bytes)", tostring(code), n)
-        artInline = { key = path, data = "" }
-      end
-      publishArt(false)
-      publishRemoteState(false)
+        publishArt(false)
+        publishRemoteState(false)
+      end)
+      if not okCb then logMsg(LOG_ERROR, "Inline art callback error: %s", tostring(cbErr)) end
     end)
   end)
 end
@@ -1108,7 +1137,9 @@ end
 -- wakes a sleeping Shield. A source change happens at most once per 15 s, so a page refresh or a
 -- UI_HELLO right after the tile SELECT does not repeat it.
 local lastOpenLaunch = 0
+local lastPowerOff = 0
 local function launchOnOpen(why)
+  if os.time() - lastPowerOff < 15 then return end
   local rid = myRoomId()
   if not rid then return end
   if roomIsOnMe(rid) then
@@ -1150,8 +1181,11 @@ local function watchRoomAudio()
   end
   roomAudio.room = rid
   logMsg(LOG_DEBUG, "Room %d variables: %s", rid, table.concat(names, ", "))
-  for _, id in ipairs({ roomAudio.mute, roomAudio.vol }) do
-    pcall(function() C4:RegisterVariableListener(rid, id) end)
+  if roomAudio.mute then
+    pcall(function() C4:RegisterVariableListener(rid, roomAudio.mute) end)
+  end
+  if roomAudio.vol then
+    pcall(function() C4:RegisterVariableListener(rid, roomAudio.vol) end)
   end
 end
 
@@ -1182,8 +1216,11 @@ local function handleUi(cmd)
     -- Power button: room on the Shield and the Shield awake -> room off; otherwise select the Shield and wake it.
     local rid = myRoomId()
     if rid then
-      if roomIsOnMe(rid) and lastAwake ~= false then
+      if roomIsOnMe(rid) and lastAwake == true then
         logMsg(LOG_INFO, "Shield Remote power: room %d off", rid)
+        lastPowerOff = os.time()
+        lastOpenLaunch = lastPowerOff
+        lastAwake = false
         pcall(function() C4:SendToDevice(rid, "ROOM_OFF", {}) end)
       else
         logMsg(LOG_INFO, "Shield Remote power: selecting Shield in room %d", rid)
@@ -1362,6 +1399,7 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
       return
     end
     if cmd == "OFF" then
+      lastAwake = false
       httpPost("/v1/sleep", nil, nil)
       return
     end
