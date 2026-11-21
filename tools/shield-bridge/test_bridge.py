@@ -367,6 +367,103 @@ class ArtResolverTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(found, b"COVER")
             self.assertEqual(calls[0].split("?")[0], "https://api.spotify.com/v1/search")
 
+    async def test_itunes_prefers_original_album_over_karaoke_or_remix(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            resolver = art.ArtResolver({}, Path(td), AsyncMock(return_value=None))
+            fetched: list[str] = []
+
+            async def fake_fetch(url: str, headers: dict[str, str] | None = None) -> bytes | None:
+                fetched.append(url)
+                if "itunes.apple.com/search" in url:
+                    return json.dumps({"results": [
+                        {
+                            "trackName": "Alive (Karaoke Version)",
+                            "artistName": "Example Band",
+                            "collectionName": "Karaoke Hits",
+                            "artworkUrl100": "http://192.0.2.20/karaoke_100x100.jpg",
+                        },
+                        {
+                            "trackName": "Alive (Remix)",
+                            "artistName": "Example Band",
+                            "collectionName": "Alive Remixes",
+                            "artworkUrl100": "http://192.0.2.20/remix_100x100.jpg",
+                        },
+                        {
+                            "trackName": "Alive",
+                            "artistName": "Example Band",
+                            "collectionName": "Night Visions",
+                            "artworkUrl100": "http://192.0.2.20/original_100x100.jpg",
+                        },
+                    ]}).encode()
+                if url == "http://192.0.2.20/original_600x600.jpg":
+                    return b"ORIGINAL_JPG"
+                return b"WRONG_JPG"
+
+            resolver._fetch = fake_fetch  # type: ignore[method-assign]
+            found = await resolver._itunes("Alive", "Example Band", "Night Visions")
+            self.assertEqual(found, b"ORIGINAL_JPG")
+            self.assertIn("http://192.0.2.20/original_600x600.jpg", fetched)
+            self.assertNotIn("http://192.0.2.20/karaoke_600x600.jpg", fetched)
+            self.assertNotIn("http://192.0.2.20/remix_600x600.jpg", fetched)
+
+    async def test_spotify_prefers_exact_title_and_album_over_remix(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            resolver = art.ArtResolver(
+                {"spotify_client_id": "cid", "spotify_client_secret": "secret"},
+                Path(td),
+                AsyncMock(return_value=None),
+            )
+            resolver._spotify_token_cache = ("tok", time.monotonic() + 600)
+            fetched: list[str] = []
+
+            async def fake_fetch(url: str, headers: dict[str, str] | None = None) -> bytes | None:
+                fetched.append(url)
+                if "api.spotify.com/v1/search" in url:
+                    return json.dumps({"tracks": {"items": [
+                        {
+                            "name": "Dead Man Walking - Live Remix",
+                            "artists": [{"name": "Against The Current"}],
+                            "album": {
+                                "name": "Live Sessions",
+                                "images": [{"url": "http://192.0.2.20/remix.jpg"}],
+                            },
+                        },
+                        {
+                            "name": "Dead Man Walking",
+                            "artists": [{"name": "Against The Current"}],
+                            "album": {
+                                "name": "Past Lives",
+                                "images": [{"url": "http://192.0.2.20/original.jpg"}],
+                            },
+                        },
+                    ]}}).encode()
+                if url == "http://192.0.2.20/original.jpg":
+                    return b"ORIGINAL_SPOTIFY"
+                return b"WRONG_SPOTIFY"
+
+            resolver._fetch = fake_fetch  # type: ignore[method-assign]
+            found = await resolver._spotify("Dead Man Walking", "Against The Current", "Past Lives")
+            self.assertEqual(found, b"ORIGINAL_SPOTIFY")
+            self.assertIn("http://192.0.2.20/original.jpg", fetched)
+            self.assertNotIn("http://192.0.2.20/remix.jpg", fetched)
+
+    async def test_spotify_missing_creds_warns_once(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            resolver = art.ArtResolver({}, Path(td), AsyncMock(return_value=None))
+            resolver._plex = AsyncMock(return_value=None)  # type: ignore[method-assign]
+            resolver._itunes = AsyncMock(return_value=b"ITUNES_JPG")  # type: ignore[method-assign]
+            with patch.object(art, "_square", side_effect=lambda b: b):
+                with self.assertNoLogs("shield-bridge.art", level="WARNING"):
+                    await resolver.resolve("com.google.android.youtube.tv", "Video", "Channel", "")
+                with self.assertLogs("shield-bridge.art", level="WARNING") as cm:
+                    first = await resolver.resolve("com.spotify.tv.android", "Song A", "Artist A", "")
+                self.assertIsNotNone(first)
+                self.assertEqual(len(cm.output), 1)
+                self.assertIn("spotify_client_id", cm.output[0])
+                with self.assertNoLogs("shield-bridge.art", level="WARNING"):
+                    second = await resolver.resolve("com.spotify.tv.android", "Song B", "Artist A", "")
+                self.assertIsNotNone(second)
+
     async def test_update_art_retries_after_fallback_ttl_expires(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             shield = _make_shield(Path(td))
