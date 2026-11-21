@@ -40,6 +40,55 @@ LAUNCHER_PACKAGE = "com.google.android.tvlauncher"  # Shield home screen: never 
 ICON_CACHE_VERSION = "v3"  # bump when the fallback art changes so old cached icons are ignored
 SHIELD_BG = (28, 28, 30)
 FALLBACK_TTL = 15  # seconds a fallback (app icon) answer is reused before Plex/iTunes are tried again
+_JUNK_RELEASE_RE = re.compile(
+    r"\b(?:karaoke|tribute|instrumental|8-bit|lullaby|cover|remix|live)\b"
+)
+
+
+def _score_music_match(
+    want_title: str,
+    want_artist: str,
+    want_album: str,
+    hit_title: str,
+    hit_artist: str,
+    hit_album: str,
+    *,
+    require_title: bool = True,
+) -> int | None:
+    """Rank a music search candidate, returning None when required fields do not match."""
+    wt = want_title.strip().lower()
+    wa = want_artist.strip().lower()
+    wb = want_album.strip().lower()
+    ht = hit_title.strip().lower()
+    ha = hit_artist.strip().lower()
+    hb = hit_album.strip().lower()
+    if not wa or wa not in ha:
+        return None
+    if require_title and (not wt or wt not in ht):
+        return None
+
+    score = 0
+    if wt and ht:
+        if ht == wt:
+            score += 100
+        elif wt in ht:
+            score += 60
+        elif ht in wt:
+            score += 40
+        else:
+            score -= 60
+    if ha == wa:
+        score += 20
+    if wb and hb:
+        if hb == wb:
+            score += 30
+        elif wb in hb or hb in wb:
+            score += 15
+
+    wanted_junk = set(_JUNK_RELEASE_RE.findall(f"{wt} {wb}"))
+    hit_junk = set(_JUNK_RELEASE_RE.findall(f"{ht} {hb}"))
+    score -= 40 * len(hit_junk - wanted_junk)
+    return score
 
 
 def app_label(package: str) -> str:
@@ -159,6 +208,7 @@ class ArtResolver:
         self._keys: dict[str, str] = {}
         self._fallback_until: dict[str, tuple[str, float]] = {}
         self._spotify_token_cache: tuple[str, float] | None = None
+        self._warned_no_spotify: bool = False
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def get(self, art_id: str) -> tuple[bytes, str] | None:
@@ -208,8 +258,18 @@ class ArtResolver:
             finders.append(("_plex_thumb", lambda: self._plex_thumb(thumb)))
         finders.append(("_plex", lambda: self._plex(title, artist, album)))
         # Spotify's own catalogue beats a title-and-artist guess in Apple's when Spotify is playing.
-        if self._cfg.get("spotify_client_id") and self._cfg.get("spotify_client_secret"):
+        has_spotify = bool(
+            str(self._cfg.get("spotify_client_id") or "").strip()
+            and str(self._cfg.get("spotify_client_secret") or "").strip()
+        )
+        if has_spotify:
             finders.append(("_spotify", lambda: self._spotify(title, artist, album)))
+        elif package == "com.spotify.tv.android" and not self._warned_no_spotify:
+            self._warned_no_spotify = True
+            log.warning(
+                "Spotify credentials unset in art config (spotify_client_id/spotify_client_secret); "
+                "falling back to iTunes"
+            )
         finders.append(("_itunes", lambda: self._itunes(title, artist, album)))
         for label, attempt in finders:
             try:
@@ -218,6 +278,7 @@ class ArtResolver:
                 log.debug("art %s: %s", label, exc)
                 found = None
             if found:
+                log.info("art resolved via %s for %s: %r - %r", label, package, title, artist)
                 return self._store(key, _square(found), "image/png")
         icon = await self._app_icon(package)
         if not icon:
@@ -306,6 +367,34 @@ class ArtResolver:
         self._spotify_token_cache = (token, now + max(60.0, ttl - 60.0))
         return token
 
+    async def _fetch_ranked(
+        self,
+        title: str,
+        artist: str,
+        album: str,
+        hits: list[dict[str, Any]],
+        extract: Callable[[dict[str, Any]], tuple[str, str, str, list[str]]],
+        *,
+        require_title: bool,
+    ) -> bytes | None:
+        """Rank candidate hits with _score_music_match and return the first fetched image."""
+        candidates: list[tuple[int, list[str]]] = []
+        for hit in hits:
+            hit_title, hit_artist, hit_album, urls = extract(hit)
+            score = _score_music_match(
+                title, artist, album, hit_title, hit_artist, hit_album,
+                require_title=require_title,
+            )
+            if score is not None and urls:
+                candidates.append((score, urls))
+        candidates.sort(key=lambda pair: -pair[0])
+        for _, urls in candidates:
+            for url in urls:
+                found = await self._fetch(url)
+                if found:
+                    return found
+        return None
+
     async def _spotify(self, title: str, artist: str, album: str) -> bytes | None:
         """Album art straight from Spotify's catalogue, which is the app actually playing the track.
 
@@ -334,19 +423,14 @@ class ArtResolver:
             items = (json.loads(raw).get("tracks") or {}).get("items") or []
         except ValueError:
             return None
-        want_artist = artist.strip().lower()
-        for hit in items:
+
+        def extract(hit: dict[str, Any]) -> tuple[str, str, str, list[str]]:
             hit_artists = " ".join(str(a.get("name", "")) for a in hit.get("artists") or [])
-            if want_artist not in hit_artists.lower():
-                continue
-            for image in (hit.get("album") or {}).get("images") or []:
-                url = str(image.get("url") or "")
-                if not url:
-                    continue
-                found = await self._fetch(url)
-                if found:
-                    return found
-        return None
+            album_obj = hit.get("album") or {}
+            urls = [u for u in (str(img.get("url") or "") for img in album_obj.get("images") or []) if u]
+            return str(hit.get("name") or ""), hit_artists, str(album_obj.get("name") or ""), urls
+
+        return await self._fetch_ranked(title, artist, album, items, extract, require_title=False)
 
     async def _itunes(self, title: str, artist: str, album: str) -> bytes | None:
         if not title or not artist:
@@ -359,12 +443,21 @@ class ArtResolver:
             return None
         import json
 
-        for hit in json.loads(raw).get("results", []):
-            if (artist.lower() in str(hit.get("artistName", "")).lower()
-                    and title.lower() in str(hit.get("trackName", "")).lower()):
-                url = str(hit.get("artworkUrl100", "")).replace("100x100", "600x600")
-                return await self._fetch(url) if url else None
-        return None
+        try:
+            results = json.loads(raw).get("results", [])
+        except ValueError:
+            return None
+
+        def extract(hit: dict[str, Any]) -> tuple[str, str, str, list[str]]:
+            url = str(hit.get("artworkUrl100") or "").replace("100x100", "600x600")
+            return (
+                str(hit.get("trackName") or ""),
+                str(hit.get("artistName") or ""),
+                str(hit.get("collectionName") or ""),
+                [url] if url else [],
+            )
+
+        return await self._fetch_ranked(title, artist, album, results, extract, require_title=True)
 
     async def _app_icon(self, package: str) -> bytes | None:
         if not re.fullmatch(r"[A-Za-z0-9_.]+", package or ""):
