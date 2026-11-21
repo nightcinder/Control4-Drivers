@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import tempfile
 import time
@@ -966,6 +967,52 @@ class V2WatchdogTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertTrue(shield.awake)
             self.assertTrue(shield.v2._probe_now.is_set())
+
+
+class LoadConfigTests(unittest.TestCase):
+    def _write_config(self, root: Path, art_cfg: dict[str, object]) -> Path:
+        cfg_path = root / "config.json"
+        cfg_path.write_text(
+            json.dumps(
+                {
+                    "token": "secret",
+                    "shields": {"Downstairs": {"host": "192.0.2.20"}},
+                    "art": art_cfg,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return cfg_path
+
+    def test_load_config_reads_spotify_env_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cfg_path = self._write_config(
+                Path(td),
+                {"spotify_client_id": "", "spotify_client_secret": "  "},
+            )
+            with patch.dict(
+                os.environ,
+                {"SPOTIFY_CLIENT_ID": "env-id", "SPOTIFY_CLIENT_SECRET": "env-sec"},
+                clear=False,
+            ):
+                cfg = bridge.load_config(cfg_path)
+            self.assertEqual(cfg.art["spotify_client_id"], "env-id")
+            self.assertEqual(cfg.art["spotify_client_secret"], "env-sec")
+
+    def test_load_config_prefers_config_json_over_spotify_env(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cfg_path = self._write_config(
+                Path(td),
+                {"spotify_client_id": "file-id", "spotify_client_secret": "file-sec"},
+            )
+            with patch.dict(
+                os.environ,
+                {"SPOTIFY_CLIENT_ID": "env-id", "SPOTIFY_CLIENT_SECRET": "env-sec"},
+                clear=False,
+            ):
+                cfg = bridge.load_config(cfg_path)
+            self.assertEqual(cfg.art["spotify_client_id"], "file-id")
+            self.assertEqual(cfg.art["spotify_client_secret"], "file-sec")
 
 
 if __name__ == "__main__":

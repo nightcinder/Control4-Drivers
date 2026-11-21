@@ -27,6 +27,8 @@ Set these in `config.json` under `art` to enable the Spotify step (it is skipped
 }
 ```
 
+When those `config.json` keys are omitted or blank, `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` environment variables are read instead.
+
 Create the app at developer.spotify.com/dashboard (Web API). Development mode requires the app
 owner to hold Spotify Premium and allows five allowlisted users; client-credentials is enough for
 `GET /search`, which is all this step uses. Because Spotify is the app actually playing, its
