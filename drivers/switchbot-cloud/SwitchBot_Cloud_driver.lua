@@ -1,22 +1,29 @@
 --[[
   SwitchBot Cloud (parent) driver for Control4 (OS 3.4.x)
-  Version: 2.1.2
+  Version: 2.1.3
+  Changelog 2.1.3: mask Token/Secret in XML (<password>true</password>); optional auto-create child drivers
   Changelog 2.1.1: descriptions show device name and parameter values in Composer programming
   Holds the SwitchBot Token and Secret, talks to the cloud API v1.1, polls status, and serves any number of
   "SwitchBot Curtain" child drivers bound to its SWITCHBOT_CLOUD connection. Never log Token or Secret.
 
   Messages (sent with C4:SendToDevice, arrive in ExecuteCommand):
-    child -> parent: SB_REGISTER {IDS}, SB_COMMAND {IDS, COMMAND, PARAMETER}, SB_POLL {IDS}
-    parent -> child: SB_STATUS {DEVICE_ID, POSITION, MOVING, BATTERY}, SB_PARENT_STATUS {TEXT}, SB_HELLO
+    child -> parent: SB_REGISTER {CHILD_ID, IDS}, SB_COMMAND {IDS, COMMAND, PARAMETER}, SB_POLL {IDS}
+    parent -> child: SB_STATUS {DEVICE_ID, POSITION, MOVING, BATTERY}, SB_PARENT_STATUS {TEXT}, SB_HELLO,
+                     SB_DEVICES {LIST}, SB_CONFIGURE {DEVICE, LIST}
 ]]
 
-local DRIVER_VERSION = "2.1.2"
+local DRIVER_VERSION = "2.1.3"
 local API_BASE = "https://api.switch-bot.com/v1.1"
 local CLOUD_BINDING = 1
 local SUPPORTED_TYPES = { ["Curtain"] = true, ["Curtain3"] = true, ["Blind Tilt"] = true }
 local MIN_POLL_SECONDS = 60
 local DEFAULT_POLL_SECONDS = 300
 local MAX_BACKOFF_SECONDS = 3600
+local CHILD_DRIVER_FILE = "switchbot-curtain.c4z"
+local CHILD_BINDING_CLASS = "SWITCHBOT_CLOUD"
+local AUTO_CREATE_GRACE_SECONDS = 60
+local PENDING_CREATE_SECONDS = 120
+local CONFIGURE_DELAY_MS = 10000
 local floor = math.floor
 
 
@@ -305,7 +312,16 @@ end
 -- ============================================================================
 -- Driver state and helpers
 -- ============================================================================
-local state = { failures = 0, pollTimer = nil, children = {}, lastStatus = nil, deviceList = "None" }
+local state = {
+  failures = 0,
+  pollTimer = nil,
+  children = {},
+  lastStatus = nil,
+  deviceList = "None",
+  startedAt = 0,
+  pendingCreates = {},
+  roomId = nil,
+}
 local startTimers = {}
 
 local function prop(name)
@@ -316,6 +332,27 @@ end
 
 local function setProp(name, value)
   pcall(function() C4:UpdateProperty(name, tostring(value)) end)
+end
+
+local function startTimer(ms, fn)
+  local entry = { timer = nil }
+  local ok, timer = pcall(function()
+    return C4:SetTimer(ms, function()
+      entry.timer = nil
+      fn()
+    end)
+  end)
+  if ok and timer then
+    entry.timer = timer
+    startTimers[#startTimers + 1] = entry
+  end
+end
+
+local function captureRoomId()
+  local ok, rid = pcall(function() return C4:RoomGetId() end)
+  rid = ok and tonumber(rid) or nil
+  if rid and rid > 0 then state.roomId = rid end
+  return (rid and rid > 0) and rid or state.roomId
 end
 
 local function stamp()
@@ -517,18 +554,141 @@ local function sendCommand(ids, command, parameter)
   end
 end
 
-local function discover()
+local function deviceOption(d, devId)
+  local name = tostring(d.deviceName or devId):gsub(",", " ")
+  return string.format("%s [%s]", name, devId)
+end
+
+local function boundChildren()
+  local ok, bound = pcall(function() return C4:GetBoundConsumerDevices(C4:GetDeviceID(), CLOUD_BINDING) end)
+  if not ok or type(bound) ~= "table" then return nil end
+  return bound
+end
+
+local function childKnownFor(devId)
+  local t = state.pendingCreates[devId]
+  if t and os.time() - t < PENDING_CREATE_SECONDS then return true end
+  for _, ids in pairs(state.children) do
+    for _, id in ipairs(ids) do
+      if id == devId then return true end
+    end
+  end
+  return false
+end
+
+local function childDisplayName(d, devId)
+  local label = tostring(d.deviceName or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  if label == "" then
+    label = tostring(d.deviceType or "Curtain") .. " " .. devId:sub(-4)
+  end
+  if label:lower():sub(1, 9) == "switchbot" then return label end
+  return "SwitchBot " .. label
+end
+
+-- Create one missing child driver and bind it to this parent. Never modifies or deletes
+-- existing bound children.
+local function createChild(d)
+  local devId = tostring(d.deviceId or "")
+  if devId == "" then return end
+  local roomId = captureRoomId()
+  if not roomId or roomId == 0 then
+    pcall(function() print("[SwitchBot Cloud] auto-create skipped for " .. devId .. ": no room id from C4:RoomGetId()") end)
+    return
+  end
+  local name = childDisplayName(d, devId)
+  local option = deviceOption(d, devId)
+  state.pendingCreates[devId] = os.time()
+  local ok, err = pcall(function()
+    C4:AddDevice(CHILD_DRIVER_FILE, roomId, name, function(newId)
+      local id = tonumber(newId)
+      if not id or id == 0 then
+        state.pendingCreates[devId] = nil
+        pcall(function()
+          print("[SwitchBot Cloud] auto-create failed for " .. devId .. " (" .. CHILD_DRIVER_FILE .. "): AddDevice returned 0")
+        end)
+        return
+      end
+      local bindOk, bindErr = pcall(function()
+        C4:Bind(C4:GetDeviceID(), CLOUD_BINDING, id, CLOUD_BINDING, CHILD_BINDING_CLASS)
+      end)
+      if not bindOk then
+        pcall(function()
+          print("[SwitchBot Cloud] auto-create bind warning for " .. devId .. " id " .. tostring(id) .. ": " .. tostring(bindErr))
+        end)
+      end
+      pcall(function() print("[SwitchBot Cloud] auto-created " .. CHILD_DRIVER_FILE .. " id " .. tostring(id) .. " for device " .. devId) end)
+      startTimer(CONFIGURE_DELAY_MS, function()
+        sendToChild(id, "SB_CONFIGURE", { DEVICE = option, LIST = state.deviceList })
+      end)
+    end)
+  end)
+  if not ok then
+    state.pendingCreates[devId] = nil
+    pcall(function() print("[SwitchBot Cloud] auto-create error for " .. devId .. ": " .. tostring(err)) end)
+  end
+end
+
+local function autoCreateChildren(list, manual)
+  if not manual and prop("Auto Create Children") ~= "On" then return end
+  if not manual and (os.time() - state.startedAt < AUTO_CREATE_GRACE_SECONDS) then return end
+  local bound = boundChildren()
+  if not bound then return end
+
+  -- Forget registrations whose child is no longer bound (removed in Composer),
+  -- while waiting if any bound child has not sent SB_REGISTER yet.
+  local live, liveCount = {}, 0
+  for k in pairs(bound) do
+    local n = tonumber(k)
+    if n then live[n] = true; liveCount = liveCount + 1 end
+  end
+  local registered = 0
+  for cid in pairs(state.children) do
+    if not live[cid] then
+      state.children[cid] = nil
+      pcall(function() print("[SwitchBot Cloud] child " .. tostring(cid) .. " is no longer bound; forgotten") end)
+    else
+      registered = registered + 1
+    end
+  end
+  if liveCount > registered then
+    for cid in pairs(live) do
+      if not state.children[cid] then sendToChild(cid, "SB_HELLO", {}) end
+    end
+    pcall(function()
+      print("[SwitchBot Cloud] auto-create waiting: " .. tostring(liveCount - registered) .. " bound child(ren) not registered yet")
+    end)
+    return
+  end
+
+  for _, d in ipairs(list) do
+    if type(d) == "table" and SUPPORTED_TYPES[tostring(d.deviceType)] and d.deviceId ~= nil then
+      local devId = tostring(d.deviceId)
+      if devId ~= "" then
+        if d.group == true and d.master ~= true then
+          pcall(function() print("[SwitchBot Cloud] auto-create skipping paired follower " .. devId) end)
+        elseif not childKnownFor(devId) then
+          createChild(d)
+        end
+      end
+    end
+  end
+end
+
+local function discover(manual)
   apiRequest("GET", "/devices", nil, function(code, strData, strError)
     handleCommon(code, strData, strError, function(obj)
       local body = type(obj.body) == "table" and obj.body or {}
       local list = type(body.deviceList) == "table" and body.deviceList or {}
       local lines, options = {}, { "None" }
       for _, d in ipairs(list) do
-        if type(d) == "table" and SUPPORTED_TYPES[tostring(d.deviceType)] then
-          options[#options + 1] = string.format("%s [%s]", (tostring(d.deviceName):gsub(",", " ")), tostring(d.deviceId))
-          local extra = ""
-          if d.master == true then extra = " | master of pair" elseif d.group == true then extra = " | paired" end
-          lines[#lines + 1] = string.format("%s | %s | %s%s", tostring(d.deviceName), tostring(d.deviceId), tostring(d.deviceType), extra)
+        if type(d) == "table" and SUPPORTED_TYPES[tostring(d.deviceType)] and d.deviceId ~= nil then
+          local devId = tostring(d.deviceId)
+          if devId ~= "" then
+            options[#options + 1] = deviceOption(d, devId)
+            local extra = ""
+            if d.master == true then extra = " | master of pair" elseif d.group == true then extra = " | paired" end
+            lines[#lines + 1] = string.format("%s | %s | %s%s", tostring(d.deviceName), devId, tostring(d.deviceType), extra)
+          end
         end
       end
       local text = #lines > 0 and table.concat(lines, "  ;  ") or "No curtain/blind devices found"
@@ -536,6 +696,10 @@ local function discover()
       state.deviceList = table.concat(options, ",")
       for _, id in ipairs(childIds()) do sendToChild(id, "SB_DEVICES", { LIST = state.deviceList }) end
       pcall(function() print("[SwitchBot Cloud] Discovered devices (name | id | type):\n" .. text) end)
+      local okCreate, errCreate = pcall(autoCreateChildren, list, manual)
+      if not okCreate then
+        pcall(function() print("[SwitchBot Cloud] auto-create error: " .. tostring(errCreate)) end)
+      end
     end)
   end)
 end
@@ -550,13 +714,14 @@ function OnDriverInit()
   schedulePoll(false)
 end
 
-local function startTimer(ms, fn)
-  local ok, timer = pcall(function() return C4:SetTimer(ms, fn) end)
-  if ok then startTimers[#startTimers + 1] = timer end
-end
-
 function OnDriverLateInit()
-  if (prop("Token") or "") ~= "" then startTimer(1500, function() discover() end) end
+  state.startedAt = os.time()
+  if (prop("Token") or "") ~= "" then
+    startTimer(1500, function() discover(false) end)
+    if prop("Auto Create Children") == "On" and (prop("Secret") or "") ~= "" then
+      startTimer((AUTO_CREATE_GRACE_SECONDS + 1) * 1000, function() discover(false) end)
+    end
+  end
   -- Ask any bound children to register their device IDs.
   startTimer(2000, function()
     for _, id in ipairs(childIds()) do sendToChild(id, "SB_HELLO", {}) end
@@ -565,20 +730,30 @@ end
 
 function OnDriverDestroyed()
   if state.pollTimer then pcall(function() state.pollTimer:Cancel() end); state.pollTimer = nil end
-  for _, timer in ipairs(startTimers) do pcall(function() timer:Cancel() end) end
+  for _, entry in ipairs(startTimers) do
+    if entry.timer then pcall(function() entry.timer:Cancel() end) end
+  end
   startTimers = {}
 end
 
 function OnBindingChanged(idBinding, strClass, bIsBound, otherDeviceId, otherBindingId)
-  if bIsBound and otherDeviceId then sendToChild(tonumber(otherDeviceId), "SB_HELLO", {}) end
+  local cid = tonumber(otherDeviceId)
+  if not cid then return end
+  if bIsBound then
+    sendToChild(cid, "SB_HELLO", {})
+  elseif idBinding == CLOUD_BINDING then
+    state.children[cid] = nil
+  end
 end
 
 function OnPropertyChanged(strProperty)
   if strProperty == "Token" or strProperty == "Secret" or strProperty == "Poll Interval Seconds" then
     state.failures = 0
-    if (prop("Token") or "") ~= "" and (prop("Secret") or "") ~= "" then discover() end
+    if (prop("Token") or "") ~= "" and (prop("Secret") or "") ~= "" then discover(false) end
     pollAll()
     schedulePoll(false)
+  elseif strProperty == "Auto Create Children" and prop("Auto Create Children") == "On" then
+    if (prop("Token") or "") ~= "" and (prop("Secret") or "") ~= "" then discover(false) end
   end
 end
 
@@ -589,16 +764,23 @@ function ExecuteCommand(strCommand, tParams)
     if strCommand == nil then return end
   end
   if strCommand == "DISCOVER" or strCommand == "Discover Devices" then
-    discover()
+    discover(false)
+  elseif strCommand == "CREATE_CHILDREN" or strCommand == "Create Missing Children" then
+    captureRoomId()
+    discover(true)
   elseif strCommand == "ACTION_REFRESH" or strCommand == "Refresh Status" then
     pollAll()
   elseif strCommand == "SB_REGISTER" then
     local childId = tonumber(tParams.CHILD_ID)
     if childId then
-      state.children[childId] = splitIds(tParams.IDS)
+      local ids = splitIds(tParams.IDS)
+      state.children[childId] = ids
+      for _, devId in ipairs(ids) do
+        state.pendingCreates[devId] = nil
+      end
       sendToChild(childId, "SB_DEVICES", { LIST = state.deviceList })
       print("SwitchBot " .. stamp() .. ": child " .. tostring(childId) .. " registered " .. tostring(tParams.IDS))
-      pollIds(state.children[childId])
+      pollIds(ids)
     end
   elseif strCommand == "SB_COMMAND" then
     print("SwitchBot " .. stamp() .. ": SB_COMMAND " .. tostring(tParams.COMMAND) .. " " .. tostring(tParams.PARAMETER)

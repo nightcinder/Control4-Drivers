@@ -1,6 +1,7 @@
 --[[
   SwitchBot Curtain (child) driver for Control4 (OS 3.4.x)
-  Version: 2.1.3
+  Version: 2.1.4
+  Changelog 2.1.4: accept SB_CONFIGURE from parent for auto-created child drivers
   Changelog 2.1.2: descriptions show device name and parameter values in Composer programming
   One instance = one window: a SwitchBot Curtain/Blind (Device), optionally a second unpaired motor
   (Second Device ID). It has no Token or Secret: bind its SwitchBot connection to a "SwitchBot Cloud"
@@ -8,10 +9,11 @@
 
   Messages (C4:SendToDevice, arrive in ExecuteCommand):
     to parent:   SB_REGISTER {CHILD_ID, IDS}, SB_COMMAND {IDS, COMMAND, PARAMETER}, SB_POLL {IDS}
-    from parent: SB_STATUS {DEVICE_ID, POSITION, MOVING, BATTERY}, SB_PARENT_STATUS {TEXT}, SB_HELLO
+    from parent: SB_STATUS {DEVICE_ID, POSITION, MOVING, BATTERY}, SB_PARENT_STATUS {TEXT}, SB_HELLO,
+                 SB_DEVICES {LIST}, SB_CONFIGURE {DEVICE, LIST}
 ]]
 
-local DRIVER_VERSION = "2.1.3"
+local DRIVER_VERSION = "2.1.4"
 local PROXY_BINDING = 5001
 local CLOUD_BINDING = 1
 local COMMAND_DEBOUNCE_MS = 800   -- rapid button presses collapse into the last one
@@ -41,7 +43,8 @@ local function prop(name)
 end
 
 local function setProp(name, value)
-  pcall(function() C4:UpdateProperty(name, tostring(value)) end)
+  local v = (type(value) == "number") and value or tostring(value)
+  pcall(function() C4:UpdateProperty(name, v) end)
 end
 
 local function setStatus(text)
@@ -89,7 +92,7 @@ end
 -- Device and Second Device are drop-downs the parent fills from Discover ("Name [ID]"); a bare ID also works.
 local function extractId(v)
   v = tostring(v or "")
-  local id = v:match("%[([%w]+)%]") or v:gsub("%s+", "")
+  local id = v:match("%[([%w_%-]+)%]") or v:gsub("%s+", "")
   if id == "None" then return "" end
   return id
 end
@@ -200,9 +203,10 @@ local function handleStatus(body)
     end
   end
   if type(body.battery) == "number" then
-    setProp("Battery", body.battery)
+    local bat = clamp(math.floor(body.battery + 0.5), 0, 100)
+    setProp("Battery", bat)
     local threshold = tonumber(prop("Low Battery Threshold")) or 20
-    if body.battery < threshold then
+    if bat < threshold then
       pcall(function() C4:FireEventByID(1) end)
     end
   end
@@ -366,6 +370,18 @@ function ExecuteCommand(strCommand, tParams)
     local list = tostring(tParams.LIST or "None")
     for _, name in ipairs({ "Device", "Second Device" }) do
       pcall(function() C4:UpdatePropertyList(name, list, prop(name) or "None") end)
+    end
+    return
+  elseif strCommand == "SB_CONFIGURE" then
+    -- Sent once by a parent that created this child. Leave existing manual picks untouched.
+    local dev = tostring(tParams.DEVICE or "")
+    if dev ~= "" and dev ~= "None" and extractId(prop("Device")) == "" then
+      local list = tostring(tParams.LIST or ("None," .. dev))
+      pcall(function() C4:UpdatePropertyList("Device", list, dev) end)
+      pcall(function() C4:UpdatePropertyList("Second Device", list, prop("Second Device") or "None") end)
+      setProp("Device", dev)
+      state.dev = {}
+      register()
     end
     return
   elseif strCommand == "SB_HELLO" then
