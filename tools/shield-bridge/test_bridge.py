@@ -654,6 +654,80 @@ class ArtResolverTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ds_res[0]["title"], "The Witcher")
             self.assertIsNone(us_res)
 
+    async def test_spotify_multi_artist_comma_title_falls_back_to_unquoted_search(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            resolver = art.ArtResolver(
+                {"spotify_client_id": "cid", "spotify_client_secret": "secret"},
+                Path(td),
+                AsyncMock(return_value=None),
+            )
+            resolver._spotify_token_cache = ("tok", time.monotonic() + 600)
+            calls: list[str] = []
+
+            async def fake_fetch(url: str, headers: dict[str, str] | None = None) -> bytes | None:
+                calls.append(url)
+                if "api.spotify.com/v1/search" in url:
+                    if "track%3A" in url or "track:" in url:
+                        return json.dumps({"tracks": {"items": []}}).encode()
+                    return json.dumps({"tracks": {"items": [
+                        {
+                            "name": "Self Sabotage",
+                            "artists": [{"name": "51st Avenue"}, {"name": "RinRin"}],
+                            "album": {
+                                "name": "Self Sabotage",
+                                "images": [{"url": "http://192.0.2.20/real.jpg"}],
+                            },
+                        },
+                        {
+                            "name": "Other",
+                            "artists": [{"name": "RinRin"}],
+                            "album": {
+                                "name": "Other",
+                                "images": [{"url": "http://192.0.2.20/wrong.jpg"}],
+                            },
+                        },
+                    ]}}).encode()
+                if url == "http://192.0.2.20/real.jpg":
+                    return b"REAL_SPOTIFY"
+                return b"WRONG_SPOTIFY"
+
+            resolver._fetch = fake_fetch  # type: ignore[method-assign]
+            found = await resolver._spotify("Self Sabotage, 51st Avenue", "RinRin", "")
+            self.assertEqual(found, b"REAL_SPOTIFY")
+            self.assertIn("http://192.0.2.20/real.jpg", calls)
+            self.assertNotIn("http://192.0.2.20/wrong.jpg", calls)
+            self.assertEqual(sum("api.spotify.com/v1/search" in u for u in calls), 2)
+
+    async def test_corrupt_image_bytes_falls_through_without_crashing(self) -> None:
+        import io
+
+        from PIL import Image
+
+        buf = io.BytesIO()
+        Image.new("RGB", (4, 4), (10, 20, 30)).save(buf, "PNG")
+        valid_png = buf.getvalue()
+
+        with tempfile.TemporaryDirectory() as td:
+            resolver = art.ArtResolver({}, Path(td), AsyncMock(return_value=None))
+            resolver._plex = AsyncMock(return_value=b"not-an-image")  # type: ignore[method-assign]
+            resolver._itunes = AsyncMock(return_value=valid_png)  # type: ignore[method-assign]
+
+            art_id = await resolver.resolve("com.spotify.tv.android", "Song", "Artist", "")
+            self.assertIsNotNone(art_id)
+            assert art_id is not None
+            entry = resolver.get(art_id)
+            self.assertIsNotNone(entry)
+            assert entry is not None
+            self.assertEqual(entry[1], "image/png")
+            self.assertTrue(entry[0].startswith(b"\x89PNG\r\n\x1a\n"))
+            resolver._plex.assert_awaited_once()  # type: ignore[attr-defined]
+            resolver._itunes.assert_awaited_once()  # type: ignore[attr-defined]
+
+    async def test_fetch_rejects_non_http_scheme(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            resolver = art.ArtResolver({}, Path(td), AsyncMock(return_value=None))
+            self.assertIsNone(await resolver._fetch("file:///etc/passwd"))
+
 
 class V2WatchdogTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod

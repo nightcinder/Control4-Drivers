@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import json
 import logging
 import re
 import secrets
@@ -21,12 +22,14 @@ import zipfile
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+from urllib.parse import quote, urlparse
 
 log = logging.getLogger("shield-bridge.art")
 
 TILE = 512
 MAX_CACHED = 80
 HTTP_TIMEOUT = 8
+MAX_FETCH_BYTES = 10 * 1024 * 1024  # 10 MiB cap on external art/API responses
 APP_LABELS = {
     "com.plexapp.android": "Plex",
     "com.google.android.youtube.tv": "YouTube",
@@ -64,19 +67,32 @@ def _score_music_match(
     hb = hit_album.strip().lower()
     if not wa or wa not in ha:
         return None
-    if require_title and (not wt or wt not in ht):
-        return None
+    parts = [p.strip() for p in wt.split(", ") if p.strip()] if ", " in wt else []
+    co_artists = parts[1:] if len(parts) >= 2 and all(p in ha for p in parts[1:]) else []
+    if require_title:
+        direct_ok = bool(wt and wt in ht)
+        split_ok = bool(co_artists and parts[0] in ht)
+        if not direct_ok and not split_ok:
+            return None
 
-    score = 0
-    if wt and ht:
-        if ht == wt:
-            score += 100
-        elif wt in ht:
-            score += 60
-        elif ht in wt:
-            score += 40
-        else:
-            score -= 60
+    def _title_score(cand_wt: str) -> int:
+        if not (cand_wt and ht):
+            return 0
+        if ht == cand_wt:
+            return 100
+        if cand_wt in ht:
+            return 60
+        if ht in cand_wt:
+            return 40
+        return -60
+
+    score = _title_score(wt)
+    eff_wt = wt
+    if co_artists:
+        split_score = _title_score(parts[0]) + 25 * len(co_artists)
+        if split_score > score:
+            score = split_score
+            eff_wt = parts[0]
     if ha == wa:
         score += 20
     if wb and hb:
@@ -85,7 +101,7 @@ def _score_music_match(
         elif wb in hb or hb in wb:
             score += 15
 
-    wanted_junk = set(_JUNK_RELEASE_RE.findall(f"{wt} {wb}"))
+    wanted_junk = set(_JUNK_RELEASE_RE.findall(f"{eff_wt} {wb}"))
     hit_junk = set(_JUNK_RELEASE_RE.findall(f"{ht} {hb}"))
     score -= 40 * len(hit_junk - wanted_junk)
     return score
@@ -274,12 +290,13 @@ class ArtResolver:
         for label, attempt in finders:
             try:
                 found = await asyncio.wait_for(attempt(), HTTP_TIMEOUT + 4)
+                squared = await asyncio.to_thread(_square, found) if found else None
             except Exception as exc:  # noqa: BLE001
                 log.debug("art %s: %s", label, exc)
-                found = None
-            if found:
+                squared = None
+            if squared:
                 log.info("art resolved via %s for %s: %r - %r", label, package, title, artist)
-                return self._store(key, _square(found), "image/png")
+                return self._store(key, squared, "image/png")
         icon = await self._app_icon(package)
         if not icon:
             return None
@@ -289,14 +306,28 @@ class ArtResolver:
         return art_id
 
     async def _fetch(self, url: str, headers: dict[str, str] | None = None) -> bytes | None:
+        if urlparse(url).scheme not in ("http", "https"):
+            return None
         import aiohttp
 
         timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url, headers=headers) as resp:
+            async with session.get(url, headers=headers, max_redirects=3) as resp:
                 if resp.status != 200:
                     return None
-                return await resp.read()
+                if resp.content_length and resp.content_length > MAX_FETCH_BYTES:
+                    return None
+                chunks: list[bytes] = []
+                total = 0
+                while True:
+                    chunk = await resp.content.read(MAX_FETCH_BYTES + 1 - total)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_FETCH_BYTES:
+                        return None
+                    chunks.append(chunk)
+                return b"".join(chunks)
 
     async def _plex_thumb(self, thumb: str) -> bytes | None:
         base, token = self._cfg.get("plex_url"), self._cfg.get("plex_token")
@@ -314,8 +345,6 @@ class ArtResolver:
         raw = await self._fetch(f"{str(base).rstrip('/')}/status/sessions", headers)
         if not raw:
             return None
-        import json
-
         items = (json.loads(raw).get("MediaContainer") or {}).get("Metadata") or []
         want = title.strip().lower()
         for item in items:
@@ -395,6 +424,18 @@ class ArtResolver:
                     return found
         return None
 
+    async def _spotify_search(self, token: str, query_str: str) -> list[dict[str, Any]] | None:
+        raw = await self._fetch(
+            f"https://api.spotify.com/v1/search?type=track&limit=5&q={quote(query_str)}",
+            {"Authorization": f"Bearer {token}"},
+        )
+        if raw is None:
+            return None
+        try:
+            return (json.loads(raw).get("tracks") or {}).get("items") or []
+        except ValueError:
+            return []
+
     async def _spotify(self, title: str, artist: str, album: str) -> bytes | None:
         """Album art straight from Spotify's catalogue, which is the app actually playing the track.
 
@@ -406,22 +447,10 @@ class ArtResolver:
         token = await self._spotify_token()
         if not token:
             return None
-        from urllib.parse import quote
-
-        query = quote(f'track:"{title}" artist:"{artist}"')
-        raw = await self._fetch(
-            f"https://api.spotify.com/v1/search?type=track&limit=5&q={query}",
-            {"Authorization": f"Bearer {token}"},
-        )
-        if not raw:
+        items = await self._spotify_search(token, f'track:"{title}" artist:"{artist}"')
+        if items is None:
             # Expired or rejected token: drop it so the next poll mints a fresh one.
             self._spotify_token_cache = None
-            return None
-        import json
-
-        try:
-            items = (json.loads(raw).get("tracks") or {}).get("items") or []
-        except ValueError:
             return None
 
         def extract(hit: dict[str, Any]) -> tuple[str, str, str, list[str]]:
@@ -430,19 +459,21 @@ class ArtResolver:
             urls = [u for u in (str(img.get("url") or "") for img in album_obj.get("images") or []) if u]
             return str(hit.get("name") or ""), hit_artists, str(album_obj.get("name") or ""), urls
 
-        return await self._fetch_ranked(title, artist, album, items, extract, require_title=False)
+        found = await self._fetch_ranked(title, artist, album, items, extract, require_title=False)
+        if found:
+            return found
+        fallback_items = await self._spotify_search(token, f"{title} {artist}")
+        if fallback_items:
+            return await self._fetch_ranked(title, artist, album, fallback_items, extract, require_title=False)
+        return None
 
     async def _itunes(self, title: str, artist: str, album: str) -> bytes | None:
         if not title or not artist:
             return None
-        from urllib.parse import quote
-
         raw = await self._fetch(
             f"https://itunes.apple.com/search?entity=song&limit=5&term={quote(title + ' ' + artist)}")
         if not raw:
             return None
-        import json
-
         try:
             results = json.loads(raw).get("results", [])
         except ValueError:
@@ -463,18 +494,18 @@ class ArtResolver:
         if not re.fullmatch(r"[A-Za-z0-9_.]+", package or ""):
             return None
         if package in (PLEX_PACKAGE, LAUNCHER_PACKAGE):
-            return shield_tile()
+            return await asyncio.to_thread(shield_tile)
         cached = self._dir / f"{package}.{ICON_CACHE_VERSION}.png"
         if cached.exists():
             return cached.read_bytes()
         icon = None
         try:
             apk = await self._pull_apk(package)
-            raw = icon_from_apk(apk) if apk else None
-            icon = _square(raw) if raw else None
+            raw = await asyncio.to_thread(icon_from_apk, apk) if apk else None
+            icon = await asyncio.to_thread(_square, raw) if raw else None
         except Exception as exc:  # noqa: BLE001
             log.debug("app icon pull %s: %s", package, exc)
         if icon is None:
-            icon = shield_tile()
+            icon = await asyncio.to_thread(shield_tile)
         cached.write_bytes(icon)
         return icon
