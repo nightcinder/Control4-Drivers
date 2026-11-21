@@ -5,9 +5,9 @@
       "esp": [
         {
           "host": "<<FILL: ESPHome hostname or IP of the laundry sensor, e.g. ep-laundry.lan>>",
-          "key": "<<FILL: 32-byte ESPHome API encryption key for the laundry sensor, base64>>",
-          "entity": "<<FILL: ESPHome binary_sensor object_id for occupancy, e.g. occupancy>>",
-          "pir": "<<FILL: ESPHome binary_sensor object_id for the PIR sensor, e.g. pir; delete this line if the sensor has no PIR object>>"
+          "key": "<<FILL: 44-char base64 ESPHome Noise key if adopted in ESPHome dashboard, or set to \"\" if unadopted (unencrypted port 6053)>>",
+          "entity": "occupancy",
+          "pir": "<<FILL: \"pir\" for Everything Presence One, \"motion\" for Everything Presence Pro, or delete this line>>"
         }
       ],
       "robot": ["Laundry"]

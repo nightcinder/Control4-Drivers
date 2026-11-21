@@ -7,7 +7,7 @@
 -- EXPECTED TO FAIL AS COMMITTED: case 1 fails while the drafts still contain `<<FILL: ...>>`
 -- markers. `run.py test all` goes red for the whole suite on any failing case, so case 1 only
 -- fails when SENSOR_PREP_STRICT=1 is set (the owner's run on Saturday); otherwise it prints a
--- skip line and passes. Case 2 always runs, on a copy of both drafts filled in memory.
+-- skip line and passes. Cases 2 and 3 always run, on copies filled in memory.
 -- require("c4sim") also installs the JsonDecode stub used below.
 local sim = require("c4sim")
 local t = require("t")
@@ -75,19 +75,20 @@ local function leftover(label, doc)
   return table.concat(parts, "; "), #out
 end
 
-local function fill(node, path, unknown)
+local function fill(node, path, unknown, values)
   if type(node) ~= "table" then return end
+  values = values or FAKE
   for k, v in pairs(node) do
     if type(v) == "string" then
       if v:find(MARK, 1, true) then
-        if type(k) == "string" and FAKE[k] then
-          node[k] = FAKE[k]
+        if type(k) == "string" and values[k] ~= nil then
+          node[k] = values[k]
         else
           unknown[#unknown + 1] = child_path(path, k)
         end
       end
     elseif type(v) == "table" then
-      fill(v, child_path(path, k), unknown)
+      fill(v, child_path(path, k), unknown, values)
     end
   end
 end
@@ -119,6 +120,44 @@ t.test("1 drafts have no placeholders left (SENSOR_PREP_STRICT=1)", function()
   error(HINT .. ": " .. count .. " marker(s) left: " .. table.concat(reports, "; "), 0)
 end)
 
+local function valid_noise_key(key)
+  if key == nil or key == "" then return true end
+  return type(key) == "string" and #key == 44 and key:match("^[A-Za-z0-9%+/]+=*$") ~= nil
+end
+
+local function check_dls_shape(dls)
+  t.ok(type(dls.rooms) == "table", "dls draft has a rooms object")
+  local keys = {}
+  for k in pairs(dls.rooms or {}) do keys[#keys + 1] = k end
+  t.eq(#keys, 1, "dls draft has exactly one room")
+  local room_key = keys[1]
+  t.ok(type(room_key) == "string", "dls room key is a string")
+  if type(room_key) ~= "string" then return nil end
+  t.eq(room_key, "Laundry", "dls room key is Laundry")
+  t.ok(#room_key >= 1 and #room_key <= 32 and room_key:match("^[A-Za-z0-9_%-]+$") ~= nil,
+    "room key " .. room_key .. " matches ^[A-Za-z0-9_-]{1,32}$")
+
+  local room = dls.rooms[room_key]
+  t.ok(type(room) == "table", "dls room object is present")
+  if type(room) ~= "table" then return nil end
+  t.ok(has(room.sources, "esp"), "dls sources contains esp")
+  t.ok(has(room.sources, "robot"), "dls sources keeps robot")
+  t.ok(type(room.esp) == "table" and #room.esp >= 1, "dls esp is a non-empty list")
+  local dev = room.esp[1]
+  t.ok(type(dev) == "table", "esp[1] is an object")
+  if type(dev) ~= "table" then return nil end
+  t.ok(nonempty(dev.host), "esp[1].host is not empty")
+  t.eq(dev.entity, "occupancy", "esp[1].entity is occupancy")
+  t.ok(valid_noise_key(dev.key), "esp[1].key must be empty/nil or a 44-character base64 Noise key ("
+    .. (type(dev.key) == "string" and #dev.key or type(dev.key)) .. ")")
+  if dev.pir ~= nil then
+    t.ok(dev.pir == "pir" or dev.pir == "motion",
+      "esp[1].pir must be pir or motion, got " .. tostring(dev.pir))
+  end
+  t.ok(has(room.robot, "Laundry"), "dls robot maps Laundry")
+  return dev
+end
+
 t.test("2 a filled sample passes the checks and has the expected shape", function()
   local dls = decode(DLS)
   local ea1 = decode(EA1)
@@ -133,34 +172,7 @@ t.test("2 a filled sample passes the checks and has the expected shape", functio
   t.eq(leftover(EA1, ea1), nil, "markers left in the filled EA-1 copy")
 
   -- dls-presence rooms.json: one room, "Laundry", with an esp entry.
-  t.ok(type(dls.rooms) == "table", "dls draft has a rooms object")
-  local keys = {}
-  for k in pairs(dls.rooms or {}) do keys[#keys + 1] = k end
-  t.eq(#keys, 1, "dls draft has exactly one room")
-  local room_key = keys[1]
-  t.ok(type(room_key) == "string", "dls room key is a string")
-  if type(room_key) ~= "string" then return end
-  t.eq(room_key, "Laundry", "dls room key is Laundry")
-  t.ok(#room_key >= 1 and #room_key <= 32 and room_key:match("^[A-Za-z0-9_%-]+$") ~= nil,
-    "room key " .. room_key .. " matches ^[A-Za-z0-9_-]{1,32}$")
-
-  local room = dls.rooms[room_key]
-  t.ok(type(room) == "table", "dls room object is present")
-  if type(room) ~= "table" then return end
-  t.ok(has(room.sources, "esp"), "dls sources contains esp")
-  t.ok(has(room.sources, "robot"), "dls sources keeps robot")
-  t.ok(type(room.esp) == "table" and #room.esp >= 1, "dls esp is a non-empty list")
-  local dev = room.esp[1]
-  t.ok(type(dev) == "table", "esp[1] is an object")
-  if type(dev) ~= "table" then return end
-  t.ok(nonempty(dev.host), "esp[1].host is not empty")
-  t.ok(nonempty(dev.key), "esp[1].key is not empty")
-  t.ok(nonempty(dev.entity), "esp[1].entity is not empty")
-  local key_ok = type(dev.key) == "string" and #dev.key == 44
-    and dev.key:match("^[A-Za-z0-9%+/]+=*$") ~= nil
-  t.ok(key_ok, "esp[1].key looks like a 44-character base64 API key ("
-    .. (type(dev.key) == "string" and #dev.key or "not a string") .. ")")
-  t.ok(has(room.robot, "Laundry"), "dls robot maps Laundry")
+  check_dls_shape(dls)
 
   -- EA-1 Rooms JSON: the room object only, no sensor details.
   t.eq(ea1.name, "Laundry", "EA-1 room name")
@@ -175,6 +187,24 @@ t.test("2 a filled sample passes the checks and has the expected shape", functio
   t.ok(ea1.esp == nil, "EA-1 room has no esp list")
   t.ok(pres.host == nil and pres.entity == nil and pres.pir == nil,
     "EA-1 presence has no host/entity/pir")
+end)
+
+t.test("3 unadopted EP Pro shape (empty key, motion pir) passes", function()
+  local dls = decode(DLS)
+  local unknown = {}
+  fill(dls, "", unknown, { host = "ep-laundry.lan", key = "", pir = "motion" })
+  t.eq(#unknown, 0, "placeholder in a field the test cannot fake: "
+    .. table.concat(unknown, ", "))
+
+  local rep, count = leftover(DLS, dls)
+  t.eq(rep, nil, "markers left in the filled EP Pro dls copy")
+  t.eq(count, 0, "zero markers left in the filled EP Pro dls copy")
+
+  local dev = check_dls_shape(dls)
+  if not dev then return end
+  t.eq(dev.entity, "occupancy", "EP Pro esp[1].entity is occupancy")
+  t.eq(dev.key, "", "unadopted EP Pro esp[1].key is empty")
+  t.eq(dev.pir, "motion", "EP Pro esp[1].pir is motion")
 end)
 
 t.finish("sensor-prep")
