@@ -1042,6 +1042,64 @@ class V2WatchdogTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(shield.awake)
             self.assertTrue(shield.v2._probe_now.is_set())
 
+    async def test_poll_once_clears_stale_state_when_adb_down(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            shield = _make_shield(Path(td))
+            shield.adb.up = False
+            shield.awake = True
+            shield.app = "com.plexapp.android"
+            shield.now_playing = {
+                "state": "playing",
+                "title": "Movie",
+                "artist": "2024",
+                "album": "",
+                "app": "com.plexapp.android",
+            }
+            shield._plex_thumb = "/library/metadata/1/thumb/1"
+            shield._art_key = ("com.plexapp.android", "Movie", "2024", "")
+            shield.art_path = "/art/old123"
+
+            await shield.poll_once()
+
+            self.assertIsNone(shield.awake)
+            self.assertEqual(shield.app, "")
+            self.assertEqual(shield.now_playing, {})
+            self.assertEqual(shield._plex_thumb, "")
+            self.assertIsNone(shield._art_key)
+            self.assertEqual(shield.art_path, "")
+
+    async def test_poll_once_clears_stale_state_on_link_down(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            shield = _make_shield(Path(td))
+            shield.adb.up = True
+            shield.awake = True
+            shield.app = "com.netflix.ninja"
+            shield.now_playing = {
+                "state": "playing",
+                "title": "Show",
+                "artist": None,
+                "album": None,
+                "app": "com.netflix.ninja",
+            }
+            shield._plex_thumb = "/library/metadata/2/thumb/1"
+            shield._art_key = ("com.netflix.ninja", "Show", "", "")
+            shield.art_path = "/art/old456"
+
+            async def failing_adb(cmd: str) -> str:
+                if "mWakefulness" in cmd:
+                    return "  mWakefulness=Awake\n"
+                raise bridge.LinkDown("adb lost")
+
+            shield.adb_shell = failing_adb  # type: ignore[method-assign]
+            await shield.poll_once()
+
+            self.assertIsNone(shield.awake)
+            self.assertEqual(shield.app, "")
+            self.assertEqual(shield.now_playing, {})
+            self.assertEqual(shield._plex_thumb, "")
+            self.assertIsNone(shield._art_key)
+            self.assertEqual(shield.art_path, "")
+
 
 class LoadConfigTests(unittest.TestCase):
     def _write_config(self, root: Path, art_cfg: dict[str, object]) -> Path:

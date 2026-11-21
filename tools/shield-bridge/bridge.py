@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from aiohttp import web
 
-VERSION = "0.4.7"
+VERSION = "0.4.8"
 CLIENT_NAME = "shield-bridge"
 HEALTH_INTERVAL = 2.0
 BACKOFF_MIN = 1.0
@@ -755,15 +755,24 @@ class Shield:
                 log.debug("%s poll: %s", self.cfg.name, exc)
             await asyncio.sleep(self._bridge.poll_seconds)
 
+    def _clear_state(self) -> None:
+        self.awake = None
+        self.app = ""
+        self.now_playing = {}
+        self._plex_thumb = ""
+        self._update_art()
+
     async def poll_once(self) -> None:
         if not self.adb.up:
+            self._clear_state()
             return
         try:
             wake_text = await self.adb_shell("dumpsys power | grep mWakefulness=")
             focus_text = await self.adb_shell("dumpsys window | grep mCurrentFocus")
             media_text = await self.adb_shell("dumpsys media_session")
         except LinkDown:
-            return  # keep the last good state
+            self._clear_state()
+            return
         prev_awake = self.awake
         awake = parse_wakefulness(wake_text)
         if awake is not None:

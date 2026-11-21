@@ -535,4 +535,171 @@ t.test("Driver Version matches driver.xml", function()
   t.eq(sim._store["Driver Version"], expected_version(), "driver version property")
 end)
 
+local origUrlGet = C4.urlGet
+local origGetDevicesByC4iName = C4.GetDevicesByC4iName
+
+t.test("UI_POWER off cooldown suppresses launchOnOpen for 15s and OFF sets asleep", function()
+  C4.urlGet = origUrlGet
+  start(nil)
+  remote_room(true)
+  feed_status('{"awake":true}')
+  sim.exec("UI_POWER", {})
+  local off = sim.last_sent("ROOM_OFF")
+  t.ok(off ~= nil and off.id == 77, "ROOM_OFF sent")
+  sim.set_var(77, 1000, "0")
+  sim.exec("UI_HELLO_4", {})
+  sim.call("ReceivedFromProxy", REMOTE, "SELECT", {})
+  t.ok(sim.last_sent("SELECT_VIDEO_DEVICE") == nil, "launchOnOpen suppressed during 15s power-off cooldown")
+  t.ok(not any_url_has("/v1/wake"), "no wake sent during power-off cooldown")
+
+  sim.advance(16000)
+  sim.call("ReceivedFromProxy", REMOTE, "SELECT", {})
+  t.ok(sim.last_sent("SELECT_VIDEO_DEVICE") ~= nil, "launchOnOpen works after 15s cooldown")
+
+  -- Proxy OFF clears lastAwake so UI_POWER wakes instead of sending ROOM_OFF.
+  feed_status('{"awake":true}')
+  sim.set_var(77, 1000, "900")
+  sim.sent = {}
+  sim.http = {}
+  sim.call("ReceivedFromProxy", 5001, "OFF", {})
+  t.ok(any_url_has("/v1/sleep"), "proxy OFF sends /v1/sleep")
+  sim.exec("UI_POWER", {})
+  t.ok(sim.last_sent("ROOM_OFF") == nil, "no ROOM_OFF after proxy OFF")
+  t.ok(any_url_has("/v1/wake"), "UI_POWER wakes after proxy OFF")
+  C4.urlGet = origUrlGet
+end)
+
+t.test("roomIsOnMe returns false when myProxyId is nil/unmatched and matches device or proxy id", function()
+  C4.urlGet = origUrlGet
+  start(nil)
+  C4.RoomGetId = function() return 77 end
+  C4.GetBoundConsumerDevices = function() return {} end
+  sim.set_var(77, 1000, "0")
+  feed_status('{"awake":true}')
+
+  -- Room off (var=0) and unknown proxy id must NOT be treated as on Shield.
+  sim.exec("UI_KEY_DPAD_UP", {})
+  t.ok(not any_url_has("name=DPAD_UP"), "key dropped when myProxyId nil and room var is 0")
+  sim.exec("UI_POWER", {})
+  t.ok(sim.last_sent("ROOM_OFF") == nil, "UI_POWER does not send ROOM_OFF when myProxyId nil and room off")
+
+  -- Unmatched device id in room var with nil myProxyId also returns false.
+  sim.http = {}
+  sim.sent = {}
+  sim.set_var(77, 1000, "999")
+  sim.exec("UI_KEY_DPAD_UP", {})
+  t.ok(not any_url_has("name=DPAD_UP"), "key dropped when room var is another device")
+
+  -- Matching C4:GetDeviceID() returns true even when myProxyId is nil.
+  sim.http = {}
+  sim.sent = {}
+  sim.set_var(77, 1000, tostring(C4:GetDeviceID()))
+  sim.exec("UI_KEY_DPAD_UP", {})
+  t.ok(any_url_has("name=DPAD_UP"), "key sent when room var matches C4:GetDeviceID()")
+  sim.exec("UI_POWER", {})
+  t.ok(sim.last_sent("ROOM_OFF") ~= nil, "UI_POWER sends ROOM_OFF when room var matches C4:GetDeviceID()")
+
+  -- Matching proxy id via npRoomSelectsMe triggers Now Playing selection.
+  C4.urlGet = origUrlGet
+  start(nil)
+  remote_room(true)
+  C4.GetDevicesByC4iName = function() return { [77] = "Living Room" } end
+  sim.call("OnDriverLateInit")
+  C4.GetDevicesByC4iName = origGetDevicesByC4iName
+  local gotQueue = false
+  for _, s in ipairs(sim.sent) do
+    if s.kind == "proxy" and s.cmd == "SEND_EVENT" and s.params and s.params.NAME == "QueueChanged" then
+      gotQueue = true
+    end
+  end
+  t.ok(gotQueue, "npRoomSelectsMe matches proxy id")
+end)
+
+t.test("UI_POWER wakes when lastAwake is nil or st.adb is false", function()
+  -- Case 1: lastAwake == nil before first status poll.
+  C4.urlGet = origUrlGet
+  start(nil)
+  remote_room(true)
+  sim.exec("UI_POWER", {})
+  t.ok(sim.last_sent("ROOM_OFF") == nil, "no ROOM_OFF when lastAwake is nil")
+  t.ok(sim.last_sent("SELECT_VIDEO_DEVICE") ~= nil, "SELECT_VIDEO_DEVICE sent when lastAwake is nil")
+  t.ok(any_url_has("/v1/wake"), "/v1/wake sent when lastAwake is nil")
+
+  -- Case 2: adb_connected=false invalidates stale awake/media state and UI_POWER wakes.
+  C4.urlGet = origUrlGet
+  start(nil)
+  remote_room(true)
+  feed_status('{"adb_connected":true,"awake":true,"app":"com.plexapp.android","art":"/art/abc",'
+    .. '"now_playing":{"state":"playing","title":"Movie","artist":"Director","album":""}}')
+  t.eq(sim._store["Current App"], "com.plexapp.android", "app populated when adb up")
+  t.eq(sim._store["Now Playing"], "Movie - Director", "now playing populated when adb up")
+
+  sim.http = {}
+  sim.sent = {}
+  feed_status('{"adb_connected":false,"awake":true,"app":"com.plexapp.android","art":"/art/abc",'
+    .. '"now_playing":{"state":"playing","title":"Stale","artist":"Old","album":""}}')
+  t.eq(sim._store["Current App"], "", "Current App cleared when adb down")
+  t.eq(sim._store["Now Playing"], "", "Now Playing cleared when adb down")
+  local state = sim.dvars["UI_STATE"] or ""
+  t.ok(string.find(state, '"awake":null', 1, true) ~= nil, "awake cleared to null when adb down: " .. state)
+
+  sim.exec("UI_POWER", {})
+  t.ok(sim.last_sent("ROOM_OFF") == nil, "no ROOM_OFF when adb down")
+  t.ok(sim.last_sent("SELECT_VIDEO_DEVICE") ~= nil, "SELECT_VIDEO_DEVICE sent when adb down")
+  t.ok(any_url_has("/v1/wake"), "/v1/wake sent when adb down")
+  C4.urlGet = origUrlGet
+end)
+
+t.test("watchRoomAudio registers vol listener when mute variable is nil", function()
+  C4.urlGet = origUrlGet
+  start(nil)
+  remote_room(true)
+  sim.set_device_vars(77, { [1011] = { name = "CURRENT_VOLUME", value = "42" } })
+  sim.call("OnDriverLateInit")
+  local foundVol = false
+  for _, l in ipairs(sim.listeners) do
+    if l.device == 77 and l.var == 1011 then foundVol = true end
+  end
+  t.ok(foundVol, "RegisterVariableListener called for CURRENT_VOLUME without mute")
+  sim.call("OnWatchedVariableChanged", 77, 1011, "58")
+  t.ok(string.find(sim.dvars["UI_STATE"] or "", '"vol":58', 1, true) ~= nil, "vol updated in UI_STATE")
+  t.eq(#sim.errors, 0, "no driver error")
+end)
+
+t.test("fetchInlineArt retries after transient HTTP 502 once 30s cooldown expires", function()
+  local artCalls = 0
+  C4.urlGet = origUrlGet
+  start(nil)
+  C4.urlGet = function(_, url, headers, async, cb)
+    if type(cb) ~= "function" then return end
+    if string.find(url, "/v1/status", 1, true) then
+      cb(1, STATUS_EPISODE, 200, {}, nil)
+    elseif string.find(url, "/art/abc", 1, true) then
+      artCalls = artCalls + 1
+      if artCalls == 1 then
+        cb(2, "", 502, {}, "Bad Gateway")
+      else
+        cb(3, "JPEGBYTES", 200, { ["Content-Type"] = "image/jpeg" }, nil)
+      end
+    end
+  end
+  sim.call("OnDriverLateInit")
+  t.eq(artCalls, 1, "initial art fetch attempted")
+  t.ok(string.find(sim.dvars["UI_ART"] or "", '"data":""', 1, true) ~= nil, "UI_ART empty after 502")
+
+  -- Within 30s cooldown: npTimer and UI_REFRESH must not retry.
+  sim.advance(15000)
+  sim.exec("UI_REFRESH", {})
+  t.eq(artCalls, 1, "no art retry within 30s cooldown")
+
+  -- Past 30s cooldown: npTimer / UI_REFRESH retries and caches JPEG data URI.
+  sim.advance(16000)
+  t.eq(artCalls, 2, "art retried once 30s cooldown expired")
+  local art = sim.dvars["UI_ART"] or ""
+  t.ok(string.find(art, '"key":"/art/abc"', 1, true) ~= nil, "UI_ART key populated on retry")
+  t.ok(string.find(art, '"data":"data:image/jpeg;base64,', 1, true) ~= nil, "UI_ART data populated on retry")
+  t.eq(#sim.errors, 0, "no driver error")
+  C4.urlGet = origUrlGet
+end)
+
 t.finish("shield-tv-bridge")
