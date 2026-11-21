@@ -29,8 +29,9 @@ local function start()
   local ok = sim.load_driver(DRV, { xml = XML, properties = props, start_ms = 12 * 3600 * SEC,
     before = function(s) s.set_var(101, 1001, "0") end })
   t.ok(ok, "load: " .. tostring(sim.errors[1]))
-  t.ok(type(_G.DLS_vacation) == "table", "test hook exported")
-  return _G.DLS_vacation
+  local hook = sim.env.DLS_vacation or _G.DLS_vacation
+  t.ok(type(hook) == "table", "test hook exported")
+  return hook
 end
 
 local function setprop(name, value)

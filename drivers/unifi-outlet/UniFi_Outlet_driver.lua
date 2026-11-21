@@ -4,7 +4,7 @@
 -- it back as UO_STATUS. Relay notifications: CLOSED = ON, OPENED = OFF.
 -- Proxy choice: "relay" (class RELAY), the same native on/off proxy family the repo uses for relay-style devices.
 
-local DRIVER_VERSION = "1.0.3"
+local DRIVER_VERSION = "1.0.4"
 local CONTROLLER_BINDING = 1
 local PROXY_BINDING = 5001
 
@@ -87,6 +87,9 @@ end
 
 function ExecuteCommand(strCommand, tParams)
   tParams = tParams or {}
+  if strCommand == "LUA_ACTION" and tParams.ACTION then
+    strCommand = tostring(tParams.ACTION)
+  end
   if strCommand == "UO_STATUS" then
     if tostring(tParams.KEY or "") ~= myKey() then return end
     if tParams.STATE == "ON" then g_state = true

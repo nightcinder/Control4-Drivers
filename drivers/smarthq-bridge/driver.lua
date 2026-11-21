@@ -1,6 +1,6 @@
 --[[
   SmartHQ Bridge (parent) for Control4 DriverWorks, OS 3.4.x
-  Version: 0.3.7  (UNTESTED in Composer/Director; see docs/smarthq.md)
+  Version: 0.3.8  (UNTESTED in Composer/Director; see docs/smarthq.md)
 
   0.3.6: creates missing child devices at runtime (C4:AddDevice) after each good /inventory
     poll, binds them to this driver, and sends them SH_CONFIGURE. Property "Auto Create Children"
@@ -23,7 +23,7 @@
                 SH_CONFIGURE {APPLIANCE_ID, APPLIANCE_TYPE}  (sent once to a child this driver created)
 ]]
 
-local DRIVER_VERSION = "0.3.7"
+local DRIVER_VERSION = "0.3.8"
 local DEFAULT_HOST = ""
 local DEFAULT_PORT = "8789"
 local DEFAULT_POLL_SECONDS = 60
@@ -105,7 +105,7 @@ end
 
 local function fireEvent(id)
   logMsg("event " .. tostring(id))
-  pcall(function() C4:FireEvent(id) end)
+  pcall(function() C4:FireEventByID(id) end)
 end
 
 local function pollSeconds()

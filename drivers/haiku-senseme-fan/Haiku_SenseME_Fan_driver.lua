@@ -88,7 +88,7 @@ PF_IP_ADDRESS                = 120 -- string
 
 -- Root2 / Commit / Query / QueryResult field numbers
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION    = "404"
+DRIVER_VERSION    = "405"
 
 RF_ROOT2          = 2
 R2F_COMMIT        = 2
@@ -742,6 +742,9 @@ end
 -- ===================== Driver commands / Composer actions ============================
 function ExecuteCommand(strCommand, tParams)
 	tParams = tParams or {}
+	if (strCommand == "LUA_ACTION" and tParams.ACTION ~= nil and tParams.ACTION ~= "") then
+		strCommand = tostring(tParams.ACTION)
+	end
 	LOG("ExecuteCommand: " .. tostring(strCommand))
 
 	if (strCommand == "HK_REGISTER") then

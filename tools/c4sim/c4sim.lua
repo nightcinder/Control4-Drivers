@@ -106,7 +106,10 @@ function sim.reset(deviceId)
   sim._http_queue = {}            -- responses queued by sim.queue_http
   sim._http_pending = {}          -- requests waiting for the next advance
   sim.http_timeouts = {}
-  sim.net = { sent = {}, connects = {}, disconnects = {}, connections = {}, servers = {} }
+  sim.net = { sent = {}, connects = {}, disconnects = {}, connections = {}, servers = {},
+    server_sent = {}, server_closed = {} }
+  sim.tcp_clients = {}
+  sim.display_names = {}
   sim.ui = {}
   sim.prop_lists = {}
   -- Drop common-library stubs so the next driver gets fresh ones and their warnings.
@@ -177,6 +180,7 @@ end
 
 local function build_env()
   local env = setmetatable({}, { __index = _G })
+  env._G = env
   env.C4 = C4
   env.Properties = sim.Properties
   -- Control4 exposes PersistData as a plain global table that the driver reads and writes directly.
@@ -468,6 +472,14 @@ function C4:GetBoundConsumerDevices()
   return {}
 end
 
+function sim.set_display_name(deviceId, name)
+  sim.display_names[deviceId] = name
+end
+
+function C4:GetDeviceDisplayName(deviceId)
+  return sim.display_names[deviceId]
+end
+
 function C4:SetVariable(name, value)
   sim.dvars[name] = value
 end
@@ -711,19 +723,29 @@ function Base64Decode(s)
   return table.concat(out)
 end
 
--- ---- HTTP: url* calls are recorded in sim.http and answered on advance() ----
--- Callback shape: callback(context, data, code, headers, err). Argument order for urlDo
--- and urlPost follows the usual DriverWorks layout; check the SDK before relying on it.
-local function http_request(method, url, headers, body, callback, context)
-  local req = { method = method, url = tostring(url), headers = headers, body = body, t = sim.now_ms }
+-- ---- HTTP: url* and C4:url() calls are recorded in sim.http and answered on advance() ----
+-- Callback shape: callback(context, data, code, headers, err) for url*,
+-- or transfer:OnDone(transfer, responses, errCode, errMsg) for C4:url().
+local function http_request(method, url, headers, body, callback, context, options)
+  local req = { method = method, url = tostring(url), headers = headers, body = body, options = options, t = sim.now_ms }
   sim.http[#sim.http + 1] = req
-  sim._http_pending[#sim._http_pending + 1] = { req = req, callback = callback, context = context, ticket = #sim.http }
+  sim._http_pending[#sim._http_pending + 1] = {
+    req = req, callback = callback, context = context, ticket = #sim.http,
+  }
   return #sim.http
 end
 
--- queue_http(pattern, body, code, headers): the next request whose URL matches the Lua pattern gets this reply.
-function sim.queue_http(pattern, body, code, headers)
-  sim._http_queue[#sim._http_queue + 1] = { pattern = pattern, body = body, code = code or 200, headers = headers }
+-- queue_http(pattern, body, code, headers, err, errCode): the next request whose URL matches the Lua pattern gets this reply.
+-- Pass err = "__HANG__" to simulate a request that never receives a response (for timeout/watchdog tests).
+function sim.queue_http(pattern, body, code, headers, err, errCode)
+  sim._http_queue[#sim._http_queue + 1] = {
+    pattern = pattern,
+    body = body,
+    code = (code ~= nil) and code or 200,
+    headers = headers,
+    err = err,
+    errCode = errCode,
+  }
 end
 
 function sim._pump_http()
@@ -736,29 +758,55 @@ function sim._pump_http()
         break
       end
     end
-    local data, code, headers, err = nil, 0, nil, nil
-    if resp then
-      data, code, headers = resp.body, resp.code, resp.headers
-    else
-      add_warn("no queued http response for " .. job.req.method .. " " .. job.req.url)
-      err = "no sim response queued"
-    end
-    if job.callback then
-      xcall("http callback", job.callback, job.context, data, code, headers or {}, err)
-    else
-      -- DriverWorks delivers a url* call made without a callback to the driver's global ReceivedAsync.
-      local f = sim.env and sim.env.ReceivedAsync
-      if type(f) == "function" then xcall("ReceivedAsync", f, job.ticket, data, code, headers or {}, err) end
+    if not (resp and resp.err == "__HANG__") then
+      local data, code, headers, err, errCode = nil, 0, nil, nil, 0
+      if resp then
+        data, code, headers, err, errCode = resp.body, resp.code, resp.headers, resp.err, resp.errCode
+      else
+        add_warn("no queued http response for " .. job.req.method .. " " .. job.req.url)
+        err = "no sim response queued"
+        errCode = 28
+      end
+      if job.is_url_obj then
+        if type(job.on_done) == "function" then
+          local transferErr = (err ~= nil) or (errCode ~= nil and errCode ~= 0)
+          if not transferErr then
+            xcall("url OnDone", job.on_done, job.transfer,
+              { { code = code, headers = headers or {}, body = data or "" } }, 0, nil)
+          else
+            xcall("url OnDone", job.on_done, job.transfer, {}, (errCode and errCode ~= 0) and errCode or 28, err)
+          end
+        end
+      elseif job.callback then
+        xcall("http callback", job.callback, job.context, data, code, headers or {}, err)
+      else
+        -- DriverWorks delivers a url* call made without a callback to the driver's global ReceivedAsync.
+        local f = sim.env and sim.env.ReceivedAsync
+        if type(f) == "function" then xcall("ReceivedAsync", f, job.ticket, data, code, headers or {}, err) end
+      end
     end
   end
 end
 
-function urlGet(url, headers, callback, context)
-  return http_request("GET", url, headers, nil, callback, context)
+function urlGet(url, headers, a, b, c)
+  if type(a) == "boolean" then
+    return http_request("GET", url, headers, nil, b, 0, c)
+  end
+  return http_request("GET", url, headers, nil, a, b, c)
 end
 
-function urlPost(url, body, headers, callback, context)
-  return http_request("POST", url, headers, body, callback, context)
+function urlPost(url, body, headers, a, b, c)
+  if type(a) == "boolean" then
+    return http_request("POST", url, headers, body, b, 0, c)
+  end
+  return http_request("POST", url, headers, body, a, b, c)
+end
+
+function urlPut(url, body, headers, a, b, c)
+  if type(a) == "boolean" then
+    return http_request("PUT", url, headers, body, b, 0, c)
+  end
+  return http_request("PUT", url, headers, body, a, b, c)
 end
 
 function urlDo(method, url, headers, callback, context, body)
@@ -767,6 +815,54 @@ end
 
 function urlSetTimeout(ticket, seconds)
   sim.http_timeouts[#sim.http_timeouts + 1] = { ticket = ticket, seconds = seconds }
+end
+
+local UrlTransfer = {}
+UrlTransfer.__index = UrlTransfer
+function UrlTransfer:SetOptions(opts)
+  self._options = opts
+  return self
+end
+function UrlTransfer:OnDone(fn)
+  self._on_done = fn
+  return self
+end
+local function url_obj_send(self, method, url, body, headers)
+  local req = {
+    method = string.upper(tostring(method)),
+    url = tostring(url),
+    headers = headers,
+    body = body,
+    options = self._options,
+    t = sim.now_ms,
+  }
+  sim.http[#sim.http + 1] = req
+  sim._http_pending[#sim._http_pending + 1] = {
+    req = req,
+    is_url_obj = true,
+    transfer = self,
+    on_done = self._on_done,
+    ticket = #sim.http,
+  }
+  return self
+end
+function UrlTransfer:Get(url, headers)
+  return url_obj_send(self, "GET", url, nil, headers)
+end
+function UrlTransfer:Post(url, data, headers)
+  return url_obj_send(self, "POST", url, data, headers)
+end
+function UrlTransfer:Put(url, data, headers)
+  return url_obj_send(self, "PUT", url, data, headers)
+end
+function UrlTransfer:Delete(url, headers)
+  return url_obj_send(self, "DELETE", url, nil, headers)
+end
+function UrlTransfer:Custom(url, method, data, headers)
+  return url_obj_send(self, method, url, data, headers)
+end
+function C4:url()
+  return setmetatable({}, UrlTransfer)
 end
 
 -- ---- Network: recorded in sim.net; sim.net_receive feeds ReceivedFromNetwork ----
@@ -792,7 +888,67 @@ function CreateServer(port, protocol)
   return true
 end
 function DestroyServer(port)
-  sim.net.servers[port] = nil
+  if port == nil then
+    sim.net.servers = {}
+  else
+    sim.net.servers[port] = nil
+  end
+end
+
+function C4:ServerSend(handle, data)
+  sim.net.server_sent[#sim.net.server_sent + 1] = { handle = handle, data = tostring(data), t = sim.now_ms }
+end
+
+function C4:ServerCloseClient(handle)
+  sim.net.server_closed[#sim.net.server_closed + 1] = { handle = handle, t = sim.now_ms }
+end
+
+local TcpClient = {}
+TcpClient.__index = TcpClient
+function TcpClient:OnResolve(fn) self._on_resolve = fn; return self end
+function TcpClient:OnConnect(fn) self._on_connect = fn; return self end
+function TcpClient:OnRead(fn) self._on_read = fn; return self end
+function TcpClient:OnWrite(fn) self._on_write = fn; return self end
+function TcpClient:OnDisconnect(fn) self._on_disconnect = fn; return self end
+function TcpClient:Connect(host, port)
+  self.host = host
+  self.port = port
+  self.connected = true
+  return self
+end
+function TcpClient:ReadUpTo(n)
+  self.last_read_limit = n
+end
+function TcpClient:Write(data)
+  self.writes[#self.writes + 1] = { data = tostring(data), t = sim.now_ms }
+  if self.fail_write then
+    return false, self.fail_write
+  end
+  return true
+end
+function TcpClient:Close()
+  self.closed = true
+  self.connected = false
+end
+function TcpClient:sim_resolve()
+  if type(self._on_resolve) == "function" then xcall("TCP OnResolve", self._on_resolve, self) end
+end
+function TcpClient:sim_connect()
+  if type(self._on_connect) == "function" then xcall("TCP OnConnect", self._on_connect, self) end
+end
+function TcpClient:sim_read(data)
+  if type(self._on_read) == "function" then xcall("TCP OnRead", self._on_read, self, data) end
+end
+function TcpClient:sim_disconnect(errCode, errMsg)
+  self.connected = false
+  if type(self._on_disconnect) == "function" then
+    xcall("TCP OnDisconnect", self._on_disconnect, self, errCode or 0, errMsg or "disconnected")
+  end
+end
+function C4:CreateTCPClient()
+  local c = setmetatable({ writes = {}, closed = false, connected = false }, TcpClient)
+  sim.tcp_clients[#sim.tcp_clients + 1] = c
+  return c
 end
 
 -- sim.net_receive(bindingId, data): calls ReceivedFromNetwork(binding, port, data) with the last port used by NetConnect.
@@ -859,7 +1015,7 @@ end
 
 -- Drivers call most of these as C4:Name(...) and some as globals. Both forms reach the same stub.
 do
-  local names = { "JsonEncode", "JsonDecode", "Base64Encode", "Base64Decode", "urlGet", "urlPost", "urlDo",
+  local names = { "JsonEncode", "JsonDecode", "Base64Encode", "Base64Decode", "urlGet", "urlPost", "urlPut", "urlDo",
     "urlSetTimeout", "CreateNetworkConnection", "NetConnect", "SendToNetwork", "NetDisconnect", "CreateServer",
     "DestroyServer", "SendDataToUI", "UpdatePropertyList", "GetControllerNetworkAddress" }
   for _, n in ipairs(names) do

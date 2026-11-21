@@ -1,6 +1,6 @@
 --[[
   Whisker Litter-Robot 4 cat visit counter via LAN HTTP bridge (Control4 DriverWorks, OS 3.4.x)
-  Version: 1.0.5  (UNTESTED on real Composer/Director)
+  Version: 1.0.6  (UNTESTED on real Composer/Director)
   1.0.4: descriptions show device name and parameter values in Composer programming.
 
   Polls GET /status on litter-bridge every Poll Interval seconds (5 s minimum).
@@ -10,7 +10,7 @@
   retried without firing the event again.
 ]]
 
-local DRIVER_VERSION = "1.0.5"
+local DRIVER_VERSION = "1.0.6"
 local DEFAULT_HOST = ""
 local DEFAULT_PORT = "8793"
 local DEFAULT_POLL = 15
@@ -69,6 +69,8 @@ local function setVar(name, value)
   pcall(function() C4:SetVariable(name, tostring(value or "")) end)
 end
 
+local logmsg
+
 local function fire(id)
   local name = EVENT_NAMES[id] or tostring(id)
   local ok, err = pcall(function() C4:FireEvent(name) end)
@@ -77,7 +79,7 @@ local function fire(id)
   end
 end
 
-local function logmsg(msg)
+function logmsg(msg)
   local mode = prop("Log Mode")
   local line = "[litter-robot " .. DRIVER_VERSION .. "] " .. msg
   if mode == "Print" or mode == "Print and Log" then

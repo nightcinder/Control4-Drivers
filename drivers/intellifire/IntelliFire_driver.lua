@@ -242,7 +242,7 @@ clears g_pendingReq and requeues the interrupted request when this happens.
 
 -- ===================== Version ============================
 -- Keep in sync with <version> in driver.xml; shown in the read-only "Driver Version" property
-DRIVER_VERSION = "213"
+DRIVER_VERSION = "215"
 PAGE_FILE  = 'fireplace3.html'   -- renamed every page release (Navigator caches controller:// pages)
 PAGE_BUILD = '3'                 -- must match the page's PAGE_BUILD and web_view_url in driver.xml
 
@@ -1073,8 +1073,8 @@ function NotifyRelayState(bInitial)
 	local bOn = (g_state.power == 1)
 	-- Events fire on transitions only, never on the first state after load.
 	if (g_prevPower ~= nil and not bInitial) then
-		if (bOn and g_prevPower ~= 1) then C4:FireEvent(EVT_FIRE_ON) end
-		if ((not bOn) and g_prevPower ~= 0) then C4:FireEvent(EVT_FIRE_OFF) end
+		if (bOn and g_prevPower ~= 1) then C4:FireEventByID(EVT_FIRE_ON) end
+		if ((not bOn) and g_prevPower ~= 0) then C4:FireEventByID(EVT_FIRE_OFF) end
 	end
 	g_prevPower = bOn and 1 or 0
 	-- v204: keep the thermostat card in step with power. Sent only when power changes.

@@ -1,6 +1,6 @@
 --[[
   SmartHQ Appliance (child) for Control4 DriverWorks, OS 3.4.x
-  Version: 0.3.3  (UNTESTED in Composer/Director; see docs/smarthq.md)
+  Version: 0.3.4  (UNTESTED in Composer/Director; see docs/smarthq.md)
 
   One instance = one appliance: oven, beverage center, dishwasher, refrigerator, washer or dryer.
   It has no network code. Bind its "SmartHQ Bridge" connection to the SmartHQ Bridge (parent) driver.
@@ -17,7 +17,7 @@
   (0 turns it off). Updates come from the parent poll, so the timing is only as fine as Poll Interval.
 ]]
 
-local DRIVER_VERSION = "0.3.3"
+local DRIVER_VERSION = "0.3.4"
 local BRIDGE_BINDING = 1
 
 local EVENT_OVEN_PREHEATED = 1
@@ -66,7 +66,7 @@ local function setStatus(text)
 end
 
 local function fireEvent(id)
-  pcall(function() C4:FireEvent(id) end)
+  pcall(function() C4:FireEventByID(id) end)
 end
 
 local function formatTemp(s)
