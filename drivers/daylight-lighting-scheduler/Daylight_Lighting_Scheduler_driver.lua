@@ -1,6 +1,8 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.17
+  DRIVER_VERSION: 1.16.18
+
+  1.16.18 (2026-11-23): debug only, no behavior change. Adds dbg lines for the wake ramp: "wake window start" (with whether a manual hold blocks it), "wake ramp step" (level), and "wake blocked" (enabled wake skipped by days or presence), so a missed sunrise wake shows in Lua Output.
 
   1.16.17 (2026-11-23): stepped off-fade no longer stalls at the floor. A fade stopped by presence away now sends the final 0 to lights still above 0 and not held by hand; a scene hold still wins with no forced off. Adds dbg lines for each fade step, final 0, cancel (reason overrideUntil / presenceAway / disabled / restart / done / all / other), held light and step error.
   1.16.16 (2026-11-21): trigger Update on non-follow presence VACANT -> OCCUPIED and gate-open reconcile, cancel stepped off-fade on presence fade-out, wrap sendQ callbacks in pcall with safe timer cancel, clear sendTimer/sendQ in OnDriverDestroyed, and call safeUpdate in startVacancyTimer.
@@ -127,7 +129,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.17"
+DRIVER_VERSION = "1.16.18"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -1448,11 +1450,13 @@ function Update()
     -- optional sunrise-based wake ramp (fixed event, off unless enabled)
     local inWake = false
     local w = room.wake
+    if w and w.enabled and not (dayOk(w.days or room.days, now) and (not presenceOn() or occupied(room))) and not room.wakeBlockedLogged then room.wakeBlockedLogged = true; dbg("wake blocked", room.name, "days " .. tostring(dayOk(w.days or room.days, now)), "occupied " .. tostring(not presenceOn() or occupied(room))) end
     if w and w.enabled and dayOk(w.days or room.days, now) and (not presenceOn() or occupied(room)) then
       local ws = resolveTimeSpec(w.at, now, lat, lon)
       local we = resolveTimeSpec(w.stop, now, lat, lon)
       if ws and we then
         inWake = (minNow >= ws and minNow < we)
+        if inWake and not room.wasInWake then dbg("wake window start", room.name, "hold " .. tostring(room.overrideUntil ~= nil), "ws " .. tostring(ws), "we " .. tostring(we)) end
         if inWake then cancelOffFade(room) end      -- 1.16.13: never step an off down under a wake ramp
         if inWake and not room.overrideUntil then
           local frac = clamp((minNow - ws) / math.max(1, tonumber(w.ramp_min) or 30), 0, 1)
@@ -1460,7 +1464,7 @@ function Update()
           for _, l in ipairs(room.lights) do
             if not l.overrideUntil then
               local v = clamp(lvl * l.scale, 1, 100)
-              if not l.lastLevel or math.abs(v - l.lastLevel) >= 2 then sendLevel(l, v, 60000) end
+              if not l.lastLevel or math.abs(v - l.lastLevel) >= 2 then dbg("wake ramp step", room.name, l.id, "level " .. tostring(v)); sendLevel(l, v, 60000) end
               n = n + 1
             end
           end
