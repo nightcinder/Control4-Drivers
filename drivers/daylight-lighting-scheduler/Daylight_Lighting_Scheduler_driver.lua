@@ -1,7 +1,8 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.16
+  DRIVER_VERSION: 1.16.17
 
+  1.16.17 (2026-11-23): stepped off-fade no longer stalls at the floor. A fade stopped by presence away now sends the final 0 to lights still above 0 and not held by hand; a scene hold still wins with no forced off. Adds dbg lines for each fade step, final 0, cancel (reason overrideUntil / presenceAway / disabled / restart / done / all / other), held light and step error.
   1.16.16 (2026-11-21): trigger Update on non-follow presence VACANT -> OCCUPIED and gate-open reconcile, cancel stepped off-fade on presence fade-out, wrap sendQ callbacks in pcall with safe timer cancel, clear sendTimer/sendQ in OnDriverDestroyed, and call safeUpdate in startVacancyTimer.
   1.16.15 (2026-11-20): fix 23:45 off-edge failures — compare pre-first-command feedback against initial load level instead of 0, check l.rampTo == 0 in offEnforce instead of l.lastLevel <= OWN_BAND to stop infinite re-hold loops, track wasInWindow while a scene hold is active across reload, and keep scheduled off active for vacant non-follow presence rooms.
   1.16.14 (2026-11-19): audit fixes — preserve pending confirmations during own ramps, include ramp and queue time in light timeout, keep vacant non-follow presence rooms dark, clear/persist presence HOLD on release, honour manual dimmer changes before first command, re-read occ sensors when Presence Lighting toggles, and guard nil Latitude/Longitude in sun helpers/LogStatus/ApplyScene.
@@ -126,7 +127,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.16"
+DRIVER_VERSION = "1.16.17"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -1267,9 +1268,10 @@ end
 local OFF_FADE_STEP_MS = 60000
 local offFades = {}                 -- room.name -> { steps, done, from = {id -> level}, sent = {id -> level}, timer }
 
-cancelOffFade = function(room)
+cancelOffFade = function(room, reason)
   local f = offFades[room.name]
   if not f then return end
+  dbg("off fade cancel", room.name, "reason " .. (reason or "other"), "step", tostring(f.done), "of", tostring(f.steps))
   if f.timer then pcall(function() f.timer:Cancel() end) end
   offFades[room.name] = nil
 end
@@ -1280,14 +1282,34 @@ local function cancelAllOffFades()
   for _, name in ipairs(names) do
     local f = offFades[name]
     if f and f.timer then pcall(function() f.timer:Cancel() end) end
+    if f then dbg("off fade cancel", name, "reason all") end
     offFades[name] = nil
+  end
+end
+
+-- 1.16.17: a fade stopped by presence away finishes at 0. A light still above 0 and not held by hand gets the
+-- final 0, so it cannot stall at the floor (Den Lamp stalled at 2% on 2026-11-22/23). A scene hold is a real
+-- manual override and still ends the fade with no forced off.
+local function finishFadeAtZero(room, f, reason)
+  for _, l in ipairs(room.lights) do
+    if f.from[l.id] and (f.sent[l.id] or 0) > 0 and not l.overrideUntil and not l.offHold then
+      f.sent[l.id] = 0
+      dbg("off fade final 0", room.name, tostring(l.id), "cancelled by " .. reason)
+      sendLevel(l, 0, OFF_FADE_STEP_MS)
+    end
   end
 end
 
 local function offFadeStep(room)
   local f = offFades[room.name]
   if not f then return end
-  if Properties["Enabled"] ~= "On" or presenceAway or room.overrideUntil then cancelOffFade(room) return end
+  if Properties["Enabled"] ~= "On" then cancelOffFade(room, "disabled") return end
+  if presenceAway then
+    finishFadeAtZero(room, f, "presenceAway")
+    cancelOffFade(room, "presenceAway")
+    return
+  end
+  if room.overrideUntil then cancelOffFade(room, "overrideUntil") return end
   f.done = f.done + 1
   local last = f.done >= f.steps
   for _, l in ipairs(room.lights) do
@@ -1295,24 +1317,30 @@ local function offFadeStep(room)
     if from then
       if l.overrideUntil or l.offHold then
         f.from[l.id] = nil                    -- a hand on the dimmer, or a hand-off, takes the light out
+        dbg("off fade light held, left out", room.name, tostring(l.id), "step", tostring(f.done))
       else
         local lvl = 0
         if not last then lvl = math.floor(from * (1 - f.done / f.steps) + 0.5) end
         if f.sent[l.id] ~= lvl then
           f.sent[l.id] = lvl
+          if last then
+            dbg("off fade final 0", room.name, tostring(l.id))
+          else
+            dbg("off fade step", room.name, tostring(l.id), "level", tostring(lvl), "step", tostring(f.done), "of", tostring(f.steps))
+          end
           sendLevel(l, lvl, OFF_FADE_STEP_MS)
         end
       end
     end
   end
-  if last then cancelOffFade(room) end
+  if last then cancelOffFade(room, "done") end
 end
 
 -- Returns true only when a fade is actually running. A light that is already off is never seeded from
 -- lastLevel: after a hand-off, lastLevel still carries the old level while the bulb is dark, and seeding
 -- from it would turn the room back on at the off edge and dim it for half an hour.
 local function startOffFade(room, sec)
-  cancelOffFade(room)
+  cancelOffFade(room, "restart")
   local f = { steps = math.max(1, math.ceil(sec / (OFF_FADE_STEP_MS / 1000))), done = 0, from = {}, sent = {}, timer = nil }
   for _, l in ipairs(room.lights) do
     if not l.overrideUntil and not l.offHold then
@@ -1324,7 +1352,8 @@ local function startOffFade(room, sec)
   offFades[room.name] = f
   f.timer = C4:SetTimer(OFF_FADE_STEP_MS, function(t)
     if offFades[room.name] ~= f then pcall(function() t:Cancel() end) return end
-    pcall(offFadeStep, room)
+    local ok, err = pcall(offFadeStep, room)
+    if not ok then dbg("off fade step error", room.name, tostring(err)) end
   end, true)
   offFadeStep(room)                                  -- first step now, not a minute later
   return true

@@ -144,4 +144,19 @@ t.test("OnDriverDestroyed cancels a running fade", function()
   t.eq(#levels(), 0, "no step timer outlives the driver")
 end)
 
+t.test("presence away during a stepped fade finishes at 0, not at the floor", function()
+  sim.reset(1)
+  load('[{"name":"Den","on":"18:00","off":"23:45","off_ramp_min":30,"lights":[{"id":337,"kind":"lutron"}]}]')
+  sim.advance(5 * 60 * SEC)                              -- fade running, still above 0
+  sim.sent = {}
+  sim.exec("SetPresence", { PRESENT = "Away" })          -- 1.16.17: the stall case, cancelled mid-fade
+  sim.advance(2 * 60 * SEC)
+  local ls = levels()
+  t.ok(#ls >= 1, "a command goes out after presence away")
+  t.eq(ls[#ls], 0, "the fade ends at 0, not stranded above 0")
+  sim.sent = {}
+  sim.advance(10 * 60 * SEC)
+  t.eq(#levels(), 0, "no steps after the final 0")
+end)
+
 t.finish("dls-off-fade")
