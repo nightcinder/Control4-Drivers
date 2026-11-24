@@ -1,4 +1,4 @@
-﻿-- 1.16.19: presence.manualHold "level" on a follow room. A hand on the dimmer holds brightness only;
+-- 1.16.19: presence.manualHold "level" on a follow room. A hand on the dimmer holds brightness only;
 -- presence owns on/off (hand-on in a vacant room fades after the off delay, hand-off in an occupied room is re-driven).
 -- Run: uv run python tools/c4sim/run.py test dls_level_only_hold
 local sim = require("c4sim")
@@ -113,6 +113,13 @@ t.test("L3: hand dim in an occupied level-only room holds brightness, vacancy st
   send(snapshot("0", "clear"))
   sim.advance(60 * SEC)
   t.ok(offs(101) >= 1, "vacancy fades the room despite the brightness hold")
+end)
+
+t.test("L4: light already on at load in a vacant level-only room fades despite a restored hold", function()
+  start(local_sec(20, 0), "level", function(s) s.set_var(101, VAR, "16") end)
+  send(snapshot("0", "clear"))
+  sim.advance(120 * SEC)
+  t.ok(offs(101) >= 1, "stuck light in a vacant level-only room is faded off")
 end)
 
 t.finish("dls-level-only-hold")

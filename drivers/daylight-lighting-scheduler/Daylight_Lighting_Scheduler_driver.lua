@@ -1,6 +1,8 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.19
+  DRIVER_VERSION: 1.16.20
+
+  1.16.20 (2026-11-23): level-only rooms (presence.manualHold level) fade a lit vacant room even when a stale manual hold exists, so a light left on by an old hold or a reload no longer stays on.
 
   1.16.19 (2026-11-23): Rooms JSON presence.manualHold = "level" (follow rooms only; default "all" = old behaviour). A hand on the dimmer then holds brightness only: presence owns on/off. A hand-on in a vacant room starts the off timer instead of a 120 min hold, a hand-off in an occupied room is re-driven (no HOLD), and a manual change during a fade is ignored. Meant for small rooms (Laundry).
 
@@ -131,7 +133,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.19"
+DRIVER_VERSION = "1.16.20"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -1058,7 +1060,7 @@ local function presenceTick()
       -- a manual-on light in a vacant follow room fades once its hold has expired (section 5 note)
       if pr.state == PR_VACANT and pr.follow and not pr.occIn and not presenceAway
          and not room.overrideUntil and not (room.wake and room.wake.enabled)
-         and anyOn(room) and not anyHeld(room) and Properties["Enabled"] == "On" then
+         and anyOn(room) and (pr.levelOnly or not anyHeld(room)) and Properties["Enabled"] == "On" then   -- 1.16.20: level-only rooms ignore stale holds
         local wait, adopt = false, false
         for _, l in ipairs(room.lights) do
           local cur = curLevel(l)
