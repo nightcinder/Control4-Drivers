@@ -1,6 +1,8 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.20
+  DRIVER_VERSION: 1.16.21
+
+  1.16.21 (2026-11-24): the per-room lux closed loop is gentle. Each update moves the level by 10 x the relative error, capped at 2 levels per update (was 30 x error, uncapped, which jumped and ramped fast). Optional per-room lux.gain and lux.step in the Rooms JSON override 10 and 2.
 
   1.16.20 (2026-11-23): level-only rooms (presence.manualHold level) fade a lit vacant room even when a stale manual hold exists, so a light left on by an old hold or a reload no longer stays on.
 
@@ -133,7 +135,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.20"
+DRIVER_VERSION = "1.16.21"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -473,7 +475,9 @@ function ComputeRoomTarget(room, now, lat, lon, light)
     if lux then
       local prev = room.luxLevel or level
       local err = (room.lux.target - lux) / room.lux.target
-      room.luxLevel = clamp(prev + 30 * err, room.min_level, base)
+      local maxStep = room.lux.step or 2          -- 1.16.21: gentle correction, at most this many levels per update
+      local move = clamp((room.lux.gain or 10) * err, -maxStep, maxStep)
+      room.luxLevel = clamp(prev + move, room.min_level, base)
       level = room.luxLevel
     end
     room.luxScale = (rawLevel > 0) and (level / rawLevel) or nil
@@ -1811,7 +1815,7 @@ local function loadRooms(closeGate)
       daylight_off = (tonumber(r.daylight_off) and clamp(tonumber(r.daylight_off), 0, 1)) or nil,
       max_level = tonumber(r.max_level) or 100,
       away = r.away, on = r.on, off = r.off, off_ramp_min = tonumber(r.off_ramp_min), scenes = r.scenes, days = r.days, windows = parseWindows(r.windows), follow = (r.follow == true), on_daylight = tonumber(r.on_daylight), wake = r.wake,
-      lux = (r.lux and r.lux.dev and r.lux.dev > 0) and { dev = r.lux.dev, var = r.lux.var or 1000, target = tonumber(r.lux.target) or 200 } or nil,
+      lux = (r.lux and r.lux.dev and r.lux.dev > 0) and { dev = r.lux.dev, var = r.lux.var or 1000, target = tonumber(r.lux.target) or 200, gain = tonumber(r.lux.gain), step = tonumber(r.lux.step) } or nil,
       occ = (r.occ and r.occ.dev and r.occ.dev > 0) and {
         dev = r.occ.dev, var = r.occ.var or 1000,
         delaySec = math.max(10, tonumber(r.occ.vacancyDelaySec) or (tonumber(Properties["Vacancy Delay (min)"]) or 10) * 60),

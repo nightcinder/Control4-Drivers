@@ -131,7 +131,7 @@ end)
 
 t.test("6: the lux closed loop reaches per-light targets", function()
   sim.reset(1)
-  local rooms = '[{"name":"Office","on":"18:00","off":"22:30","lux":{"dev":900,"var":1000,"target":200},"lights":[{"id":337,"kind":"lutron","max_level":80}]}]'
+  local rooms = '[{"name":"Office","on":"18:00","off":"22:30","lux":{"dev":900,"var":1000,"target":200,"gain":30,"step":100},"lights":[{"id":337,"kind":"lutron","max_level":80}]}]'
   local ok = sim.load_driver(DRV, {
     xml = XML,
     properties = { ["Enabled"] = "On", ["Update Interval (min)"] = "1", ["Ramp Time (sec)"] = "90", ["Rooms JSON"] = rooms, ["Latitude"] = "51.5", ["Longitude"] = "-0.1" },
