@@ -1,6 +1,8 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.18
+  DRIVER_VERSION: 1.16.19
+
+  1.16.19 (2026-11-23): Rooms JSON presence.manualHold = "level" (follow rooms only; default "all" = old behaviour). A hand on the dimmer then holds brightness only: presence owns on/off. A hand-on in a vacant room starts the off timer instead of a 120 min hold, a hand-off in an occupied room is re-driven (no HOLD), and a manual change during a fade is ignored. Meant for small rooms (Laundry).
 
   1.16.18 (2026-11-23): debug only, no behavior change. Adds dbg lines for the wake ramp: "wake window start" (with whether a manual hold blocks it), "wake ramp step" (level), and "wake blocked" (enabled wake skipped by days or presence), so a missed sunrise wake shows in Lua Output.
 
@@ -129,7 +131,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.18"
+DRIVER_VERSION = "1.16.19"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -959,6 +961,29 @@ end
 local function prManual(room, light, v, now)
   local pr = room.pr
   local base = light.lastLevel or 0
+  if pr.levelOnly and pr.follow then
+    -- 1.16.19: on/off belongs to presence. A manual level change holds brightness only (until the room fades).
+    light.lastLevel = v
+    if pr.state == PR_FADING then dbg("presence manual change ignored, fading", room.name, tostring(light.id)) return end
+    if v == 0 then
+      light.overrideUntil, light.offHold = nil, nil
+      if pr.state == PR_OCCUPIED then presenceDrive(room, now) end   -- occupied: presence turns it back on
+      dbg("presence manual off, level-only room", room.name, tostring(light.id))
+      prSave()
+      return
+    end
+    light.offHold = nil
+    if pr.state == PR_HOLD then pr.state = PR_OCCUPIED end
+    if pr.state == PR_VACANT then                                   -- hand-on in a vacant room: off timer, not a hold
+      pr.state = PR_OCCUPIED
+      pr.offAt = now + pr.offDelaySec
+      pr.offConfirmed = true
+    end
+    light.overrideUntil = math.max(light.overrideUntil or 0, now + (tonumber(Properties["Override Hold (min)"]) or 120) * 60)
+    dbg("presence manual level, level-only room", room.name, tostring(light.id), tostring(v))
+    prSave()
+    return
+  end
   if v == 0 and pr.state == PR_OCCUPIED and base > 0 then           -- manual off in an occupied room: T8 / T9
     local already = light.offHold
     light.offHold = true
@@ -1078,6 +1103,11 @@ local function parsePresence(r, room, warns)
   if p.follow ~= nil then
     if type(p.follow) == "boolean" then follow = p.follow else warn("follow") end
   end
+  -- 1.16.19: "manualHold":"level" = a hand on the dimmer holds brightness only; presence owns on/off
+  local levelOnly = false
+  if p.manualHold ~= nil then
+    if p.manualHold == "level" then levelOnly = true elseif p.manualHold ~= "all" then warn("manualHold") end
+  end
   local list = p.sources
   if list == nil then list = { "esp", "robot" } end
   local allow = {}
@@ -1089,7 +1119,7 @@ local function parsePresence(r, room, warns)
     if PRES_SOURCES[s] and not allow[s] then allow[s] = true else warn("sources") end
   end
   return {
-    key = room.key, follow = follow, allow = allow,
+    key = room.key, follow = follow, allow = allow, levelOnly = levelOnly,
     offDelaySec = num("offDelaySec", 180, 10, 3600, true),
     robotOffDelaySec = num("robotOffDelaySec", 90, 10, 3600, true),
     fadeInSec = num("fadeInSec", 2, 0, 60, false),
