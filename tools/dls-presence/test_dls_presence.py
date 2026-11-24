@@ -425,6 +425,14 @@ class RobotCases(unittest.TestCase):
         self.assertEqual(dp.parse_robot_state(dict(body, current_room=None))[1], None)
         for bad in (dict(body, last_success_age_s=None), dict(body, last_success_age_s=400.0), dict(body, state=None)):
             self.assertRaises(ValueError, dp.parse_robot_state, bad)
+        with self.assertRaises(ValueError) as cm:
+            dp.parse_robot_state(dict(body, state=None, last_success_age_s=None))
+        self.assertIn("state=None last_success_age_s=None", str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            dp.parse_robot_state(["x" * 500])
+        self.assertLess(len(str(cm.exception)), 260)
+        self.assertRaises(ValueError, dp.parse_robot_state, None)
+        self.assertRaises(ValueError, dp.parse_robot_state, dict(body, last_success_age_s=True))
         for u in ("http://liesa:8788", "http://liesa:8788/", "http://liesa:8788/state", "http://liesa:8788/state/"):
             self.assertEqual(dp.robot_state_url(u), "http://liesa:8788/state")
         r = dp.RobotSource(started=0.0)
@@ -436,6 +444,47 @@ class RobotCases(unittest.TestCase):
         self.assertFalse(r.docked(15.0))
         r.observe(16.0, "paused", "Kitchen")  # deliberately not an occupant
         self.assertTrue(r.docked(17.0))
+
+    def test_robot_watcher_startup_race_backoff_and_single_log(self):
+        responses = [
+            {"state": None, "last_success_age_s": None},
+            {"state": None, "last_success_age_s": None},
+            {"state": "charging", "last_success_age_s": 0.4, "current_room": None},
+            RuntimeError("bridge down"),
+        ]
+        sleeps = []
+        logs = []
+        robot = dp.RobotSource(started=0.0)
+
+        class _Stop(Exception):
+            pass
+
+        def fake_fetch():
+            item = responses.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        def fake_sleep(sec):
+            sleeps.append(sec)
+            if not responses:
+                raise _Stop()
+
+        from unittest import mock
+        w = dp.RobotWatcher("http://example/state", 15.0, robot, log=logs.append,
+                            fetch=fake_fetch, sleep=fake_sleep)
+        with mock.patch.object(dp, "set_health"):
+            with self.assertRaises(_Stop):
+                w._loop()
+
+        self.assertEqual(sleeps, [1.0, 2.0, 15.0, 15.0])
+        self.assertEqual(len(logs), 2)
+        self.assertIn("waiting for first poll: ValueError", logs[0])
+        self.assertIn("state=None last_success_age_s=None", logs[0])
+        self.assertNotIn("Traceback", logs[0])
+        self.assertIn("RuntimeError", logs[1])
+        self.assertNotIn("waiting for first poll", logs[1])
+        self.assertEqual(robot.state, "charging")
 
 
 class StatusViewTest(unittest.TestCase):

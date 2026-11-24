@@ -737,9 +737,13 @@ def robot_state_url(url):
 
 def parse_robot_state(body):
     """Bridge /state JSON -> (state, room name or None). ValueError when the bridge has no fresh device poll."""
+    if not isinstance(body, dict):
+        raise ValueError("bridge /state is not a JSON object: %.200r" % (body,))
     age = body.get("last_success_age_s")
-    if body.get("state") is None or not isinstance(age, (int, float)) or age >= ROBOT_STALE:
-        raise ValueError("bridge has no fresh robot status")
+    if body.get("state") is None or not isinstance(age, (int, float)) or isinstance(age, bool) or age >= ROBOT_STALE:
+        # Say why, with the raw values (truncated), so the log shows a bridge that is still starting
+        # (state None, age None) apart from a stale poll (age >= ROBOT_STALE) or a changed payload.
+        raise ValueError("bridge has no fresh robot status: state=%.200r last_success_age_s=%.200r" % (body.get("state"), age))
     cr = body.get("current_room")
     name = cr.get("name") if isinstance(cr, dict) else None
     return str(body["state"]), (name.strip() if isinstance(name, str) and name.strip() else None)
@@ -785,28 +789,43 @@ class RobotSource:
 
 
 class RobotWatcher:
-    def __init__(self, url, poll, robot, log=print):
+    def __init__(self, url, poll, robot, log=print, fetch=None, sleep=time.sleep):
         self.url, self.poll, self.robot, self.log = url, poll, robot, log
+        self.fetch = fetch or self._default_fetch
+        self.sleep = sleep
+
+    def _default_fetch(self):
+        with urllib.request.urlopen(self.url, timeout=10) as r:
+            return json.load(r)
 
     def start(self):
         threading.Thread(target=self._loop, daemon=True).start()
 
     def _loop(self):
         warned = False
+        had_ok = False
+        backoff = min(1.0, self.poll) if self.poll > 0 else 0.0
         while True:
             try:
-                with urllib.request.urlopen(self.url, timeout=10) as r:
-                    body = json.load(r)
+                body = self.fetch()
                 state, room = parse_robot_state(body)
                 self.robot.observe(time.time(), state, room)
                 set_health("robot", True, self.poll)
+                had_ok = True
                 warned = False
             except Exception as e:
                 set_health("robot", False, self.poll)
                 if not warned:
-                    self.log(f"robot bridge: {type(e).__name__}; robot treated as docked until it answers")
+                    detail = f" ({str(e)[:200]})" if isinstance(e, ValueError) and str(e) else ""
+                    prefix = "waiting for first poll: " if not had_ok else ""
+                    self.log(f"robot bridge: {prefix}{type(e).__name__}{detail}; robot treated as docked until it answers")
                     warned = True
-            time.sleep(self.poll)
+            if had_ok:
+                wait = self.poll
+            else:
+                wait = backoff
+                backoff = min(self.poll, max(backoff * 2, 1.0))
+            self.sleep(wait)
 
 
 class EsphomeWatcher:
