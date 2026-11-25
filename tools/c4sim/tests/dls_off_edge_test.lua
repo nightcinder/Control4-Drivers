@@ -185,13 +185,15 @@ t.test("3: scene hold persisted across reload still runs the 23:45 off edge when
   t.ok(ok, "reload: " .. tostring(sim.errors[1]))
 
   sim.sent = {}
-  sim.advance(139 * MIN)                               -- 00:55:00 (scene hold valid until 01:00:20)
-  t.ok(not has_level(476, 0), "476 stays held while scene hold is active")
+  sim.advance(68 * MIN)                                -- 23:44:00 (scene hold valid until 01:00:20)
+  t.ok(not has_level(476, 0), "476 stays held while scene hold is active inside the on window")
 
+  -- 1.16.22: a hold set before the off edge no longer outlasts it. The restored scene hold (wasInWindow kept
+  -- across the reload) is cleared at 23:45 and the room fades, long before the hold would have expired.
   sim.sent = {}
-  sim.advance(50 * MIN)                                -- 01:45:00 (past 01:00:20 expiry + 30-min fade)
-  t.ok(has_lt(476, 50), "476 started ramping down after scene hold expired")
-  t.ok(has_level(476, 0), "476 reached 0 after scene hold expired")
+  sim.advance(71 * MIN)                                -- 00:55:00
+  t.ok(has_lt(476, 50), "476 started ramping down at the 23:45 off edge")
+  t.ok(has_level(476, 0), "476 reached 0 before the old scene hold expiry")
 end)
 
 t.test("4: vacant non-follow presence room with a lit light still runs the 23:45 scheduled off", function()

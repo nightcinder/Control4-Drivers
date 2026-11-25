@@ -1,6 +1,8 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.21
+  DRIVER_VERSION: 1.16.22
+
+  1.16.22 (2026-11-25): the scheduled off edge beats every hold set before it. On 2026-11-24 the Den Lamp (476) was held by a per-light manual hold (120 min, set about 22:00-22:05), so the 23:30 off fade skipped it and it stayed on at 100% until the hold expired and off enforcement turned it off at 00:06. At the on-window to off-window edge DLS now clears room (scene) holds and per-light holds, so the fade takes every light that is on. A hand-on AFTER the edge still holds (1.11.2/1.11.6 behaviour unchanged). New read-only property "Last Manual Change" records the light, level, DLS's last level and time of the latest change DLS treated as manual (the start of every manual hold), so the source of a hold can be seen without Lua Output. New per-light Rooms JSON flag "ignore_room_off": true keeps that light on when the room's "Off" scene runs (keypad room Off through ApplyScene); the scheduled off edge still turns it off.
 
   1.16.21 (2026-11-24): the per-room lux closed loop is gentle. Each update moves the level by 10 x the relative error, capped at 2 levels per update (was 30 x error, uncapped, which jumped and ramped fast). Optional per-room lux.gain and lux.step in the Rooms JSON override 10 and 2.
 
@@ -135,7 +137,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.21"
+DRIVER_VERSION = "1.16.22"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -1397,6 +1399,25 @@ local function startOffFade(room, sec)
   return true
 end
 
+-- 1.16.22: true once the room's scheduled off time is reached. Clock only: a daylight room's trigger flag is
+-- not used, because an Off scene resets it and a scene hold stops it from updating.
+local function pastOffTime(room, now, minNow, lat, lon, noon)
+  local spec = room.off or (room.on_daylight and "23:00") or nil
+  if not spec then return false end
+  local offMin = offMinFor(spec, now, lat, lon)
+  if offMin == nil then return false end
+  if room.on_daylight then
+    if offMin < noon then return minNow >= offMin and minNow < noon end
+    return minNow >= offMin or minNow < noon
+  end
+  local onMin = resolveTimeSpec(room.on, now, lat, lon)
+  if onMin == nil then return false end
+  local inW
+  if onMin <= offMin then inW = (minNow >= onMin and minNow < offMin)
+  else inW = (minNow >= onMin or minNow < offMin) end
+  return not inW
+end
+
 function Update()
   if Properties["Enabled"] ~= "On" then setStatus("Disabled") return end
   local lat = tonumber(Properties["Latitude"])
@@ -1511,6 +1532,29 @@ function Update()
       end
     end
     room.wasInWake = inWake
+
+    -- 1.16.22: the scheduled off edge beats every hold set before it. Any hold alive at the edge was set while
+    -- the room was in its on window (2026-11-24: a 120 min Den Lamp hold from about 22:00 skipped the 23:30 fade),
+    -- so it is cleared here and the off below fades every light that is on. A hand-on after the edge sets a new
+    -- hold and is kept (wasInWindow is false by then). Presence-owned and presence FADING/HOLD rooms are left alone.
+    local prSkip = room.pr and presenceOn()
+      and (room.pr.follow or room.pr.state == PR_FADING or room.pr.state == PR_HOLD)
+    if room.wasInWindow and not inWake and not prSkip and pastOffTime(room, now, minNow, lat, lon, noon) then
+      local cleared = false
+      if room.overrideUntil then
+        dbg("off edge clears room hold", room.name)
+        room.overrideUntil = nil
+        cleared = true
+      end
+      for _, l in ipairs(room.lights) do
+        if l.overrideUntil then
+          dbg("off edge clears light hold", room.name, tostring(l.id))
+          l.overrideUntil = nil
+          cleared = true
+        end
+      end
+      if cleared then saveHolds() end
+    end
 
     if room.overrideUntil then
       held = held + 1
@@ -1733,6 +1777,11 @@ function OnWatchedVariableChanged(idDevice, idVariable, strValue)
     light.initLevel = v
   end
   light.pending = nil                              -- 1.16.3: a manual change explains the mismatch
+  -- 1.16.22: leave a trace of every change taken as manual (the Den Lamp hold of 2026-11-24 had no known source)
+  prop("Last Manual Change", string.format("%s %s: %d%% (DLS last %s) %s", room.name, tostring(light.id), v,
+    light.lastLevel and tostring(math.floor(light.lastLevel + 0.5)) or "none", os.date("%m-%d %H:%M:%S", now)))
+  dbg("manual change", room.name, tostring(light.id), "level " .. tostring(v), "last " .. tostring(light.lastLevel),
+    "rampTo " .. tostring(light.rampTo), "ignoreUntil " .. tostring(light.ignoreUntil))
   if room.pr then return prManual(room, light, v, now) end
   -- 1.11.3: a manual off inside the on-window stays off until the next on edge, not just until the hold expires
   if v == 0 and room.wasInWindow then light.offHold = true
@@ -1831,7 +1880,7 @@ local function loadRooms(closeGate)
     for _, l in ipairs(r.lights or {}) do
       local id = tonumber(l.id) or 0
       if id > 0 then
-        local light = { id = id, kind = l.kind or "lutron", scale = clamp(tonumber(l.scale) or 1, 0.05, 1), max_level = tonumber(l.max_level), window_gain = tonumber(l.window_gain), facing_deg = tonumber(l.facing_deg), windows = parseWindows(l.windows), cct_min = tonumber(l.cct_min) or 1500, cct_max = tonumber(l.cct_max) or 4000 }
+        local light = { id = id, kind = l.kind or "lutron", scale = clamp(tonumber(l.scale) or 1, 0.05, 1), max_level = tonumber(l.max_level), window_gain = tonumber(l.window_gain), facing_deg = tonumber(l.facing_deg), windows = parseWindows(l.windows), cct_min = tonumber(l.cct_min) or 1500, cct_max = tonumber(l.cct_max) or 4000, ignore_room_off = (l.ignore_room_off == true) }
         light.initLevel = curLevel(light)
         local sh = type(savedHolds) == "table" and savedHolds[tostring(id)] or nil
         if type(sh) == "table" then
@@ -2035,7 +2084,13 @@ local function applyScene(roomName, sceneName)
       local sceneMs = tonumber(sc.ramp_ms) or 2000
       if sc.off then
         cancelOffFade(room)
-        for _, l in ipairs(room.lights) do sendLevel(l, 0, sceneMs) end
+        for _, l in ipairs(room.lights) do
+          if l.ignore_room_off then                   -- 1.16.22: this light stays on for a room Off (keypad)
+            dbg("scene Off skips light", roomName, tostring(l.id), "ignore_room_off")
+          else
+            sendLevel(l, 0, sceneMs)
+          end
+        end
         room.overrideUntil = nextOnTime(room, now, lat, lon)
         room.dayTriggered = false
       else
