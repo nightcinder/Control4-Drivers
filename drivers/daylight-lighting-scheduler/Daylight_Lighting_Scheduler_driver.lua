@@ -1,6 +1,11 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.17.3
+  DRIVER_VERSION: 1.17.4
+
+  1.17.4 (2026-11-26): remote log. New property "Remote Log URL" (a Loki push endpoint, for example an Alloy
+    loki.source.api: http://<host>:3500/loki/api/v1/push; empty by default). Every dbg line is buffered (max 500)
+    and posted every 15 s with labels job=control4, driver=dls, whether Debug is On or Off. Debug still only
+    controls the Composer print. Empty the property to turn the remote log off.
 
   1.17.3 (2026-11-26): occupied follow rooms glide at the off edge. A room that is OCCUPIED when its off time
     arrives now steps down to its presence nightLevel over off_ramp_min (the 1.16.13 stepped fade, with a floor)
@@ -197,7 +202,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.17.3"
+DRIVER_VERSION = "1.17.4"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -214,8 +219,58 @@ local cloudTicket
 ---------------------------------------------------------------------------
 -- helpers
 ---------------------------------------------------------------------------
+-- 1.17.4: remote log. Lines are buffered and posted to a Loki push endpoint (Alloy on liesa) every 15 s,
+-- so the log can be read without Composer. Independent of the Debug property.
+local REMOTE_LOG_MAX = 500
+local remoteBuf, remoteSec, remoteSeq, remoteBusy = {}, 0, 0, false
+local remoteLogTimer
+
+local function remoteLogUrl()
+  local url = Properties and Properties["Remote Log URL"] or ""
+  if type(url) ~= "string" then return "" end
+  return (url:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function remoteLog(line)
+  if remoteLogUrl() == "" then return end
+  local t = os.time()
+  if t == remoteSec then remoteSeq = remoteSeq + 1 else remoteSec, remoteSeq = t, 0 end
+  if #remoteBuf >= REMOTE_LOG_MAX then table.remove(remoteBuf, 1) end
+  remoteBuf[#remoteBuf + 1] = { string.format("%d%09d", t, remoteSeq * 1000), line }
+end
+
+local function flushRemoteLog()
+  local url = remoteLogUrl()
+  if url == "" then remoteBuf = {} return end
+  if remoteBusy and os.time() - remoteBusy < 60 then return end   -- a lost callback frees the slot after 60 s
+  if #remoteBuf == 0 then return end
+  local batch = remoteBuf
+  remoteBuf = {}
+  local body = C4:JsonEncode({ streams = { { stream = { job = "control4", driver = "dls" }, values = batch } } })
+  remoteBusy = os.time()
+  local ok = pcall(function()
+    C4:urlPost(url, body, { ["Content-Type"] = "application/json" }, false,
+      function(_, _, responseCode, _, strError)
+        remoteBusy = false
+        local code = tonumber(responseCode) or 0
+        if strError or code < 200 or code >= 300 then
+          if Properties["Debug"] == "On" then
+            print("[DLS] remote log post failed " .. tostring(strError) .. " " .. tostring(responseCode))
+          end
+        end
+      end)
+  end)
+  if not ok then remoteBusy = false end
+end
+
 local function dbg(...)
-  if Properties["Debug"] == "On" then print("[DLS] " .. table.concat({...}, " ")) end
+  -- every argument goes through tostring: some callers pass nil or booleans, which table.concat rejects
+  -- (before 1.17.4 that was hidden because the line was only built with Debug On)
+  local n, parts = select("#", ...), {}
+  for i = 1, n do parts[i] = tostring((select(i, ...))) end
+  local line = table.concat(parts, " ")
+  if Properties["Debug"] == "On" then print("[DLS] " .. line) end
+  remoteLog(line)
 end
 
 local function clamp(v, lo, hi) if v < lo then return lo elseif v > hi then return hi end return v end
@@ -1492,6 +1547,11 @@ local function runCurtains(now, lat, lon)
       target = math.floor(target + 0.5)
       local st = curtainState[c.id] or {}
       curtainState[c.id] = st
+      if st.calc ~= target then                  -- 1.17.4: log each change of the computed target
+        dbg("curtain target", c.name, tostring(target), why, "last sent", tostring(st.target),
+          "at", st.at and os.date("%H:%M:%S", st.at) or "never")
+        st.calc = target
+      end
       local moved = (st.target == nil) or (math.abs(target - st.target) >= CURTAIN_MIN_CHANGE)
       local cooled = (st.at == nil) or (now - st.at >= CURTAIN_MIN_GAP_SEC)
       if moved and cooled and curtainSentToday < CURTAIN_DAILY_CAP then
@@ -2312,6 +2372,9 @@ function OnDriverLateInit()
   end
   pcall(startTimers)
   pcall(startHeartbeat)                            -- 1.16.23
+  if remoteLogTimer then pcall(function() remoteLogTimer:Cancel() end) end   -- 1.17.4
+  pcall(function() remoteLogTimer = C4:SetTimer(15000, function() pcall(flushRemoteLog) end, true) end)
+  dbg("driver start", DRIVER_VERSION)
   if presenceTimer then pcall(function() presenceTimer:Cancel() end) end
   pcall(function() presenceTimer = C4:SetTimer(1000, function() safePresenceTick() end, true) end)
   pcall(startPresenceServer)
@@ -2363,6 +2426,7 @@ function OnDriverDestroyed()
   if cloudTimer then cloudTimer:Cancel() cloudTimer = nil end
   if presenceTimer then presenceTimer:Cancel() presenceTimer = nil end
   if heartbeatTimer then pcall(function() heartbeatTimer:Cancel() end) heartbeatTimer = nil end   -- 1.16.23
+  if remoteLogTimer then pcall(function() remoteLogTimer:Cancel() end) remoteLogTimer = nil end   -- 1.17.4
   if sendTimer then sendTimer:Cancel() sendTimer = nil end
   sendQ = {}
   cancelAllOffFades()
