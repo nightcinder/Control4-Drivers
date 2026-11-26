@@ -1,6 +1,23 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.17.4
+  DRIVER_VERSION: 1.17.5
+
+  1.17.5 (2026-11-26): dark afternoons turn the lights on, gently. Fixes Thanksgiving: an overcast day with
+    both sensors occupied and the room reading 0.3 lux stayed dark past sunset.
+    - The daylight trigger of an on_daylight room also fires when the room's lux sensor reads below the
+      current lux target on two Update samples in a row (at least 60 s apart, so a passing cloud does not
+      count). The old model trigger (daylight index below on_daylight) still works. The dbg line says which.
+    - An Off scene pressed after noon but before that day's trigger now holds only until the trigger fires,
+      then presence and the schedule take over again. An Off after the trigger still holds to the next day.
+      A walk-in (vacant to occupied) in a presence follow room also ends an Off-scene hold. Other scene
+      holds are unchanged.
+    - When lights turn on from all-off (on window opens, or presence turns them on), the lux loop starts
+      from a seed instead of the low value left over from the day, so the room no longer creeps up 2% every
+      5 minutes. The seed is the lower of the model level and the last level the loop settled at in the
+      evening (lux within 30% of target, saved in PersistData.luxConverged, survives reloads); 25% when there
+      is no history yet. The morning window and fixed "levels" rooms are unchanged.
+    - When presence turns lights on in a room that was already occupied (dusk trigger, window opening,
+      hold released), they ramp over Ramp Time (sec) instead of fadeInSec. A real walk-in still uses fadeInSec.
 
   1.17.4 (2026-11-26): remote log. New property "Remote Log URL" (a Loki push endpoint, for example an Alloy
     loki.source.api: http://<host>:3500/loki/api/v1/push; empty by default). Every dbg line is buffered (max 500)
@@ -202,7 +219,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.17.4"
+DRIVER_VERSION = "1.17.5"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -675,6 +692,8 @@ local function parseMorning(m, lux)
   }
 end
 
+LUX_SEED_DEFAULT = 25             -- 1.17.5: dusk seed with no converged history (%)
+
 function ComputeRoomTarget(room, now, lat, lon, light)
   local el, az = SunPositionCached(now, lat, lon)
   local d = os.date("*t", now)
@@ -696,15 +715,34 @@ function ComputeRoomTarget(room, now, lat, lon, light)
   -- 1.17.0: while the morning window is latched, the loop uses the morning lux source and target
   local lx = room.lux
   if room.morningOn and room.morning then lx = room.morning end
+  -- 1.17.5: room.luxSeed is set by a turn-on from all-off. The loop then starts from min(model level, last
+  -- converged evening level or LUX_SEED_DEFAULT) instead of the value left over from the day (often the min_level
+  -- floor), and corrects from there with the normal step. The morning window keeps its own start_level.
+  local seed = false
+  if not light then
+    seed = room.luxSeed == true and lx == room.lux
+    room.luxSeed = nil
+  end
   if lx and not light then
     local lux = tonumber(C4:GetDeviceVariable(lx.dev, lx.var))
     if lux then
       local prev = room.luxLevel or level
       local tgt = luxTargetFor(lx, now, minNow, lat, lon)
-      local err = (tgt - lux) / tgt
-      local maxStep = lx.step or 2                -- 1.16.21: gentle correction, at most this many levels per update
-      local move = clamp((lx.gain or 10) * err, -maxStep, maxStep)
-      room.luxLevel = clamp(prev + move, room.min_level, base)
+      room.luxOkAt = nil
+      if seed then
+        -- the seed is the lower of the model level and the last converged evening level (25 with no history);
+        -- the seed pass sends it as is, the loop corrects from the next pass
+        local s = math.min(rawLevel, room.luxConv or LUX_SEED_DEFAULT)
+        room.luxLevel = clamp(s, room.min_level, base)
+        dbg("lux loop seeded", room.name, string.format("%.1f", room.luxLevel), string.format("model %.1f", rawLevel),
+          "converged " .. tostring(room.luxConv), "was " .. tostring(prev and string.format("%.1f", prev)))
+      else
+        local err = (tgt - lux) / tgt
+        local maxStep = lx.step or 2                -- 1.16.21: gentle correction, at most this many levels per update
+        local move = clamp((lx.gain or 10) * err, -maxStep, maxStep)
+        room.luxLevel = clamp(prev + move, room.min_level, base)
+        if lx == room.lux and math.abs(lux - tgt) <= 0.3 * tgt then room.luxOkAt = now end   -- 1.17.5: near target
+      end
       level = room.luxLevel
     end
     room.luxScale = (rawLevel > 0) and (level / rawLevel) or nil
@@ -934,6 +972,19 @@ local function anyHeld(room)
   for _, l in ipairs(room.lights) do if l.overrideUntil or l.offHold then return true end end
   return false
 end
+-- 1.17.5: remember the level the lux loop settled at (lights on, room.lux loop, measured lux within 30% of the
+-- target on this pass). It caps the next dusk seed. Saved when it moves by 2 or more, or every 15 min.
+local function noteLuxConverged(room, now)
+  if room.luxOkAt ~= now or room.morningOn or not room.luxLevel or not anyOn(room) then return end
+  local v = math.floor(room.luxLevel * 10 + 0.5) / 10
+  if room.luxConv and math.abs(v - room.luxConv) < 2 and room.luxConvAt and now - room.luxConvAt < 900 then return end
+  room.luxConv, room.luxConvAt = v, now
+  if type(PersistData) == "table" then
+    if type(PersistData.luxConverged) ~= "table" then PersistData.luxConverged = {} end
+    PersistData.luxConverged[room.name] = v
+  end
+  dbg("lux loop converged level saved", room.name, tostring(v))
+end
 local function prUnconfirmed(src) return src == "unknown" or src == "stuck" end
 local function presenceStatusPrefix()
   local s = ""
@@ -948,7 +999,7 @@ end
 local function saveHolds()
   if not PersistData then return end
   local t = {}
-  local rh_all = nil
+  local rh_all, kinds = nil, nil
   for _, room in ipairs(rooms) do
     local rh = nil
     for _, l in ipairs(room.lights) do
@@ -961,10 +1012,15 @@ local function saveHolds()
     if room.overrideUntil then                              -- 1.11.7: scene/Off holds survive a reload too
       rh_all = rh_all or {}
       rh_all[room.name] = room.overrideUntil
+      if room.holdKind then                                 -- 1.17.5: Off-scene hold kind (off / offTrig)
+        kinds = kinds or {}
+        kinds[room.name] = room.holdKind
+      end
     end
   end
   PersistData.holds = t
   PersistData.roomHolds = rh_all
+  PersistData.roomHoldKinds = kinds
 end
 
 local function prSave()
@@ -1024,7 +1080,10 @@ local function prInWindow(room, now, lat, lon)
 end
 
 -- OCCUPIED follow room: lights at the DLS target (in window) or nightLevel (off window). Holds are respected.
-local function presenceDrive(room, now, inWindow)
+-- 1.17.5: fromSchedule = true when Update drives a room that was already OCCUPIED. A turn-on from all-off there
+-- is a dusk trigger, on window opening or hold release, so it ramps over Ramp Time (sec). Walk-ins (occupancy
+-- edges), the gate-open reconcile and manual-off restores keep the fast fadeInSec.
+local function presenceDrive(room, now, inWindow, fromSchedule)
   if Properties["Presence Lighting"] ~= "On" then return end   -- 1.16.4: switch Off = schedule owns the room
   local pr = room.pr
   local lat, lon = latlon()
@@ -1034,6 +1093,9 @@ local function presenceDrive(room, now, inWindow)
   if inWindow == nil then inWindow = prInWindow(room, now, lat, lon) end
   local lvl, cct
   local fixed = pr.levels ~= nil                                   -- 1.17.2: fixed walk-in levels, no lux loop
+  local allOff = not anyOn(room)
+  -- 1.17.5: turning on from all-off: start the lux loop at the open-loop model level, not the old floor value
+  if allOff and inWindow and not fixed then room.luxSeed = true end
   if fixed then
     lvl = luxTargetFor({ targets = pr.levels, target = pr.nightLevel }, now, minuteOf(now), lat, lon)
   elseif inWindow then lvl, cct = ComputeRoomTarget(room, now, lat, lon)
@@ -1041,6 +1103,9 @@ local function presenceDrive(room, now, inWindow)
     lvl = 0          -- 1.17.3: off window in daylight (before the evening trigger): no walk-in light
   else lvl = pr.nightLevel end
   local fadeMs = math.floor(pr.fadeInSec * 1000 + 0.5)
+  if allOff and fromSchedule then
+    fadeMs = (tonumber(Properties["Ramp Time (sec)"]) or 90) * 1000   -- 1.17.5: dusk / window-open turn-on
+  end
   for _, l in ipairs(room.lights) do
     if not l.overrideUntil and not l.offHold then
       local lv = lvl
@@ -1063,6 +1128,7 @@ local function presenceDrive(room, now, inWindow)
       end
     end
   end
+  if inWindow and not fixed then noteLuxConverged(room, now) end   -- 1.17.5
 end
 
 -- T5 / T10: clear every hold in the room and fade all lights that are on to 0 over fadeOutSec.
@@ -1107,6 +1173,14 @@ local function prSetOcc(room, now, newOcc, src, immediate)
       if pr.state == PR_VACANT then
         pr.state = PR_OCCUPIED                                      -- T1 / T2
         fire("Room Occupied", room.name)
+        -- 1.17.5: an Off-scene hold lasts until daylight or occupancy: a walk-in releases it in a follow room.
+        -- Normal scene holds are kept. (Vacancy already cleared any hold via prStartFade; this covers an Off
+        -- pressed while the room was already vacant.)
+        if pr.follow and room.overrideUntil and room.holdKind and gateOpen
+           and Properties["Presence Lighting"] == "On" then
+          room.overrideUntil, room.holdKind = nil, nil
+          dbg("walk-in releases Off hold", room.name)
+        end
         if pr.follow then
           presenceDrive(room, now)
         elseif gateOpen and Properties["Presence Lighting"] == "On" then
@@ -1742,6 +1816,50 @@ local function pastOffTime(room, now, minNow, lat, lon, noon)
   return not inW
 end
 
+-- 1.17.5: the evening daylight trigger for an on_daylight room. It fires when the modeled daylight index drops
+-- below on_daylight (as before), or when the room's own lux sensor reads below the current lux target on two
+-- samples in a row (a dark overcast afternoon the model does not see). Samples closer than 60 s apart (extra
+-- Update calls from events) do not count as a new sample. Returns true when it fired on this call.
+local LUX_TRIGGER_SAMPLES = 2
+local LUX_TRIGGER_GAP_SEC = 60
+local function evalDaylightTrigger(room, now, minNow, noon, lat, lon)
+  if not room.on_daylight or room.dayTriggered or minNow < noon then
+    room.luxDarkCount, room.luxDarkAt = nil, nil
+    return false
+  end
+  local el = SunPositionCached(now, lat, lon)
+  local D = clearDaylight(el) * cloudTransmittance(cloudNow())
+  local why
+  if D < room.on_daylight then
+    why = string.format("model D=%.2f < %.2f", D, room.on_daylight)
+  elseif room.lux and room.lux.dev then
+    local lux = tonumber(C4:GetDeviceVariable(room.lux.dev, room.lux.var))
+    local tgt = luxTargetFor(room.lux, now, minNow, lat, lon)
+    if lux and tgt and lux < tgt then
+      if not room.luxDarkAt or now - room.luxDarkAt >= LUX_TRIGGER_GAP_SEC then
+        room.luxDarkCount = (room.luxDarkCount or 0) + 1
+        room.luxDarkAt = now
+        dbg("daylight trigger lux sample", room.name, string.format("lux=%.2f < target %.2f", lux, tgt),
+          "count " .. tostring(room.luxDarkCount), string.format("D=%.2f", D))
+      end
+      if room.luxDarkCount >= LUX_TRIGGER_SAMPLES then
+        why = string.format("lux=%.2f < target %.2f (x%d), D=%.2f", lux, tgt, room.luxDarkCount, D)
+      end
+    else
+      room.luxDarkCount, room.luxDarkAt = nil, nil          -- a bright sample (or no reading) resets the count
+    end
+  end
+  if not why then return false end
+  room.dayTriggered = true
+  room.luxDarkCount, room.luxDarkAt = nil, nil
+  if type(PersistData) == "table" then                       -- 1.11.4: the trigger survives a restart or Rooms JSON save
+    if type(PersistData.daylightFired) ~= "table" then PersistData.daylightFired = {} end
+    PersistData.daylightFired[room.name] = os.date("%Y%m%d", now)
+  end
+  dbg("daylight trigger", room.name, why)
+  return true
+end
+
 function Update()
   if Properties["Enabled"] ~= "On" then setStatus("Disabled") return end
   local lat = tonumber(Properties["Latitude"])
@@ -1883,6 +2001,17 @@ function Update()
       if cleared then saveHolds() end
     end
 
+    -- 1.17.5: an Off scene pressed in the afternoon before today's daylight trigger holds only until that trigger.
+    -- The trigger is evaluated under this hold, and when it fires the hold ends so presence/schedule take over on
+    -- this same pass (2026-11-26: an afternoon Off held the Living Room dark until the next day's noon).
+    if room.overrideUntil and room.holdKind == "offTrig" and room.on_daylight and dayActive then
+      if evalDaylightTrigger(room, now, minNow, noon, lat, lon) then
+        room.overrideUntil, room.holdKind = nil, nil
+        saveHolds()
+        dbg("daylight trigger releases Off hold", room.name)
+      end
+    end
+
     if room.overrideUntil then
       held = held + 1
       if not inWake and dayActive and not room.wasInWindow then
@@ -1905,18 +2034,7 @@ function Update()
       local scheduled = (onMin ~= nil and offMin ~= nil) or (room.on_daylight ~= nil and offMin ~= nil)
       local inWindow = true
       if room.on_daylight then
-        if not room.dayTriggered and minNow >= noon then
-          local el = SunPositionCached(now, lat, lon)
-          local D = clearDaylight(el) * cloudTransmittance(cloudNow())
-          if D < room.on_daylight then
-            room.dayTriggered = true
-            if type(PersistData) == "table" then                       -- 1.11.4: the trigger survives a restart or Rooms JSON save
-              if type(PersistData.daylightFired) ~= "table" then PersistData.daylightFired = {} end
-              PersistData.daylightFired[room.name] = os.date("%Y%m%d", now)
-            end
-            dbg("daylight trigger", room.name, string.format("D=%.2f", D))
-          end
-        end
+        evalDaylightTrigger(room, now, minNow, noon, lat, lon)      -- 1.17.5: model or room lux sensor
         if offMin ~= nil and offMin < noon then   -- 1.11.3: off time after midnight: open from the trigger to midnight, then to off
           inWindow = room.dayTriggered and (minNow >= noon or minNow < offMin)
         else
@@ -1946,7 +2064,7 @@ function Update()
               "over " .. tostring(room.off_ramp_min) .. " min")
           end
         end
-        if room.pr.state == PR_OCCUPIED then presenceDrive(room, now, inWindow) end
+        if room.pr.state == PR_OCCUPIED then presenceDrive(room, now, inWindow, true) end   -- 1.17.5: schedule pass, gentle turn-on
         room.wasInWindow = inWindow
         skipWhy = "presence"                                       -- 1.16.24
       elseif prBlocks then
@@ -2022,6 +2140,7 @@ function Update()
       end
 
       if inWindow and occupied(room) and not prVacant then
+        if not prevWin and not inMorning and not anyOn(room) then room.luxSeed = true end   -- 1.17.5: on edge from all-off
         local level, cct = ComputeRoomTarget(room, now, lat, lon)
         for _, l in ipairs(room.lights) do
           local lv = level
@@ -2042,6 +2161,7 @@ function Update()
             n = n + 1
           end
         end
+        noteLuxConverged(room, now)                                  -- 1.17.5
       elseif room.follow and not inWindow and dayActive and not (room.offFadeUntil and now < room.offFadeUntil)
              and not prVacant and (not presenceOn() or occupied(room)) then
         -- outside the on/off schedule: only track daylight for lights that are already on
@@ -2235,6 +2355,14 @@ local function loadRooms(closeGate)
     local savedRoomHold = (type(PersistData) == "table" and type(PersistData.roomHolds) == "table")
       and tonumber(PersistData.roomHolds[room.name]) or nil
     if savedRoomHold and savedRoomHold > os.time() then room.overrideUntil = savedRoomHold end   -- 1.11.7: scene/Off hold
+    if room.overrideUntil and type(PersistData) == "table" and type(PersistData.roomHoldKinds) == "table" then
+      local k = PersistData.roomHoldKinds[room.name]          -- 1.17.5
+      if k == "off" or k == "offTrig" then room.holdKind = k end
+    end
+    if type(PersistData) == "table" and type(PersistData.luxConverged) == "table" then   -- 1.17.5: dusk seed cap
+      local c = tonumber(PersistData.luxConverged[room.name])
+      if c and c > 0 and c <= 100 then room.luxConv = c end
+    end
     for _, l in ipairs(r.lights or {}) do
       local id = tonumber(l.id) or 0
       if id > 0 then
@@ -2467,8 +2595,19 @@ local function applyScene(roomName, sceneName)
           end
         end
         room.overrideUntil = nextOnTime(room, now, lat, lon)
+        -- 1.17.5: Off after noon but before today's daylight trigger: the hold ends when that trigger fires
+        -- (see Update), not at tomorrow's noon. Off after the trigger keeps the next-day hold.
+        -- "Fired today" also checks the persisted date: an earlier evening Off already reset dayTriggered.
+        local firedToday = room.dayTriggered or (type(PersistData) == "table" and type(PersistData.daylightFired) == "table"
+          and PersistData.daylightFired[room.name] == os.date("%Y%m%d", now))
+        if room.on_daylight and not firedToday and minuteOf(now) >= 720 then
+          room.holdKind = "offTrig"
+        else
+          room.holdKind = "off"
+        end
         room.dayTriggered = false
       else
+        room.holdKind = nil
         cancelOffFade(room)
         local cct
         if lat and lon then _, cct = ComputeRoomTarget(room, now, lat, lon) end
