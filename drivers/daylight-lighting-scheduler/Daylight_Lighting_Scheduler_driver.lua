@@ -1,6 +1,11 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.17.0
+  DRIVER_VERSION: 1.17.1
+
+  1.17.1 (2026-11-26): level-only presence rooms (manualHold "level") honour a hand-off once the sensors report
+    clear. Before, the room stayed OCCUPIED for the whole off delay after the sensor cleared, so a hand-off at the
+    switch was turned straight back on (laundry, 2026-11-26). A hand-off with the sensor still occupied is re-driven
+    as before.
 
   1.17.0 (2026-11-26): morning window and lux targets by time of day.
     - Rooms JSON "morning": { "start": "sunrise-30", "stop": "sunrise+150", "target": 3, "start_level": 15,
@@ -181,7 +186,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.17.0"
+DRIVER_VERSION = "1.17.1"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -1130,6 +1135,13 @@ local function prManual(room, light, v, now)
     if pr.state == PR_FADING then dbg("presence manual change ignored, fading", room.name, tostring(light.id)) return end
     if v == 0 then
       light.overrideUntil, light.offHold = nil, nil
+      if pr.state == PR_OCCUPIED and not pr.rawOcc then               -- 1.17.1: sensors already clear (off delay
+        pr.state, pr.offAt, pr.fadeAt = PR_VACANT, nil, nil           -- running): the hand-off is the vacancy, honour it
+        dbg("presence manual off while sensors clear, room vacant", room.name, tostring(light.id))
+        fire("Room Vacant", room.name)
+        prSave()
+        return
+      end
       if pr.state == PR_OCCUPIED then presenceDrive(room, now) end   -- occupied: presence turns it back on
       dbg("presence manual off, level-only room", room.name, tostring(light.id))
       prSave()
