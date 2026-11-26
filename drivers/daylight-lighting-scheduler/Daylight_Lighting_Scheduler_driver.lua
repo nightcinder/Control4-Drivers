@@ -1,6 +1,12 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.17.2
+  DRIVER_VERSION: 1.17.3
+
+  1.17.3 (2026-11-26): occupied follow rooms glide at the off edge. A room that is OCCUPIED when its off time
+    arrives now steps down to its presence nightLevel over off_ramp_min (the 1.16.13 stepped fade, with a floor)
+    instead of dropping in 2 s; presence stays out until the glide ends. Rooms with fixed "levels" are unchanged.
+    New presence option "nightAfterDark":true: outside the on window, nightLevel only while the sun is down.
+    A glide does not write OFF_RAMP_DONE.
 
   1.17.2 (2026-11-26): presence "levels" for follow rooms: [ { "at": "06:30", "level": 80 }, { "at": "21:00", "level": 20 } ].
     The walk-in level comes straight from the entry whose time has passed (the last entry carries over past midnight),
@@ -191,7 +197,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.17.2"
+DRIVER_VERSION = "1.17.3"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -804,7 +810,7 @@ end
 -- expired, ramping to 0), HOLD (occupied and turned off by hand: stays off until vacancy or a manual on).
 ---------------------------------------------------------------------------
 local PR_VACANT, PR_OCCUPIED, PR_FADING, PR_HOLD = "VACANT", "OCCUPIED", "FADING", "HOLD"
-local cancelOffFade, safeUpdate
+local cancelOffFade, safeUpdate, offFadeRunning
 
 -- Presence UI (1.13.0): the Rooms JSON is the source of truth, but an installer needs to see and
 -- adjust a room's presence settings in Composer. DriverWorks cannot create properties at runtime,
@@ -969,12 +975,16 @@ local function presenceDrive(room, now, inWindow)
   local lat, lon = latlon()
   if not (lat and lon and gateOpen and pr.follow and pr.state == PR_OCCUPIED and Properties["Enabled"] == "On") then return end
   if room.overrideUntil and now < room.overrideUntil then return end   -- scene hold blocks presence ramps
+  if offFadeRunning(room) then return end   -- 1.17.3: the off-edge glide to nightLevel owns the lights
   if inWindow == nil then inWindow = prInWindow(room, now, lat, lon) end
   local lvl, cct
   local fixed = pr.levels ~= nil                                   -- 1.17.2: fixed walk-in levels, no lux loop
   if fixed then
     lvl = luxTargetFor({ targets = pr.levels, target = pr.nightLevel }, now, minuteOf(now), lat, lon)
-  elseif inWindow then lvl, cct = ComputeRoomTarget(room, now, lat, lon) else lvl = pr.nightLevel end
+  elseif inWindow then lvl, cct = ComputeRoomTarget(room, now, lat, lon)
+  elseif pr.nightAfterDark and (SunPositionCached(now, lat, lon) or -1) > 0 then
+    lvl = 0          -- 1.17.3: off window in daylight (before the evening trigger): no walk-in light
+  else lvl = pr.nightLevel end
   local fadeMs = math.floor(pr.fadeInSec * 1000 + 0.5)
   for _, l in ipairs(room.lights) do
     if not l.overrideUntil and not l.offHold then
@@ -1317,8 +1327,15 @@ local function parsePresence(r, room, warns)
     else warn("levels") end
     if #levels == 0 then levels = nil end
   end
+  -- 1.17.3: "nightAfterDark":true = outside the on window, nightLevel only while the sun is down (no walk-in
+  -- light on a bright afternoon before the evening trigger). Default false keeps the old behaviour.
+  local nightAfterDark = false
+  if p.nightAfterDark ~= nil then
+    if type(p.nightAfterDark) == "boolean" then nightAfterDark = p.nightAfterDark else warn("nightAfterDark") end
+  end
   return {
     key = room.key, follow = follow, allow = allow, levelOnly = levelOnly, levels = levels,
+    nightAfterDark = nightAfterDark,
     offDelaySec = num("offDelaySec", 180, 10, 3600, true),
     robotOffDelaySec = num("robotOffDelaySec", 90, 10, 3600, true),
     fadeInSec = num("fadeInSec", 2, 0, 60, false),
@@ -1497,7 +1514,8 @@ end
 -- Long off fades are therefore stepped here: every OFF_FADE_STEP_MS the next level goes out with a
 -- ramp time of one step, so a light only ever has to glide for 60 s.
 local OFF_FADE_STEP_MS = 60000
-local offFades = {}                 -- room.name -> { steps, done, from = {id -> level}, sent = {id -> level}, timer }
+local offFades = {}                 -- room.name -> { steps, done, from = {id -> level}, sent = {id -> level}, timer, floor }
+offFadeRunning = function(room) return offFades[room.name] ~= nil end
 
 cancelOffFade = function(room, reason)
   local f = offFades[room.name]
@@ -1551,12 +1569,13 @@ local function offFadeStep(room)
         f.from[l.id] = nil                    -- a hand on the dimmer, or a hand-off, takes the light out
         dbg("off fade light held, left out", room.name, tostring(l.id), "step", tostring(f.done))
       else
-        local lvl = 0
-        if not last then lvl = math.floor(from * (1 - f.done / f.steps) + 0.5) end
+        local fl = f.floor or 0                 -- 1.17.3: a glide stops at its floor (nightLevel), not 0
+        local lvl = fl
+        if not last then lvl = math.floor(fl + (from - fl) * (1 - f.done / f.steps) + 0.5) end
         if f.sent[l.id] ~= lvl then
           f.sent[l.id] = lvl
           if last then
-            dbg("off fade final 0", room.name, tostring(l.id))
+            dbg("off fade final", tostring(fl), room.name, tostring(l.id))
           else
             dbg("off fade step", room.name, tostring(l.id), "level", tostring(lvl), "step", tostring(f.done), "of", tostring(f.steps))
           end
@@ -1567,20 +1586,23 @@ local function offFadeStep(room)
   end
   if last then
     cancelOffFade(room, "done")
-    setDlsEvent("OFF_RAMP_DONE", room.name)          -- 1.16.23
+    if not f.floor then setDlsEvent("OFF_RAMP_DONE", room.name) end   -- 1.16.23; a 1.17.3 glide is not an off
   end
 end
 
 -- Returns true only when a fade is actually running. A light that is already off is never seeded from
 -- lastLevel: after a hand-off, lastLevel still carries the old level while the bulb is dark, and seeding
 -- from it would turn the room back on at the off edge and dim it for half an hour.
-local function startOffFade(room, sec)
+-- 1.17.3: floor (optional, > 0) makes it a glide down to that level instead of an off; lights already at or
+-- under the floor are left out.
+local function startOffFade(room, sec, floor)
   cancelOffFade(room, "restart")
-  local f = { steps = math.max(1, math.ceil(sec / (OFF_FADE_STEP_MS / 1000))), done = 0, from = {}, sent = {}, timer = nil }
+  if floor and floor <= 0 then floor = nil end
+  local f = { steps = math.max(1, math.ceil(sec / (OFF_FADE_STEP_MS / 1000))), done = 0, from = {}, sent = {}, timer = nil, floor = floor }
   for _, l in ipairs(room.lights) do
     if not l.overrideUntil and not l.offHold then
       local lvl = curLevel(l)
-      if lvl > 0.5 then f.from[l.id] = lvl end
+      if lvl > (floor or 0) + 0.5 then f.from[l.id] = lvl end
     end
   end
   if next(f.from) == nil then return false end
@@ -1855,6 +1877,15 @@ function Update()
       local prVacant = room.pr and not room.pr.follow and Properties["Presence Lighting"] == "On"
         and room.pr.state == PR_VACANT                                -- 1.16.15: stay dark in-window, still run scheduled off
       if prOwns then
+        -- 1.17.3: occupied at the off edge: glide down to nightLevel over off_ramp_min (stepped), not a 2 s drop.
+        -- Fixed-level rooms ("levels") keep their walk-in level. presenceDrive stays out while the glide runs.
+        if room.pr.state == PR_OCCUPIED and scheduled and room.wasInWindow and not inWindow
+           and not room.pr.levels and room.off_ramp_min and not room.overrideUntil then
+          if startOffFade(room, room.off_ramp_min * 60, room.pr.nightLevel) then
+            dbg("presence off edge, occupied: glide to night level", room.name, tostring(room.pr.nightLevel),
+              "over " .. tostring(room.off_ramp_min) .. " min")
+          end
+        end
         if room.pr.state == PR_OCCUPIED then presenceDrive(room, now, inWindow) end
         room.wasInWindow = inWindow
         skipWhy = "presence"                                       -- 1.16.24

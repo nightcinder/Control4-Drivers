@@ -158,9 +158,12 @@
       }
     ],
     "presence": {
-      "follow": false,
-      "offDelaySec": 3600,
+      "follow": true,
+      "offDelaySec": 1200,
+      "fadeInSec": 2,
       "fadeOutSec": 30,
+      "nightLevel": 5,
+      "nightAfterDark": true,
       "sources": [
         "esp"
       ]
