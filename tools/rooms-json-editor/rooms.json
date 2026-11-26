@@ -233,7 +233,7 @@
     "presence": {
       "follow": true,
       "manualHold": "level",
-      "offDelaySec": 180,
+      "offDelaySec": 60,
       "robotOffDelaySec": 90,
       "fadeInSec": 2,
       "fadeOutSec": 30,
