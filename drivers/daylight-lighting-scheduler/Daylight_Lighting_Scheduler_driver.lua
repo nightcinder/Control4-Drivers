@@ -1,6 +1,18 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.24
+  DRIVER_VERSION: 1.17.0
+
+  1.17.0 (2026-11-26): morning window and lux targets by time of day.
+    - Rooms JSON "morning": { "start": "sunrise-30", "stop": "sunrise+150", "target": 3, "start_level": 15,
+      "off_factor": 2, "presence_room": "<key>", "dev": <id>, "var": <id> } (all optional; dev/var default to the
+      room's lux). Inside start..stop, when the morning lux reads below target and the gating room is OCCUPIED
+      (presence_room key, else the room's own presence; no gate with Presence Lighting off), the room gets an on
+      window. The lux loop starts at start_level and steers to the morning target. It ends at stop, when the
+      presence_room goes vacant, or when lux reaches off_factor x target with the loop at min_level (no re-latch
+      that day). The end is a normal off edge (off_ramp_min fade). Fixes: on_daylight rooms had no morning window,
+      so a dark morning left every light off.
+    - Rooms JSON lux.targets: [ { "at": "<time spec>", "target": <lux> }, ... ]. The latest entry at or before now
+      sets the lux target; before the first entry of the day the last one carries over. lux.target is the fallback.
 
   1.16.24 (2026-11-25): review fixes to the 1.16.23 variables, no lighting behaviour change.
     - Edges: a per-room edgeSeen flag replaces the nil check, so a daylight room loaded after noon-60 (wasInWindow
@@ -169,7 +181,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.24"
+DRIVER_VERSION = "1.17.0"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -543,6 +555,55 @@ local function windowsRemaining(windows, el, az, D)
   return rem
 end
 
+-- 1.17.0: lux target by time of day. lx.targets is a list of { at = time spec, target = lux }; the entry with the
+-- latest start at or before now wins, and before the first start of the day the last entry carries over from the
+-- evening before. With no list (or nothing resolvable) lx.target applies.
+function luxTargetFor(lx, now, minNow, lat, lon)
+  local best, bestMin, last, lastMin
+  for _, t in ipairs(lx.targets or {}) do
+    local m = resolveTimeSpec(t.at, now, lat, lon)
+    if m then
+      if m <= minNow and (bestMin == nil or m > bestMin) then best, bestMin = t, m end
+      if lastMin == nil or m > lastMin then last, lastMin = t, m end
+    end
+  end
+  local pick = best or last
+  local v = pick and tonumber(pick.target) or lx.target
+  if not v or v <= 0 then v = lx.target or 1 end
+  return v
+end
+
+local function parseLuxTargets(list)
+  if type(list) ~= "table" then return nil end
+  local out = {}
+  for _, t in ipairs(list) do
+    local v = type(t) == "table" and tonumber(t.target)
+    if v and v > 0 and type(t.at) == "string" then out[#out + 1] = { at = t.at, target = v } end
+  end
+  if #out == 0 then return nil end
+  return out
+end
+
+-- 1.17.0: optional morning window. Rooms JSON "morning": { start, stop, target, start_level, off_factor,
+-- presence_room, dev, var, gain, step }. dev/var default to the room's lux sensor.
+local function parseMorning(m, lux)
+  if type(m) ~= "table" or m.enabled == false then return nil end
+  local dev = tonumber(m.dev) or (type(lux) == "table" and tonumber(lux.dev)) or 0
+  if dev <= 0 then return nil end
+  local var = tonumber(m.var) or (type(lux) == "table" and tonumber(lux.var)) or 1000
+  local target = tonumber(m.target) or 3
+  if target <= 0 then target = 3 end
+  return {
+    start = type(m.start) == "string" and m.start or "sunrise-30",
+    stop = type(m.stop) == "string" and m.stop or "sunrise+150",
+    dev = dev, var = var, target = target,
+    gain = tonumber(m.gain), step = tonumber(m.step),
+    start_level = clamp(tonumber(m.start_level) or 15, 1, 100),
+    off_factor = math.max(1, tonumber(m.off_factor) or 2),
+    presence_room = type(m.presence_room) == "string" and m.presence_room or nil,
+  }
+end
+
 function ComputeRoomTarget(room, now, lat, lon, light)
   local el, az = SunPositionCached(now, lat, lon)
   local d = os.date("*t", now)
@@ -561,20 +622,24 @@ function ComputeRoomTarget(room, now, lat, lon, light)
   -- optional closed loop when a lux sensor is bound
   -- 1.11.9: the correction is a room-level factor, so per-light targets (own windows/max_level) use it too.
   local rawLevel = level
-  if room.lux and not light then
-    local lux = tonumber(C4:GetDeviceVariable(room.lux.dev, room.lux.var))
+  -- 1.17.0: while the morning window is latched, the loop uses the morning lux source and target
+  local lx = room.lux
+  if room.morningOn and room.morning then lx = room.morning end
+  if lx and not light then
+    local lux = tonumber(C4:GetDeviceVariable(lx.dev, lx.var))
     if lux then
       local prev = room.luxLevel or level
-      local err = (room.lux.target - lux) / room.lux.target
-      local maxStep = room.lux.step or 2          -- 1.16.21: gentle correction, at most this many levels per update
-      local move = clamp((room.lux.gain or 10) * err, -maxStep, maxStep)
+      local tgt = luxTargetFor(lx, now, minNow, lat, lon)
+      local err = (tgt - lux) / tgt
+      local maxStep = lx.step or 2                -- 1.16.21: gentle correction, at most this many levels per update
+      local move = clamp((lx.gain or 10) * err, -maxStep, maxStep)
       room.luxLevel = clamp(prev + move, room.min_level, base)
       level = room.luxLevel
     end
     room.luxScale = (rawLevel > 0) and (level / rawLevel) or nil
-  elseif room.lux and light and room.luxScale then
+  elseif lx and light and room.luxScale then
     level = level * room.luxScale
-  elseif not room.lux then
+  elseif not lx then
     room.luxScale = nil
   end
 
@@ -870,6 +935,7 @@ end
 -- T1/T2 window test: is the room inside its on window (section 6 uses the off window for night level)?
 local function prInWindow(room, now, lat, lon)
   if not dayOk(room.days, now) then return false end
+  if room.morningOn then return true end          -- 1.17.0: morning window
   local minNow = minuteOf(now)
   if room.on_daylight then
     local offMin = offMinFor(room.off or "23:00", now, lat, lon)
@@ -1495,9 +1561,53 @@ local function startOffFade(room, sec)
   return true
 end
 
+-- 1.17.0: morning window latch. The window opens inside [start, stop) when the morning lux reads below its target
+-- and the gating room (presence_room key, else the room's own presence) is OCCUPIED. It closes at stop, when the
+-- presence_room goes vacant, or when the lux sits at off_factor x target with the loop already at min_level (daylight
+-- has taken over; no re-latch that day). With Presence Lighting off, presence does not gate.
+local function morningTick(room, now, minNow, lat, lon)
+  local m = room.morning
+  if not m then return false end
+  local today = os.date("%Y%m%d", now)
+  if room.morningDay ~= today then room.morningDay, room.morningDone = today, nil end
+  local s = resolveTimeSpec(m.start, now, lat, lon)
+  local e = resolveTimeSpec(m.stop, now, lat, lon)
+  local inRange = s ~= nil and e ~= nil and minNow >= s and minNow < e
+  local occOk, gated = true, false
+  if presenceOn() then
+    local pr = room.pr
+    if m.presence_room then
+      pr = nil
+      for _, r2 in ipairs(rooms) do
+        if r2.key and r2.key:lower() == m.presence_room:lower() then pr = r2.pr break end
+      end
+      gated = pr ~= nil
+    end
+    if pr then occOk = (pr.state == PR_OCCUPIED) end
+  end
+  local lux = tonumber(C4:GetDeviceVariable(m.dev, m.var))
+  if room.morningOn then
+    local why
+    if not inRange then why = "window end"
+    elseif gated and not occOk then why = "presence room vacant"
+    elseif lux and lux >= m.target * m.off_factor and (room.luxLevel or 0) <= room.min_level + 0.5 then
+      why = "daylight"; room.morningDone = true
+    end
+    if why then
+      room.morningOn, room.luxLevel = nil, nil
+      dbg("morning off", room.name, why, "lux " .. tostring(lux))
+    end
+  elseif inRange and not room.morningDone and lux and lux < m.target and occOk then
+    room.morningOn, room.luxLevel = true, m.start_level
+    dbg("morning on", room.name, "lux " .. tostring(lux), "target " .. tostring(m.target))
+  end
+  return room.morningOn == true
+end
+
 -- 1.16.22: true once the room's scheduled off time is reached. Clock only: a daylight room's trigger flag is
 -- not used, because an Off scene resets it and a scene hold stops it from updating.
 local function pastOffTime(room, now, minNow, lat, lon, noon)
+  if room.morningOn then return false end          -- 1.17.0: the morning window is an on window
   local spec = room.off or (room.on_daylight and "23:00") or nil
   if not spec then return false end
   local offMin = offMinFor(spec, now, lat, lon)
@@ -1630,6 +1740,7 @@ function Update()
       end
     end
     room.wasInWake = inWake
+    local inMorning = (not inWake) and dayActive and morningTick(room, now, minNow, lat, lon)   -- 1.17.0
 
     -- 1.16.22: the scheduled off edge beats every hold set before it. Any hold alive at the edge was set while
     -- the room was in its on window (2026-11-24: a 120 min Den Lamp hold from about 22:00 skipped the 23:30 fade),
@@ -1667,7 +1778,7 @@ function Update()
           if onMin <= offMin then inW = (minNow >= onMin and minNow < offMin)
           else inW = (minNow >= onMin or minNow < offMin) end
         end
-        if inW then room.wasInWindow = true end
+        if inW or inMorning then room.wasInWindow = true end
       end
     elseif not inWake then
       local onMin  = resolveTimeSpec(room.on, now, lat, lon)
@@ -1698,6 +1809,7 @@ function Update()
         else inWindow = (minNow >= onMin or minNow < offMin) end
       end
       if not dayActive then inWindow = false end
+      if inMorning then inWindow, scheduled = true, true end      -- 1.17.0: morning window
 
       -- presence rooms (1.11.0): a follow room is driven by its presence state only; a non-follow room keeps the
       -- schedule except while VACANT, FADING or HOLD
@@ -1982,7 +2094,8 @@ local function loadRooms(closeGate)
       daylight_off = (tonumber(r.daylight_off) and clamp(tonumber(r.daylight_off), 0, 1)) or nil,
       max_level = tonumber(r.max_level) or 100,
       away = r.away, on = r.on, off = r.off, off_ramp_min = tonumber(r.off_ramp_min), scenes = r.scenes, days = r.days, windows = parseWindows(r.windows), follow = (r.follow == true), on_daylight = tonumber(r.on_daylight), wake = r.wake,
-      lux = (r.lux and r.lux.dev and r.lux.dev > 0) and { dev = r.lux.dev, var = r.lux.var or 1000, target = tonumber(r.lux.target) or 200, gain = tonumber(r.lux.gain), step = tonumber(r.lux.step) } or nil,
+      lux = (r.lux and r.lux.dev and r.lux.dev > 0) and { dev = r.lux.dev, var = r.lux.var or 1000, target = tonumber(r.lux.target) or 200, gain = tonumber(r.lux.gain), step = tonumber(r.lux.step), targets = parseLuxTargets(r.lux.targets) } or nil,
+      morning = parseMorning(r.morning, r.lux),
       occ = (r.occ and r.occ.dev and r.occ.dev > 0) and {
         dev = r.occ.dev, var = r.occ.var or 1000,
         delaySec = math.max(10, tonumber(r.occ.vacancyDelaySec) or (tonumber(Properties["Vacancy Delay (min)"]) or 10) * 60),
