@@ -1,6 +1,24 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.22
+  DRIVER_VERSION: 1.16.23
+
+  1.16.23 (2026-11-25): read-only Control4 variables for outside outcome checks (c4-bridge reads item
+  variables). No lighting behaviour changes. All are STRING, read-only, added again on every driver load
+  (OnDriverInit and OnDriverLateInit) with their last values restored from PersistData.
+  Time format, used by every variable: local time "YYYY-MM-DDTHH:MM:SS" (os.date "%Y-%m-%dT%H:%M:%S"),
+  no time zone suffix; the time is always the first 19 characters.
+    LAST_ON_EDGE   "<time> <room>"  last room whose schedule went off-window -> on-window (any branch:
+                                    plain, held, presence-owned). The first pass after a load is not an edge.
+    LAST_OFF_EDGE  "<time> <room>"  last room whose schedule went on-window -> off-window.
+    OFF_RAMP_DONE  "<time> <room>"  scheduled off finished: last step of a stepped off fade (or its final 0
+                                    when presence away stops it); an off ramp of 2 min or less, or an off edge
+                                    with nothing lit, is marked at the edge itself.
+    PRESENCE       "HOME" or "AWAY" (house presence, same as the Presence property).
+    LAST_ERROR     "<time> <message>" (max 200 chars) from Update, presence tick, off fade step or load
+                   failures; "" until the first error.
+    HEARTBEAT      "<time>", rewritten every 5 minutes by its own timer (and once at load).
+  Edges are seen by Update, so they carry the time of the Update pass (Update Interval, default 5 min) and
+  none are recorded while Enabled is Off or the house is Away.
 
   1.16.22 (2026-11-25): the scheduled off edge beats every hold set before it. On 2026-11-24 the Den Lamp (476) was held by a per-light manual hold (120 min, set about 22:00-22:05), so the 23:30 off fade skipped it and it stayed on at 100% until the hold expired and off enforcement turned it off at 00:06. At the on-window to off-window edge DLS now clears room (scene) holds and per-light holds, so the fade takes every light that is on. A hand-on AFTER the edge still holds (1.11.2/1.11.6 behaviour unchanged). New read-only property "Last Manual Change" records the light, level, DLS's last level and time of the latest change DLS treated as manual (the start of every manual hold), so the source of a hold can be seen without Lua Output. New per-light Rooms JSON flag "ignore_room_off": true keeps that light on when the room's "Off" scene runs (keypad room Off through ApplyScene); the scheduled off edge still turns it off.
 
@@ -137,7 +155,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.22"
+DRIVER_VERSION = "1.16.23"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -210,6 +228,54 @@ local function setStatus(s)
     s = s .. " | " .. n .. " light(s) not responding"
   end
   prop("Status", s)
+end
+
+-- 1.16.23: read-only Control4 variables for outcome checks (format in the header). Writes never raise.
+local DLS_VARS = { "LAST_ON_EDGE", "LAST_OFF_EDGE", "OFF_RAMP_DONE", "PRESENCE", "LAST_ERROR", "HEARTBEAT" }
+local HEARTBEAT_MS = 5 * 60 * 1000
+local heartbeatTimer
+
+local function isoTime(t)
+  if t then return os.date("%Y-%m-%dT%H:%M:%S", t) end
+  return os.date("%Y-%m-%dT%H:%M:%S")
+end
+
+local function dlsVarStore()
+  if type(PersistData) ~= "table" then return {} end
+  if type(PersistData.dlsVars) ~= "table" then PersistData.dlsVars = {} end
+  return PersistData.dlsVars
+end
+
+local function addDlsVars()
+  local store = dlsVarStore()
+  for _, name in ipairs(DLS_VARS) do
+    local v = store[name]
+    if type(v) ~= "string" then v = "" end
+    pcall(function() C4:AddVariable(name, v, "STRING", true, false) end)   -- fails harmlessly if it exists
+    pcall(function() C4:SetVariable(name, v) end)
+  end
+end
+
+local function setDlsVar(name, value)
+  value = tostring(value or "")
+  pcall(function() dlsVarStore()[name] = value end)
+  pcall(function() C4:SetVariable(name, value) end)
+end
+
+local function setDlsEvent(name, roomName, t)
+  setDlsVar(name, isoTime(t) .. " " .. tostring(roomName or ""))
+end
+
+local function setDlsError(msg)
+  setDlsVar("LAST_ERROR", isoTime() .. " " .. string.sub(tostring(msg), 1, 200))
+end
+
+local function heartbeat() setDlsVar("HEARTBEAT", isoTime()) end
+
+local function startHeartbeat()
+  if heartbeatTimer then pcall(function() heartbeatTimer:Cancel() end) heartbeatTimer = nil end
+  heartbeat()
+  heartbeatTimer = C4:SetTimer(HEARTBEAT_MS, function() pcall(heartbeat) end, true)
 end
 
 -- Programming events (XML <events>). DriverWorks events carry no parameters, so the
@@ -1347,6 +1413,7 @@ local function offFadeStep(room)
   if presenceAway then
     finishFadeAtZero(room, f, "presenceAway")
     cancelOffFade(room, "presenceAway")
+    setDlsEvent("OFF_RAMP_DONE", room.name)          -- 1.16.23
     return
   end
   if room.overrideUntil then cancelOffFade(room, "overrideUntil") return end
@@ -1373,7 +1440,10 @@ local function offFadeStep(room)
       end
     end
   end
-  if last then cancelOffFade(room, "done") end
+  if last then
+    cancelOffFade(room, "done")
+    setDlsEvent("OFF_RAMP_DONE", room.name)          -- 1.16.23
+  end
 end
 
 -- Returns true only when a fade is actually running. A light that is already off is never seeded from
@@ -1393,7 +1463,10 @@ local function startOffFade(room, sec)
   f.timer = C4:SetTimer(OFF_FADE_STEP_MS, function(t)
     if offFades[room.name] ~= f then pcall(function() t:Cancel() end) return end
     local ok, err = pcall(offFadeStep, room)
-    if not ok then dbg("off fade step error", room.name, tostring(err)) end
+    if not ok then
+      dbg("off fade step error", room.name, tostring(err))
+      setDlsError("off fade step " .. tostring(room.name) .. ": " .. tostring(err))   -- 1.16.23
+    end
   end, true)
   offFadeStep(room)                                  -- first step now, not a minute later
   return true
@@ -1466,6 +1539,7 @@ function Update()
 
   local lightsHeld = 0
   for _, room in ipairs(rooms) do
+    local prevWin = room.wasInWindow                 -- 1.16.23: edge variables, compared after the branches
     local holdsChanged = false
     if room.overrideUntil and now >= room.overrideUntil then
       room.overrideUntil = nil
@@ -1622,11 +1696,13 @@ function Update()
         local started
         if offMs > OFF_FADE_STEP_MS * 2 then
           started = startOffFade(room, math.ceil(offMs / 1000))    -- 1.16.13: stepped, see the block above Update()
+          if not started then setDlsEvent("OFF_RAMP_DONE", room.name, now) end   -- 1.16.23: nothing lit
         else
           for _, l in ipairs(room.lights) do
             if not l.overrideUntil and not l.offHold then sendLevel(l, 0, offMs) end
           end
           started = true
+          setDlsEvent("OFF_RAMP_DONE", room.name, now)               -- 1.16.23: short ramp, marked at the edge
         end
         room.offEnforce = true
         -- only hold off enforcement (and 'follow') back while a fade is really running
@@ -1722,6 +1798,10 @@ function Update()
       end
       end
     end
+    -- 1.16.23: schedule edges for the outcome-check variables. prevWin is nil on the first pass after a load,
+    -- so a reload is never reported as an edge.
+    if prevWin == false and room.wasInWindow == true then setDlsEvent("LAST_ON_EDGE", room.name, now)
+    elseif prevWin == true and room.wasInWindow == false then setDlsEvent("LAST_OFF_EDGE", room.name, now) end
   end
   runCurtains(now, lat, lon)
   local cp = cloudNow()
@@ -1965,11 +2045,17 @@ end
 -- 1.11.9: one Lua error used to stop the repeating timer silently. Keep the timer alive and print the error.
 safeUpdate = function()
   local ok, err = pcall(Update)
-  if not ok then print("[DLS] Update failed: " .. tostring(err)) end
+  if not ok then
+    print("[DLS] Update failed: " .. tostring(err))
+    setDlsError("Update: " .. tostring(err))                    -- 1.16.23
+  end
 end
 local function safePresenceTick()
   local ok, err = pcall(presenceTick)
-  if not ok then print("[DLS] presence tick failed: " .. tostring(err)) end
+  if not ok then
+    print("[DLS] presence tick failed: " .. tostring(err))
+    setDlsError("presence tick: " .. tostring(err))             -- 1.16.23
+  end
 end
 
 local function startTimers()
@@ -1984,14 +2070,18 @@ end
 ---------------------------------------------------------------------------
 -- driver lifecycle
 ---------------------------------------------------------------------------
-function OnDriverInit() end
+function OnDriverInit()
+  pcall(addDlsVars)                                -- 1.16.23: dynamic variables are gone after a reload
+end
 
 function OnDriverLateInit()
   -- 1.16.7: whatever happens below, end up with a Status that says so and a running schedule.
   pcall(function() C4:UpdateProperty("Driver Version", DRIVER_VERSION) end)   -- literal kept for the build check
+  pcall(addDlsVars)                                -- 1.16.23: again here, in case OnDriverInit ran too early
   local ok, err = pcall(function()
     if PersistData and PersistData.presenceAway == true then presenceAway = true end
     prop("Presence", presenceAway and "Away" or "Home")
+    setDlsVar("PRESENCE", presenceAway and "AWAY" or "HOME")
     lastAcceptedAt = os.time()
     loadRooms(true)
     refreshPresenceRoomList()
@@ -2000,8 +2090,10 @@ function OnDriverLateInit()
   if not ok then
     dbg("late init failed", tostring(err))
     prop("Status", "Load error: " .. tostring(err))
+    setDlsError("load: " .. tostring(err))         -- 1.16.23
   end
   pcall(startTimers)
+  pcall(startHeartbeat)                            -- 1.16.23
   if presenceTimer then pcall(function() presenceTimer:Cancel() end) end
   pcall(function() presenceTimer = C4:SetTimer(1000, function() safePresenceTick() end, true) end)
   pcall(startPresenceServer)
@@ -2052,6 +2144,7 @@ function OnDriverDestroyed()
   if mainTimer then mainTimer:Cancel() mainTimer = nil end
   if cloudTimer then cloudTimer:Cancel() cloudTimer = nil end
   if presenceTimer then presenceTimer:Cancel() presenceTimer = nil end
+  if heartbeatTimer then pcall(function() heartbeatTimer:Cancel() end) heartbeatTimer = nil end   -- 1.16.23
   if sendTimer then sendTimer:Cancel() sendTimer = nil end
   sendQ = {}
   cancelAllOffFades()
@@ -2136,6 +2229,7 @@ local function setPresence(state)
   presenceAway = away
   if PersistData then PersistData.presenceAway = away end
   C4:UpdateProperty("Presence", away and "Away" or "Home")
+  setDlsVar("PRESENCE", away and "AWAY" or "HOME")   -- 1.16.23
   fire(away and "Presence Away" or "Presence Home")
   local now = os.time()
   if away then
