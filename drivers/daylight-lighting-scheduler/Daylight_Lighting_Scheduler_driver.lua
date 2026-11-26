@@ -1,6 +1,9 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.17.5
+  DRIVER_VERSION: 1.17.6
+
+  1.17.6 (2026-11-26): remote log fix. Loki answered 400 to every post: C4:JsonEncode writes Lua arrays as
+    objects ({"1":...}). The push body is now built by hand.
 
   1.17.5 (2026-11-26): dark afternoons turn the lights on, gently. Fixes Thanksgiving: an overcast day with
     both sensors occupied and the room reading 0.3 lux stayed dark past sunset.
@@ -219,7 +222,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.17.5"
+DRIVER_VERSION = "1.17.6"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -263,7 +266,18 @@ local function flushRemoteLog()
   if #remoteBuf == 0 then return end
   local batch = remoteBuf
   remoteBuf = {}
-  local body = C4:JsonEncode({ streams = { { stream = { job = "control4", driver = "dls" }, values = batch } } })
+  -- 1.17.6: JSON built by hand. C4:JsonEncode writes Lua arrays as objects ({"1":...}), which Loki rejects with 400.
+  local function jstr(s)
+    s = tostring(s):gsub('[%c"\\]', function(c)
+      if c == '"' then return '\\"' elseif c == "\\" then return "\\\\"
+      elseif c == "\n" then return "\\n" elseif c == "\r" then return "\\r" elseif c == "\t" then return "\\t"
+      else return string.format("\\u%04x", c:byte()) end
+    end)
+    return '"' .. s .. '"'
+  end
+  local vals = {}
+  for i, v in ipairs(batch) do vals[i] = "[" .. jstr(v[1]) .. "," .. jstr(v[2]) .. "]" end
+  local body = '{"streams":[{"stream":{"job":"control4","driver":"dls"},"values":[' .. table.concat(vals, ",") .. ']}]}'
   remoteBusy = os.time()
   local ok = pcall(function()
     C4:urlPost(url, body, { ["Content-Type"] = "application/json" }, false,
