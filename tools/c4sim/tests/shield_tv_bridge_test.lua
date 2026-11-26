@@ -398,7 +398,7 @@ t.test("page HELLO right after the tile SELECT does not select twice", function(
   sim.call("ReceivedFromProxy", REMOTE, "SELECT", {})
   local n = 0
   for _, s in ipairs(sim.sent) do if s.cmd == "SELECT_VIDEO_DEVICE" then n = n + 1 end end
-  sim.exec("UI_HELLO_4", {})
+  sim.exec("UI_HELLO_5", {})
   local m = 0
   for _, s in ipairs(sim.sent) do if s.cmd == "SELECT_VIDEO_DEVICE" then m = m + 1 end end
   t.eq(n, 1, "one select from the tile")
@@ -435,6 +435,17 @@ t.test("UI_POWER with the room on a sleeping Shield wakes it instead of turning 
   t.ok(sim.last_sent("ROOM_OFF") == nil, "room not turned off")
   t.ok(any_url_has("/v1/wake"), "Shield woken")
 end)
+
+t.test("UI_STATE on flag drives the power toggle (1.5.6)", function()
+  start(nil)
+  remote_room(true)
+  feed_status('{"awake":true}')
+  sim.exec("UI_REFRESH", {})
+  t.ok(string.find(sim.dvars["UI_STATE"] or "", '"on":true', 1, true) ~= nil, "on when room on awake Shield")
+  sim.exec("UI_POWER", {})
+  t.ok(string.find(sim.dvars["UI_STATE"] or "", '"on":false', 1, true) ~= nil, "off after power press")
+  t.eq(#sim.errors, 0, "no driver error")
+end)
 t.test("UI_KEY_* refuses keys outside the allow list", function()
   start(nil)
   remote_room(true)
@@ -466,8 +477,8 @@ end)
 
 t.test("UI_HELLO sets Web Page Status (OK and stale)", function()
   start(nil)
-  sim.exec("UI_HELLO_4", {})
-  t.eq(sim._store["Web Page Status"], "Page build 4 OK", "build 4 ok")
+  sim.exec("UI_HELLO_5", {})
+  t.eq(sim._store["Web Page Status"], "Page build 5 OK", "build 5 ok")
   sim.exec("UI_HELLO_1", {})
   t.ok(string.find(sim._store["Web Page Status"] or "", "PAGE IS STALE", 1, true) ~= nil, "stale flagged")
 end)
@@ -547,7 +558,7 @@ t.test("UI_POWER off cooldown suppresses launchOnOpen for 15s and OFF sets aslee
   local off = sim.last_sent("ROOM_OFF")
   t.ok(off ~= nil and off.id == 77, "ROOM_OFF sent")
   sim.set_var(77, 1000, "0")
-  sim.exec("UI_HELLO_4", {})
+  sim.exec("UI_HELLO_5", {})
   sim.call("ReceivedFromProxy", REMOTE, "SELECT", {})
   t.ok(sim.last_sent("SELECT_VIDEO_DEVICE") == nil, "launchOnOpen suppressed during 15s power-off cooldown")
   t.ok(not any_url_has("/v1/wake"), "no wake sent during power-off cooldown")

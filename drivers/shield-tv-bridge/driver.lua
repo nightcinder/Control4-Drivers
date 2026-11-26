@@ -1,12 +1,12 @@
 -- Shield TV Bridge - Control4 DriverWorks driver (Lua 5.1)
--- Version 1.5.1
+-- Version 1.5.6
 -- Controls an NVIDIA Shield TV through an HTTP/JSON bridge on a Linux host.
 -- Presents one media_service primary proxy (5001: keys, power, HDMI output, Navigator
 -- Now Playing), an avswitch proxy (5002) with 25 mini app slots (3051-3075), and a uibutton
--- proxy (5003, "Shield Remote") that opens the phone remote web page www/remote1.html.
+-- proxy (5003, "Shield Remote") that opens the phone remote web page www/remote5.html.
 -- The App N Package properties are fallbacks, used only when no mini app is bound to the slot.
 
-local DRIVER_VERSION = "1.5.5"
+local DRIVER_VERSION = "1.5.6"
 
 local PROXY_NOWPLAYING = 5001   -- media_service (primary): remote keys, power, AV output, Navigator Now Playing
 local PROXY_SWITCH = 5002       -- avswitch: app slots
@@ -985,12 +985,12 @@ local function ensureRoomSelected(roomId)
 end
 
 -- ---------------------------------------------------------------- Shield Remote web page (1.5.0)
--- uibutton proxy 5003 opens www/remote4.html. The page sends parameter-free UI_* commands
+-- uibutton proxy 5003 opens www/remote5.html. The page sends parameter-free UI_* commands
 -- (UI_KEY_<KEY>, UI_VOL_UP/DOWN, UI_MUTE, UI_REFRESH, UI_HELLO_<build>) and reads the UI_STATE
 -- variable / SendDataToUI snapshot. Opening the page (SELECT on 5003, or the page's UI_HELLO) selects the
 -- Shield in this room and wakes it (launchOnOpen), but never sends a key.
 local PROXY_REMOTE = 5003
-local PAGE_BUILD = 4            -- must match PAGE_BUILD in www/remote4.html (file renamed per release)
+local PAGE_BUILD = 5            -- must match PAGE_BUILD in www/remote5.html (file renamed per release)
 local uiSeq = 0
 
 local REMOTE_KEYS = {
@@ -1026,10 +1026,14 @@ publishRemoteState = function(force)
     '"app":' .. jsonEsc(appLabel(lastApp)),
     '"awake":' .. awake,
   }, ",") .. "}"
-  local extra = string.format('"muted":%s,"vol":%s,"artKey":%s',
+  -- 1.5.6: "on" drives the power toggle icon: the room is on the Shield and the Shield is awake.
+  local okRid, rid = pcall(function() return C4:RoomGetId() end)
+  local isOn = (okRid and roomIsOnMe(rid) and lastAwake == true) and true or false
+  local extra = string.format('"muted":%s,"vol":%s,"artKey":%s,"on":%s',
     roomMuted == nil and "null" or tostring(roomMuted),
     roomVolume and tostring(roomVolume) or "null",
-    jsonEsc(artInline.key or ""))
+    jsonEsc(artInline.key or ""),
+    tostring(isOn))
   local fullText = text .. extra
   if force or fullText ~= remoteStateText then
     remoteStateText = fullText
@@ -1192,7 +1196,10 @@ end
 function OnWatchedVariableChanged(idDevice, idVariable, strValue)
   local ok, err = pcall(function()
     local dev, var = tonumber(idDevice), tonumber(idVariable)
-    if var == VAR_CURRENT_SELECTED_DEVICE then npRefreshSelection() end
+    if var == VAR_CURRENT_SELECTED_DEVICE then
+      npRefreshSelection()
+      if publishRemoteState then publishRemoteState(false) end  -- 1.5.6: power toggle icon follows room source
+    end
     if dev ~= roomAudio.room then return end
     if var == roomAudio.mute then roomMuted = truthy(strValue); publishRemoteState(false)
     elseif var == roomAudio.vol then roomVolume = tonumber(strValue); publishRemoteState(false) end
@@ -1227,6 +1234,7 @@ local function handleUi(cmd)
         lastOpenLaunch = os.time()
         ensureRoomSelected(rid)
       end
+      publishRemoteState(true)
     end
   elseif cmd == "UI_REFRESH" then
     publishArt(true)
