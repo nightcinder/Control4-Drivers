@@ -1,6 +1,11 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.17.1
+  DRIVER_VERSION: 1.17.2
+
+  1.17.2 (2026-11-26): presence "levels" for follow rooms: [ { "at": "06:30", "level": 80 }, { "at": "21:00", "level": 20 } ].
+    The walk-in level comes straight from the entry whose time has passed (the last entry carries over past midnight),
+    with no lux closed loop: it is set once on entry and held for the visit. A light's max_level still caps it.
+    Rooms without "levels" are unchanged.
 
   1.17.1 (2026-11-26): level-only presence rooms (manualHold "level") honour a hand-off once the sensors report
     clear. Before, the room stayed OCCUPIED for the whole off delay after the sensor cleared, so a hand-off at the
@@ -186,7 +191,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.17.1"
+DRIVER_VERSION = "1.17.2"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -966,12 +971,16 @@ local function presenceDrive(room, now, inWindow)
   if room.overrideUntil and now < room.overrideUntil then return end   -- scene hold blocks presence ramps
   if inWindow == nil then inWindow = prInWindow(room, now, lat, lon) end
   local lvl, cct
-  if inWindow then lvl, cct = ComputeRoomTarget(room, now, lat, lon) else lvl = pr.nightLevel end
+  local fixed = pr.levels ~= nil                                   -- 1.17.2: fixed walk-in levels, no lux loop
+  if fixed then
+    lvl = luxTargetFor({ targets = pr.levels, target = pr.nightLevel }, now, minuteOf(now), lat, lon)
+  elseif inWindow then lvl, cct = ComputeRoomTarget(room, now, lat, lon) else lvl = pr.nightLevel end
   local fadeMs = math.floor(pr.fadeInSec * 1000 + 0.5)
   for _, l in ipairs(room.lights) do
     if not l.overrideUntil and not l.offHold then
       local lv = lvl
-      if inWindow and (l.windows or l.window_gain or l.facing_deg or l.max_level) then
+      if fixed and l.max_level then lv = math.min(lv, l.max_level)
+      elseif inWindow and not fixed and (l.windows or l.window_gain or l.facing_deg or l.max_level) then
         lv = ComputeRoomTarget(room, now, lat, lon, l)
       end
       if lv < 1 then
@@ -1293,8 +1302,23 @@ local function parsePresence(r, room, warns)
   for _, s in ipairs(list) do
     if PRES_SOURCES[s] and not allow[s] then allow[s] = true else warn("sources") end
   end
+  -- 1.17.2: "levels":[{"at":"06:30","level":80},{"at":"21:00","level":20}] = fixed walk-in levels by time of day
+  -- for a follow room. No lux loop: the level is set once on entry and held for the visit.
+  local levels
+  if p.levels ~= nil then
+    levels = {}
+    if type(p.levels) == "table" then
+      for _, e in ipairs(p.levels) do
+        local lv = type(e) == "table" and tonumber(e.level)
+        if lv and lv >= 0 and lv <= 100 and type(e.at) == "string" then
+          levels[#levels + 1] = { at = e.at, target = lv }
+        else warn("levels") end
+      end
+    else warn("levels") end
+    if #levels == 0 then levels = nil end
+  end
   return {
-    key = room.key, follow = follow, allow = allow, levelOnly = levelOnly,
+    key = room.key, follow = follow, allow = allow, levelOnly = levelOnly, levels = levels,
     offDelaySec = num("offDelaySec", 180, 10, 3600, true),
     robotOffDelaySec = num("robotOffDelaySec", 90, 10, 3600, true),
     fadeInSec = num("fadeInSec", 2, 0, 60, false),

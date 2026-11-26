@@ -238,24 +238,19 @@
       "sources": [
         "robot",
         "esp"
-      ]
-    },
-    "on": "06:30",
-    "off": "23:00",
-    "lux": {
-      "dev": 602,
-      "var": 1015,
-      "target": 33,
-      "targets": [
+      ],
+      "levels": [
         {
           "at": "06:30",
-          "target": 33
+          "level": 80
         },
         {
           "at": "21:00",
-          "target": 4
+          "level": 20
         }
       ]
-    }
+    },
+    "on": "06:30",
+    "off": "23:00"
   }
 ]
