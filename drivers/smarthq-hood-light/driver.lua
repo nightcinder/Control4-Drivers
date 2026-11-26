@@ -1,6 +1,6 @@
 --[[
   SmartHQ Hood Light (child) for Control4 DriverWorks, OS 3.4.x
-  Version: 0.3.3  (UNTESTED in Composer/Director; see docs/smarthq.md)
+  Version: 0.3.4  (feedback fix UNTESTED in Composer/Director; see docs/smarthq.md)
 
   The hood light as a light_v2 proxy (binding 5001), so it can sit in a room for lighting automation.
   Levels: off=0, dim=33, high=100. A Control4 ON sends high. SET_LEVEL and RAMP_TO_LEVEL: 0 sends off,
@@ -13,12 +13,13 @@
                  SH_HOOD_CMD {CHILD_ID, APPLIANCE_ID, LEVEL = off|dim|on}
     from parent: SH_STATUS {STATE = OFF|DIM|HIGH, FAN, ONLINE}, SH_PARENT {REACHABLE}, SH_HELLO {}
 
-  Feedback to Control4: ON / OFF notifies, and LIGHT_CHANGED with LEVEL (0, 33 or 100) for dim and high.
-  The LIGHT_CHANGED name and its LEVEL param are UNVERIFIED for light_v2: check in Composer that the
-  light's level slider follows the hood. ON and OFF are the same as the 0.2.x driver.
+  Feedback to Control4 (0.3.4): LIGHT_LEVEL and LIGHT_BRIGHTNESS_CHANGED {LIGHT_BRIGHTNESS_CURRENT}
+  with 0, 33 or 100, the same light_v2 notifies the working LIFX LAN driver sends. 0.3.3 and earlier
+  sent ON / OFF / LIGHT_CHANGED, which light_v2 ignores, so Navigator never showed the hood state
+  (seen live 2026-11-26: hood HIGH, item 547 LIGHT_STATE 0).
 ]]
 
-local DRIVER_VERSION = "0.3.3"
+local DRIVER_VERSION = "0.3.4"
 local BRIDGE_BINDING = 1
 local PROXY_BINDING = 5001
 local APPLIANCE_KIND = "hood"
@@ -72,24 +73,31 @@ end
 -- ============================================================================
 -- Light feedback to Control4
 -- ============================================================================
+local function levelPct(level)
+  return (level == "dim") and 33 or (level == "on" and 100 or 0)
+end
+
 local function notifyLevel(level)
   if level == lastLevel then return end
-  local wasOn = lastLevel ~= nil and lastLevel ~= "off"
-  local nowOn = level ~= "off"
   lastLevel = level
+  local pct = levelPct(level)
   pcall(function()
-    if nowOn then
-      if not wasOn then C4:SendToProxy(PROXY_BINDING, "ON", {}, "NOTIFY") end
-    else
-      C4:SendToProxy(PROXY_BINDING, "OFF", {}, "NOTIFY")
-    end
-    local pct = (level == "dim") and 33 or (level == "on" and 100 or 0)
-    C4:SendToProxy(PROXY_BINDING, "LIGHT_CHANGED", { LEVEL = tostring(pct) }, "NOTIFY")
+    C4:SendToProxy(PROXY_BINDING, "LIGHT_LEVEL", tostring(pct))
+    C4:SendToProxy(PROXY_BINDING, "LIGHT_BRIGHTNESS_CHANGED", { LIGHT_BRIGHTNESS_CURRENT = pct })
+  end)
+end
+
+local function notifyOnline(online)
+  pcall(function()
+    C4:SendToProxy(PROXY_BINDING, "ONLINE_CHANGED", { STATE = online and "true" or "false" })
   end)
 end
 
 -- Parent sends STATE as OFF, DIM or HIGH (ERD HOOD_LIGHT_LEVEL names).
 local function applyStatus(s)
+  if s.ONLINE ~= nil and tostring(s.ONLINE) ~= "" then
+    notifyOnline(tostring(s.ONLINE) ~= "false")
+  end
   local st = string.upper(s.STATE or "")
   local level
   if st == "HIGH" or st == "ON" then level = "on"
@@ -116,12 +124,17 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
     sendLevel("on")
   elseif strCommand == "OFF" then
     sendLevel("off")
-  elseif strCommand == "SET_LEVEL" or strCommand == "RAMP_TO_LEVEL" then
-    local lvl = tonumber(tParams.LEVEL) or 0
+  elseif strCommand == "TOGGLE" then
+    if lastLevel ~= nil and lastLevel ~= "off" then sendLevel("off") else sendLevel("on") end
+  elseif strCommand == "SET_LEVEL" or strCommand == "RAMP_TO_LEVEL" or strCommand == "SET_BRIGHTNESS_TARGET" then
+    -- light_v2 (Navigator slider) sends LIGHT_BRIGHTNESS_TARGET; older callers send LEVEL.
+    local lvl = tonumber(tParams.LIGHT_BRIGHTNESS_TARGET) or tonumber(tParams.LEVEL) or tonumber(tParams.BRIGHTNESS) or 0
     if lvl <= 0 then sendLevel("off")
     elseif lvl <= 66 then sendLevel("dim")
     else sendLevel("on")
     end
+  elseif strCommand == "GET_CONNECTED_STATE" then
+    notifyOnline(true)
   end
 end
 

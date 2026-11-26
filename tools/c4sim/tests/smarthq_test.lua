@@ -152,17 +152,29 @@ t.test("smarthq hood light: proxy level mapping and status sync", function()
   sim.sent = {}
   sim.exec("SH_STATUS", { STATE = "DIM", FAN = "LOW" })
   t.eq(sim._store["Status"], "Hood light dim, fan LOW", "Status reflects dim")
-  t.ok(sim.last_sent("ON") ~= nil, "dim from unknown notifies ON")
-  local lvl = sim.last_sent("LIGHT_LEVEL")
-  -- Actually hood light notifies LIGHT_CHANGED, let's check that exact command name:
-  local lc = sim.last_sent("LIGHT_CHANGED")
-  t.ok(lc ~= nil and lc.params.LEVEL == "33", "DIM notifies LIGHT_CHANGED level 33")
-  t.ok(lvl == nil, "uses LIGHT_CHANGED per driver code")
+  local bc = sim.last_sent("LIGHT_BRIGHTNESS_CHANGED")
+  t.ok(bc ~= nil and tonumber(bc.params.LIGHT_BRIGHTNESS_CURRENT) == 33, "DIM notifies LIGHT_BRIGHTNESS_CHANGED 33")
+  t.ok(sim.last_sent("LIGHT_LEVEL") ~= nil, "DIM notifies LIGHT_LEVEL")
+  t.ok(sim.last_sent("LIGHT_CHANGED") == nil, "no legacy LIGHT_CHANGED")
+
+  sim.sent = {}
+  sim.exec("SH_STATUS", { STATE = "HIGH", FAN = "OFF", ONLINE = "true" })
+  t.eq(tonumber(sim.last_sent("LIGHT_BRIGHTNESS_CHANGED").params.LIGHT_BRIGHTNESS_CURRENT), 100, "HIGH notifies 100")
+  t.eq(sim.last_sent("ONLINE_CHANGED").params.STATE, "true", "ONLINE true notifies ONLINE_CHANGED")
+
+  sim.sent = {}
+  sim.exec("SH_STATUS", { STATE = "HIGH", FAN = "OFF" })
+  t.ok(sim.last_sent("LIGHT_BRIGHTNESS_CHANGED") == nil, "same level is not re-notified")
 
   sim.sent = {}
   sim.exec("SH_STATUS", { STATE = "OFF", FAN = "OFF" })
-  t.ok(sim.last_sent("OFF") ~= nil, "OFF notifies OFF")
-  t.eq(sim.last_sent("LIGHT_CHANGED").params.LEVEL, "0", "OFF notifies level 0")
+  t.eq(tonumber(sim.last_sent("LIGHT_BRIGHTNESS_CHANGED").params.LIGHT_BRIGHTNESS_CURRENT), 0, "OFF notifies 0")
+
+  sim.sent = {}
+  sim.call("ReceivedFromProxy", 5001, "SET_BRIGHTNESS_TARGET", { LIGHT_BRIGHTNESS_TARGET = "20" })
+  t.eq(sim.last_sent("SH_HOOD_CMD").params.LEVEL, "dim", "slider 20 sends dim")
+  sim.call("ReceivedFromProxy", 5001, "TOGGLE", {})
+  t.eq(sim.last_sent("SH_HOOD_CMD").params.LEVEL, "on", "TOGGLE while off sends on")
 
   sim.sent = {}
   sim.call("ReceivedFromProxy", 5001, "SET_LEVEL", { LEVEL = "50" })
