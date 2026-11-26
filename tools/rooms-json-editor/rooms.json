@@ -204,9 +204,9 @@
       }
     ],
     "wake": {
-      "enabled": false,
-      "at": "sunrise-15",
-      "stop": "sunrise+30",
+      "enabled": true,
+      "at": "06:15",
+      "stop": "07:15",
       "ramp_min": 30,
       "level": 35,
       "days": [
