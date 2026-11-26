@@ -1,6 +1,20 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.16.23
+  DRIVER_VERSION: 1.16.24
+
+  1.16.24 (2026-11-25): review fixes to the 1.16.23 variables, no lighting behaviour change.
+    - Edges: a per-room edgeSeen flag replaces the nil check, so a daylight room loaded after noon-60 (wasInWindow
+      nil until it triggers) still reports LAST_ON_EDGE. The first pass after a load is still never an edge.
+    - OFF_RAMP_DONE "<time> <room> skipped:<reason>" is written at an off edge that starts no DLS ramp:
+      reason presence (follow room owned by presence), fading / hold (presence state), unscheduled or other.
+      OFF_RAMP_DONE is NOT written when a running stepped fade ends early: a room hold (overrideUntil), Enabled
+      Off, a wake window or a new on window cancels it with no write. A check that sees LAST_OFF_EDGE newer than
+      OFF_RAMP_DONE long after the ramp time should treat it as an early-ended or missed ramp.
+    - LAST_ERROR: the same message within 60 s is not rewritten (the presence tick runs at 1 Hz).
+    - HEARTBEAT is not restored from PersistData; it is added as "" and written at load.
+    - AddVariable runs once per load (OnDriverInit); OnDriverLateInit only re-sets the values.
+    - Away: edges are not seen while the house is Away (Update returns early); a pending edge is stamped at the
+      first Update pass after the house returns Home (that pass's time, not the schedule time).
 
   1.16.23 (2026-11-25): read-only Control4 variables for outside outcome checks (c4-bridge reads item
   variables). No lighting behaviour changes. All are STRING, read-only, added again on every driver load
@@ -17,8 +31,8 @@
     LAST_ERROR     "<time> <message>" (max 200 chars) from Update, presence tick, off fade step or load
                    failures; "" until the first error.
     HEARTBEAT      "<time>", rewritten every 5 minutes by its own timer (and once at load).
-  Edges are seen by Update, so they carry the time of the Update pass (Update Interval, default 5 min) and
-  none are recorded while Enabled is Off or the house is Away.
+  Edges are seen by Update, so they carry the time of the Update pass (Update Interval, default 5 min). None
+  are recorded while Enabled is Off; while Away, see 1.16.24 (stamped at the first pass after Home).
 
   1.16.22 (2026-11-25): the scheduled off edge beats every hold set before it. On 2026-11-24 the Den Lamp (476) was held by a per-light manual hold (120 min, set about 22:00-22:05), so the 23:30 off fade skipped it and it stayed on at 100% until the hold expired and off enforcement turned it off at 00:06. At the on-window to off-window edge DLS now clears room (scene) holds and per-light holds, so the fade takes every light that is on. A hand-on AFTER the edge still holds (1.11.2/1.11.6 behaviour unchanged). New read-only property "Last Manual Change" records the light, level, DLS's last level and time of the latest change DLS treated as manual (the start of every manual hold), so the source of a hold can be seen without Lua Output. New per-light Rooms JSON flag "ignore_room_off": true keeps that light on when the room's "Off" scene runs (keypad room Off through ApplyScene); the scheduled off edge still turns it off.
 
@@ -155,7 +169,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.16.23"
+DRIVER_VERSION = "1.16.24"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -234,6 +248,8 @@ end
 local DLS_VARS = { "LAST_ON_EDGE", "LAST_OFF_EDGE", "OFF_RAMP_DONE", "PRESENCE", "LAST_ERROR", "HEARTBEAT" }
 local HEARTBEAT_MS = 5 * 60 * 1000
 local heartbeatTimer
+local dlsVarsAdded = false                     -- 1.16.24: AddVariable once per load (Init), SetVariable every time
+local lastErrMsg, lastErrAt = nil, 0           -- 1.16.24: same error within 60 s is not rewritten (1 Hz tick)
 
 local function isoTime(t)
   if t then return os.date("%Y-%m-%dT%H:%M:%S", t) end
@@ -250,15 +266,18 @@ local function addDlsVars()
   local store = dlsVarStore()
   for _, name in ipairs(DLS_VARS) do
     local v = store[name]
-    if type(v) ~= "string" then v = "" end
-    pcall(function() C4:AddVariable(name, v, "STRING", true, false) end)   -- fails harmlessly if it exists
+    if type(v) ~= "string" or name == "HEARTBEAT" then v = "" end      -- 1.16.24: a heartbeat is never restored
+    if not dlsVarsAdded then
+      pcall(function() C4:AddVariable(name, v, "STRING", true, false) end)   -- fails harmlessly if it exists
+    end
     pcall(function() C4:SetVariable(name, v) end)
   end
+  dlsVarsAdded = true
 end
 
 local function setDlsVar(name, value)
   value = tostring(value or "")
-  pcall(function() dlsVarStore()[name] = value end)
+  if name ~= "HEARTBEAT" then pcall(function() dlsVarStore()[name] = value end) end
   pcall(function() C4:SetVariable(name, value) end)
 end
 
@@ -267,7 +286,11 @@ local function setDlsEvent(name, roomName, t)
 end
 
 local function setDlsError(msg)
-  setDlsVar("LAST_ERROR", isoTime() .. " " .. string.sub(tostring(msg), 1, 200))
+  msg = string.sub(tostring(msg), 1, 200)
+  local now = os.time()
+  if msg == lastErrMsg and now - lastErrAt < 60 then return end
+  lastErrMsg, lastErrAt = msg, now
+  setDlsVar("LAST_ERROR", isoTime() .. " " .. msg)
 end
 
 local function heartbeat() setDlsVar("HEARTBEAT", isoTime()) end
@@ -1540,6 +1563,7 @@ function Update()
   local lightsHeld = 0
   for _, room in ipairs(rooms) do
     local prevWin = room.wasInWindow                 -- 1.16.23: edge variables, compared after the branches
+    local rampHandled, skipWhy = false, nil          -- 1.16.24: did this pass's off edge start a ramp, or why not
     local holdsChanged = false
     if room.overrideUntil and now >= room.overrideUntil then
       room.overrideUntil = nil
@@ -1685,15 +1709,19 @@ function Update()
       if prOwns then
         if room.pr.state == PR_OCCUPIED then presenceDrive(room, now, inWindow) end
         room.wasInWindow = inWindow
+        skipWhy = "presence"                                       -- 1.16.24
       elseif prBlocks then
         room.wasInWindow = inWindow
+        skipWhy = string.lower(tostring(room.pr.state))            -- 1.16.24: fading / hold
       else
+      skipWhy = scheduled and "other" or "unscheduled"             -- 1.16.24
       -- 1.11.6: a reload no longer sends an immediate off. Composer imports and project refreshes restart the
       -- driver; the old first-tick rule turned the room off even when the user had just turned a light on by
       -- hand. A pending off now comes only from a real on-window -> off-window edge.
       if scheduled and not inWindow and room.wasInWindow then
         local offMs = room.off_ramp_min and (room.off_ramp_min * 60000) or rampMs
         local started
+        rampHandled = true                                         -- 1.16.24
         if offMs > OFF_FADE_STEP_MS * 2 then
           started = startOffFade(room, math.ceil(offMs / 1000))    -- 1.16.13: stepped, see the block above Update()
           if not started then setDlsEvent("OFF_RAMP_DONE", room.name, now) end   -- 1.16.23: nothing lit
@@ -1798,10 +1826,20 @@ function Update()
       end
       end
     end
-    -- 1.16.23: schedule edges for the outcome-check variables. prevWin is nil on the first pass after a load,
-    -- so a reload is never reported as an edge.
-    if prevWin == false and room.wasInWindow == true then setDlsEvent("LAST_ON_EDGE", room.name, now)
-    elseif prevWin == true and room.wasInWindow == false then setDlsEvent("LAST_OFF_EDGE", room.name, now) end
+    -- 1.16.23: schedule edges for the outcome-check variables. 1.16.24: the first pass after a load only sets
+    -- edgeSeen, so a reload is never an edge; after that nil counts as off-window (a daylight room loaded after
+    -- noon-60 keeps wasInWindow nil until it triggers). wasInWindow itself is not touched (lighting reads it).
+    if room.edgeSeen then
+      if not prevWin and room.wasInWindow == true then
+        setDlsEvent("LAST_ON_EDGE", room.name, now)
+      elseif prevWin == true and not room.wasInWindow then
+        setDlsEvent("LAST_OFF_EDGE", room.name, now)
+        if not rampHandled then                      -- 1.16.24: tell a skipped ramp from a missed one
+          setDlsEvent("OFF_RAMP_DONE", room.name .. " skipped:" .. (skipWhy or "other"), now)
+        end
+      end
+    end
+    room.edgeSeen = true
   end
   runCurtains(now, lat, lon)
   local cp = cloudNow()

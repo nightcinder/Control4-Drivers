@@ -484,8 +484,11 @@ function C4:SetVariable(name, value)
   sim.dvars[name] = value
 end
 
+-- Like DriverWorks: an existing variable is not replaced and the call returns false.
 function C4:AddVariable(name, value)
+  if sim.dvars[name] ~= nil then return false end
   sim.dvars[name] = value
+  return true
 end
 
 local function join_args(...)
