@@ -346,7 +346,7 @@ end)
 
 t.test("12: presence-owned room: off edge writes OFF_RAMP_DONE skipped:presence", function()
   start(15, 50, nil, '[{"name":"Kitchen","key":"Kitchen","on":"16:00","off":"16:30",' ..
-    '"presence":{"follow":true,"offDelaySec":180,"fadeInSec":2,"fadeOutSec":30,"nightLevel":20,"sources":["esp"]},' ..
+    '"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true,"offDelaySec":180,"fadeInSec":2,"fadeOutSec":30,"nightLevel":20,"sources":["esp"]},' ..
     '"lights":[{"id":101,"kind":"lutron"}]}]',
     { ["Presence Port"] = PORT, ["Presence Token"] = TOK, ["Presence"] = "Home", ["Presence Lighting"] = "On" })
   send(ln("PRESENCE", "HOME", TOK) .. ln("HELLO", "1", "1", TOK) .. ln("OCC", "Kitchen", "0", "clear", TOK))

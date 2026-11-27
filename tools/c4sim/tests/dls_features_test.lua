@@ -158,7 +158,7 @@ t.test("presence server buffers a split line and rejects an oversized one", func
   C4.ServerCloseClient = function(_, handle) end
   local ok = sim.load_driver(DRV, {
     xml = XML,
-    properties = { ["Enabled"] = "On", ["Rooms JSON"] = '[{"name":"Kitchen","key":"Kitchen","presence":{"follow":true},"lights":[{"id":101,"kind":"lutron"}]}]', ["Presence Token"] = "tok", ["Presence Port"] = "0" },
+    properties = { ["Enabled"] = "On", ["Rooms JSON"] = '[{"name":"Kitchen","key":"Kitchen","presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true},"lights":[{"id":101,"kind":"lutron"}]}]', ["Presence Token"] = "tok", ["Presence Port"] = "0" },
   })
   t.ok(ok, "load: " .. tostring(sim.errors[1]))
   replies = {}

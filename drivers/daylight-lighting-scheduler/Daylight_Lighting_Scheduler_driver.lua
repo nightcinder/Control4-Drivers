@@ -1,6 +1,18 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.17.8
+  DRIVER_VERSION: 1.17.9
+
+  1.17.9 (2026-11-26): dim-to-warn and arrival lighting (presence rooms).
+    - Dim-to-warn: when the vacancy off delay ends, lit lights dim to presence.warnLevelPct (default 50) % of their
+      level for presence.warnSec (default 60) s before the off fade; occupancy in the warn restores the old levels
+      at once. presence.graceSec (default 120): occupancy within it after the off restores the old levels too
+      (not a fresh walk-in ramp). warnLevelPct 0 or graceSec 0 turns each off.
+    - Arrival lighting: on Away -> Home when it is dark (model D under on_daylight, default 0.3, or room lux under
+      target) and the room is still off, presence.arrival rooms turn on (default: follow rooms without fixed
+      levels, i.e. the Living Room) and the off delay starts, so with nobody seen they warn and fade. Level:
+      arrival.level (default the schedule target) from noon to arrival.lateAfter (default the room off time),
+      arrival.lateLevel (default nightLevel) after it; outside the on window the level is held for the off delay.
+      "arrival":false turns it off. Logged as "arrival lighting room <name> level <n>".
 
   1.17.8 (2026-11-26): version beacon. Remote log line "dls loaded version <v> xml v<n>" on load and
     "dls daily version ..." once per local day after 12:00 (on the existing heartbeat timer, no new timer).
@@ -238,7 +250,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.17.8"
+DRIVER_VERSION = "1.17.9"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -1190,7 +1202,7 @@ local function releasePresenceRooms()
     local pr = room.pr
     if pr then
       local held = (pr.state == PR_HOLD)          -- 1.16.4: a per-light hold must not block the room release
-      pr.fadeAt, pr.offAt = nil, nil
+      pr.fadeAt, pr.offAt, pr.warnUntil, pr.graceUntil = nil, nil, nil, nil   -- 1.17.9: warn/grace too
       for _, l in ipairs(room.lights or {}) do l.preFade = nil; l.pending = nil end
       if not held and pr.state ~= PR_VACANT then
         pr.state, pr.occIn = PR_VACANT, false   -- rawOcc is kept: switch-On recomputes from it, no new edge needed
@@ -1281,21 +1293,26 @@ local function presenceDrive(room, now, inWindow, fromSchedule)
 end
 
 -- T5 / T10: clear every hold in the room and fade all lights that are on to 0 over fadeOutSec.
-local function prStartFade(room, now)
+-- 1.17.9: keepPre = the dim-to-warn already stored each light's level in l.preFade; keep it for the grace.
+local function prStartFade(room, now, keepPre)
   if Properties["Presence Lighting"] ~= "On" then return end   -- 1.16.5: not even from an AWAY edge
   local pr = room.pr
   if not gateOpen then return end                    -- no ramps while the gate is closed (reconcile does it)
   cancelOffFade(room)
   room.overrideUntil = nil
   for _, l in ipairs(room.lights) do l.overrideUntil, l.offHold = nil, nil end
-  pr.offAt = nil
+  pr.offAt, pr.warnUntil, pr.graceUntil = nil, nil, nil
   local ms = math.floor(pr.fadeOutSec * 1000 + 0.5)
   local any = false
   for _, l in ipairs(room.lights) do
     if isLightOn(l) then
       any = true
-      l.preFade = math.max(curLevel(l), l.lastLevel or 0)
+      if not (keepPre and l.preFade and l.preFade > 0) then
+        l.preFade = math.max(curLevel(l), l.lastLevel or 0)
+      end
       sendLevel(l, 0, ms)
+    elseif not keepPre then
+      l.preFade = nil
     end
   end
   if any then
@@ -1309,6 +1326,52 @@ local function prStartFade(room, now)
   prSave()
 end
 
+-- 1.17.9: dim-to-warn. The vacancy delay ran out: dim every lit light to warnPct of its level for warnSec, then
+-- presenceTick starts the off fade. Occupancy during the warn (or the grace after the fade) restores l.preFade.
+-- Returns false when there is nothing to warn about (feature off, nothing on), so the caller fades at once.
+local function prStartWarn(room, now)
+  local pr = room.pr
+  if Properties["Presence Lighting"] ~= "On" or not gateOpen then return false end
+  if (pr.warnPct or 0) <= 0 or (pr.warnPct or 0) >= 100 or (pr.warnSec or 0) <= 0 then return false end
+  if not anyOn(room) then return false end
+  cancelOffFade(room)
+  room.overrideUntil = nil
+  for _, l in ipairs(room.lights) do l.overrideUntil, l.offHold = nil, nil end
+  pr.offAt, pr.graceUntil = nil, nil
+  for _, l in ipairs(room.lights) do
+    if isLightOn(l) then
+      local cur = math.max(curLevel(l), l.lastLevel or 0)
+      l.preFade = cur
+      sendLevel(l, math.max(1, math.floor(cur * pr.warnPct / 100 + 0.5)), 1000)
+    else
+      l.preFade = nil
+    end
+  end
+  pr.state = PR_FADING
+  pr.fadeAt = nil
+  pr.warnUntil = now + pr.warnSec
+  dbg("presence warn", room.name, tostring(pr.warnPct) .. "% for " .. tostring(pr.warnSec) .. " s")
+  prSave()
+  return true
+end
+
+-- 1.17.9: put back the levels from before the warn / off fade at once (occupancy in the warn or the grace).
+-- Returns true when at least one light had a level to restore.
+local function prRestore(room, now, why)
+  local pr = room.pr
+  local any = false
+  if not gateOpen then return false end
+  for _, l in ipairs(room.lights) do
+    if l.preFade and l.preFade > 0 and not l.overrideUntil and not l.offHold then
+      sendLevel(l, l.preFade, 500)
+      any = true
+    end
+  end
+  pr.warnUntil, pr.graceUntil, pr.fadeAt = nil, nil, nil
+  if any then dbg("presence restore", room.name, why) end
+  return any
+end
+
 -- Occupancy edge handling (T1-T4, T6, T13). immediate = AWAY command: rooms left empty fade at once.
 local function prSetOcc(room, now, newOcc, src, immediate)
   local pr = room.pr
@@ -1319,7 +1382,14 @@ local function prSetOcc(room, now, newOcc, src, immediate)
     pr.lastOnSrc = src
     pr.offAt = nil                                                  -- T4
     if not was then
-      if pr.state == PR_VACANT then
+      local inGrace = pr.state == PR_VACANT and pr.graceUntil and now < pr.graceUntil
+        and Properties["Presence Lighting"] == "On" and Properties["Enabled"] == "On" and not presenceAway
+      pr.graceUntil = nil
+      if inGrace then
+        pr.state = PR_OCCUPIED                                      -- 1.17.9: back within the grace after the off
+        fire("Room Occupied", room.name)
+        if not prRestore(room, now, "grace") and pr.follow then presenceDrive(room, now) end
+      elseif pr.state == PR_VACANT then
         pr.state = PR_OCCUPIED                                      -- T1 / T2
         fire("Room Occupied", room.name)
         -- 1.17.5: an Off-scene hold lasts until daylight or occupancy: a walk-in releases it in a follow room.
@@ -1337,7 +1407,10 @@ local function prSetOcc(room, now, newOcc, src, immediate)
         end
       elseif pr.state == PR_FADING then
         pr.state = PR_OCCUPIED                                      -- T6
-        if pr.follow then
+        if pr.warnUntil and gateOpen and Properties["Presence Lighting"] == "On"
+           and prRestore(room, now, "warn") then
+          -- 1.17.9: occupancy during the dim-to-warn: previous levels back at once (an off fade keeps T6)
+        elseif pr.follow then
           presenceDrive(room, now)
         elseif gateOpen then
           for _, l in ipairs(room.lights) do
@@ -1519,15 +1592,21 @@ local function presenceTick()
           pr.offAt = pr.offAt or now        -- retried by presenceTick
         elseif pr.state == PR_HOLD and not pr.offConfirmed and not anyOn(room) then
           pr.offAt = nil          -- not a confirmed vacancy: the manual-off hold stays (lights are off)
-        else
+        elseif not prStartWarn(room, now) then                     -- 1.17.9: dim-to-warn first
           prStartFade(room, now)
         end
       end
+      if pr.state == PR_FADING and pr.warnUntil and now >= pr.warnUntil then
+        if Properties["Enabled"] == "On" then prStartFade(room, now, true) end   -- 1.17.9: warn over: off fade
+      end
       if pr.state == PR_FADING and pr.fadeAt and now >= pr.fadeAt then
         pr.state, pr.fadeAt = PR_VACANT, nil
+        -- 1.17.9: grace after the off: occupancy within graceSec restores the levels from before the warn/fade
+        if (pr.graceSec or 0) > 0 then pr.graceUntil = now + pr.graceSec end
         fire("Room Vacant", room.name)
         prSave()
       end
+      if pr.graceUntil and now >= pr.graceUntil then pr.graceUntil = nil end
       -- a manual-on light in a vacant follow room fades once its hold has expired (section 5 note)
       if pr.state == PR_VACANT and pr.follow and not pr.occIn and not presenceAway
          and not room.overrideUntil and not (room.wake and room.wake.enabled)
@@ -1612,9 +1691,32 @@ local function parsePresence(r, room, warns)
   if p.nightAfterDark ~= nil then
     if type(p.nightAfterDark) == "boolean" then nightAfterDark = p.nightAfterDark else warn("nightAfterDark") end
   end
+  -- 1.17.9: arrival lighting. "arrival": true | false | {"level":30,"lateLevel":5,"lateAfter":"23:30"}.
+  -- Default: on for a follow room without fixed "levels" (the Living Room today), off otherwise.
+  local arrival
+  local a = p.arrival
+  if a == nil then a = (follow and levels == nil) end
+  if a == true then a = {} end
+  if type(a) == "table" then
+    local function anum(k, lo, hi)
+      if a[k] == nil then return nil end
+      local v = tonumber(a[k])
+      if v == nil or v < lo or v > hi then warn("arrival." .. k) return nil end
+      return v
+    end
+    arrival = { level = anum("level", 1, 100), lateLevel = anum("lateLevel", 1, 100) }
+    if a.lateAfter ~= nil then
+      if type(a.lateAfter) == "string" and parseHM(a.lateAfter) then arrival.lateAfter = a.lateAfter
+      else warn("arrival.lateAfter") end
+    end
+  elseif a ~= false then warn("arrival") end
   return {
     key = room.key, follow = follow, allow = allow, levelOnly = levelOnly, levels = levels,
-    nightAfterDark = nightAfterDark,
+    nightAfterDark = nightAfterDark, arrival = arrival,
+    -- 1.17.9: dim-to-warn before the vacancy off fade, and a grace after it that restores the old levels
+    warnPct = num("warnLevelPct", 50, 0, 100, false),
+    warnSec = num("warnSec", 60, 0, 600, false),
+    graceSec = num("graceSec", 120, 0, 900, false),
     offDelaySec = num("offDelaySec", 180, 10, 3600, true),
     robotOffDelaySec = num("robotOffDelaySec", 90, 10, 3600, true),
     fadeInSec = num("fadeInSec", 2, 0, 60, false),
@@ -2815,6 +2917,68 @@ local function releaseAll()
   prSave()
 end
 
+-- 1.17.9: arrival lighting. On the AWAY -> HOME edge, when it is dark (modeled daylight under the room's
+-- on_daylight, default 0.3, or the room lux sensor under its target) and the room is still all off after the
+-- normal re-evaluation, turn on each arrival room (presence.arrival) and hand it to presence: the vacancy off
+-- delay starts now, so with nobody seen it ends with the dim-to-warn and the off fade.
+-- Level: from noon to lateAfter (default the room's off time) the evening level (arrival.level, default the
+-- schedule target); from lateAfter to noon the late level (arrival.lateLevel, default presence nightLevel).
+local function arrivalLevel(room, now, lat, lon)
+  local pr, a = room.pr, room.pr.arrival
+  local minNow = minuteOf(now)
+  local lateMin = a.lateAfter and parseHM(a.lateAfter) or nil   -- parseHM returns minutes after midnight
+  lateMin = lateMin or offMinFor(room.off or "23:30", now, lat, lon) or 1410
+  local late
+  if lateMin >= 720 then late = minNow >= lateMin or minNow < 720
+  else late = minNow >= lateMin and minNow < 720 end
+  if late then return a.lateLevel or pr.nightLevel, true end
+  if a.level then return a.level, false end
+  local ok, v = pcall(ComputeRoomTarget, room, now, lat, lon)
+  v = ok and tonumber(v) or nil
+  if not v or v < 1 then v = 30 end
+  return math.max(v, pr.nightLevel or 1), false
+end
+
+local function arrivalLighting(now)
+  if Properties["Presence Lighting"] ~= "On" or Properties["Enabled"] ~= "On" or not gateOpen then return end
+  local lat, lon = latlon()
+  if not (lat and lon) then return end
+  for _, room in ipairs(rooms) do
+    local pr = room.pr
+    if pr and pr.arrival and pr.state == PR_VACANT and not anyOn(room) and not room.overrideUntil
+       and dayOk(room.days, now) then
+      local el = SunPositionCached(now, lat, lon) or -90
+      local D = clearDaylight(el) * cloudTransmittance(cloudNow())
+      local dark = D < (room.on_daylight or 0.3)
+      if not dark and room.lux and room.lux.dev then
+        local lux = tonumber(C4:GetDeviceVariable(room.lux.dev, room.lux.var))
+        local tgt = luxTargetFor(room.lux, now, minuteOf(now), lat, lon)
+        dark = lux ~= nil and tgt ~= nil and lux < tgt
+      end
+      if dark then
+        local lvl = arrivalLevel(room, now, lat, lon)
+        local inWin = prInWindow(room, now, lat, lon)
+        local ms = math.floor(pr.fadeInSec * 1000 + 0.5)
+        pr.state = PR_OCCUPIED
+        pr.offAt, pr.offConfirmed = now + pr.offDelaySec, true
+        for _, l in ipairs(room.lights) do
+          if not l.overrideUntil and not l.offHold then
+            local v = clamp(lvl * l.scale, 0, 100)
+            if l.max_level then v = math.min(v, l.max_level) end
+            if v > 0 then sendLevel(l, v, ms) end
+            -- outside the on window presenceDrive would replace the arrival level: hold it for the off delay
+            if not inWin then l.overrideUntil = pr.offAt end
+          end
+        end
+        fire("Room Occupied", room.name)
+        dbg("arrival lighting room", room.name, "level", string.format("%.0f", lvl),
+          string.format("D=%.2f", D))
+        prSave()
+      end
+    end
+  end
+end
+
 local function setPresence(state)
   local away = (tostring(state or ""):lower() == "away")
   if away == presenceAway then return end
@@ -2839,6 +3003,7 @@ local function setPresence(state)
   for _, r in ipairs(rooms) do
     if r.pr then prRecompute(r, now, away) end    -- AWAY: rooms left empty fade at once; HOME: re-evaluate
   end
+  if not away then pcall(arrivalLighting, now) end   -- 1.17.9: dark arrival lights the arrival rooms
   Update()
 end
 

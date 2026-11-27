@@ -23,7 +23,7 @@ os.date = function(fmt, when)
   return realdate(fmt, when)
 end
 
-local ROOMS = '[{"name":"Kitchen","key":"Kitchen","on":"18:00","off":"22:30","presence":{"follow":true,"offDelaySec":180,"fadeInSec":2,"fadeOutSec":30,"nightLevel":20,"sources":["esp"]},"lights":[{"id":101,"kind":"lutron"}]}]'
+local ROOMS = '[{"name":"Kitchen","key":"Kitchen","on":"18:00","off":"22:30","presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true,"offDelaySec":180,"fadeInSec":2,"fadeOutSec":30,"nightLevel":20,"sources":["esp"]},"lights":[{"id":101,"kind":"lutron"}]}]'
 
 -- Server hooks: replies and closes are recorded per client handle; create/destroy counts show binding.
 local replies, closed = {}, {}

@@ -56,7 +56,7 @@ end
 
 local function start(at, hold, before)
   local rooms = '[{"name":"Kitchen","key":"Kitchen","on":"18:00","off":"23:00","min_level":60,"max_level":60,' ..
-    '"presence":{"follow":true,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5' ..
+    '"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5' ..
     (hold and (',"manualHold":"' .. hold .. '"') or '') .. '},' ..
     '"lights":[{"id":101,"kind":"lutron"}]}]'
   local props = {

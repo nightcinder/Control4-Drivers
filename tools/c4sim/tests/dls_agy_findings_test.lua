@@ -82,10 +82,10 @@ local PLAIN_10  = '[{"name":"Study","on":"06:00","off":"22:00","min_level":10,"m
 local PLAIN_60  = '[{"name":"Study","on":"06:00","off":"22:00","min_level":60,"max_level":60,"lights":[{"id":337,"kind":"lutron"}]}]'
 
 local PR_FOLLOW = '[{"name":"Kitchen","key":"Kitchen","on":"06:00","off":"22:00","min_level":60,"max_level":60,' ..
-  '"presence":{"follow":true,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5},' ..
+  '"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5},' ..
   '"lights":[{"id":101,"kind":"lutron"}]}]'
 local PR_NOFOLLOW = '[{"name":"Kitchen","key":"Kitchen","on":"06:00","off":"22:00","min_level":60,"max_level":60,' ..
-  '"presence":{"follow":false,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5},' ..
+  '"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":false,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5},' ..
   '"lights":[{"id":101,"kind":"lutron"}]}]'
 local OCC_ROOM = '[{"name":"Hall","on":"06:00","off":"22:00","min_level":60,"max_level":60,' ..
   '"occ":{"dev":900,"var":1000,"vacancyDelaySec":10},' ..

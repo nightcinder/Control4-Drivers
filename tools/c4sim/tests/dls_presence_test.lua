@@ -31,7 +31,7 @@ os.date = function(fmt, when)
   return realdate(fmt, when)
 end
 
-local ROOMS = '[{"name":"Kitchen","key":"Kitchen","min_level":60,"max_level":60,"presence":{"follow":true,"offDelaySec":180,"robotOffDelaySec":90,"fadeInSec":2,"fadeOutSec":30,"nightLevel":20,"sources":["esp","robot"]},"lights":[{"id":101,"kind":"lutron"}]},{"name":"MasterBed","key":"MasterBed","presence":{"follow":false},"lights":[{"id":201,"kind":"lutron"}]}]'
+local ROOMS = '[{"name":"Kitchen","key":"Kitchen","min_level":60,"max_level":60,"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true,"offDelaySec":180,"robotOffDelaySec":90,"fadeInSec":2,"fadeOutSec":30,"nightLevel":20,"sources":["esp","robot"]},"lights":[{"id":101,"kind":"lutron"}]},{"name":"MasterBed","key":"MasterBed","presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":false},"lights":[{"id":201,"kind":"lutron"}]}]'
 
 -- Server hooks: the driver answers each line with C4:ServerSend and then C4:ServerCloseClient.
 local replies = {}
@@ -411,7 +411,7 @@ t.test("c22 daytime target 0 keeps lights off; raising the target ramps on", fun
 end)
 
 t.test("c23 bad values fall back to defaults; duplicate key disables the later room", function()
-  local rooms23 = '[{"name":"Kitchen","key":"kitchen","min_level":60,"max_level":60,"presence":{"offDelaySec":"x","fadeOutSec":999,"follow":true},"lights":[{"id":101,"kind":"lutron"}]},{"name":"Kitchen2","key":"Kitchen","presence":{"follow":true},"lights":[{"id":201,"kind":"lutron"}]}]'
+  local rooms23 = '[{"name":"Kitchen","key":"kitchen","min_level":60,"max_level":60,"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"offDelaySec":"x","fadeOutSec":999,"follow":true},"lights":[{"id":101,"kind":"lutron"}]},{"name":"Kitchen2","key":"Kitchen","presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true},"lights":[{"id":201,"kind":"lutron"}]}]'
   start({ rooms = rooms23, nosnap = true })
   send(ln("HELLO", "1", "0", TOK))
   clear()

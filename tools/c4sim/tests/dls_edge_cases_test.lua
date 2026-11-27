@@ -108,7 +108,7 @@ local function restart_at(day_offset, h, m, persist)
   sim.sent = {}
 end
 
-local ROOM_PRESENCE_EVE = '[{"name":"Hall","key":"Hall","on":"18:00","off":"22:30","presence":{"follow":true},"lights":[{"id":337,"kind":"lutron"}]}]'
+local ROOM_PRESENCE_EVE = '[{"name":"Hall","key":"Hall","on":"18:00","off":"22:30","presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true},"lights":[{"id":337,"kind":"lutron"}]}]'
 
 t.test("6: on_daylight wrap room restarted between midnight and its 00:30 off stays on (trigger persisted)", function()
   sim.reset(1)

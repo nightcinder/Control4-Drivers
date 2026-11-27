@@ -96,7 +96,7 @@ local TOK = "tok"
 local K = 101
 C4.ServerSend = function(_, handle, data) end
 C4.ServerCloseClient = function(_, handle) end
-local presenceRooms = '[{"name":"Kitchen","key":"Kitchen","on_daylight":2,"off":"00:30","presence":{"follow":true,"nightLevel":1},"lights":[{"id":101,"kind":"lutron"}]}]'
+local presenceRooms = '[{"name":"Kitchen","key":"Kitchen","on_daylight":2,"off":"00:30","presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true,"nightLevel":1},"lights":[{"id":101,"kind":"lutron"}]}]'
 
 t.test("4: occupied on_daylight presence room at 21:00 uses the daylight target, not nightLevel", function()
   sim.reset(1)

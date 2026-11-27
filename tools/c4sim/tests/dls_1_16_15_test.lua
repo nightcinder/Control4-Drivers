@@ -64,18 +64,18 @@ local function start(rooms, at, extra, before)
 end
 
 local PR_NOFOLLOW = '[{"name":"Kitchen","key":"Kitchen","on":"06:00","off":"22:00","min_level":60,"max_level":60,' ..
-  '"presence":{"follow":false,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5},' ..
+  '"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":false,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5},' ..
   '"lights":[{"id":101,"kind":"lutron"}]}]'
 
 local PR_BOTH = '[{"name":"Kitchen","key":"Kitchen","on":"06:00","off":"22:00","min_level":60,"max_level":60,' ..
-  '"presence":{"follow":true,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5},' ..
+  '"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5},' ..
   '"lights":[{"id":101,"kind":"lutron"}]},' ..
   '{"name":"Hall","key":"Hall","on":"06:00","off":"22:00","min_level":60,"max_level":60,' ..
-  '"presence":{"follow":false,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5},' ..
+  '"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":false,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5},' ..
   '"lights":[{"id":102,"kind":"lutron"}]}]'
 
 local PR_DEN_OFF_RAMP = '[{"name":"Den","key":"Den","on":"18:00","off":"23:45","off_ramp_min":30,' ..
-  '"min_level":60,"max_level":60,"presence":{"follow":false,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5},' ..
+  '"min_level":60,"max_level":60,"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":false,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5},' ..
   '"lights":[{"id":101,"kind":"lutron"}]}]'
 
 local PLAIN_DEN_2 = '[{"name":"Den","on":"18:00","off":"23:00","lights":[{"id":337,"kind":"lutron"},{"id":338,"kind":"lutron"}]}]'

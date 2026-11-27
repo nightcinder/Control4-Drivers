@@ -50,7 +50,7 @@ end
 local function start(at)
   local rooms = '[{"name":"Living Room","key":"LivingRoom","type":"lutron","on":"18:00","off":"23:30",' ..
     '"off_ramp_min":10,"min_level":20,' ..
-    '"presence":{"follow":true,"offDelaySec":1200,"fadeInSec":2,"fadeOutSec":30,"nightLevel":5,' ..
+    '"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true,"offDelaySec":1200,"fadeInSec":2,"fadeOutSec":30,"nightLevel":5,' ..
     '"nightAfterDark":true,"sources":["esp"]},' ..
     '"lights":[{"id":101,"kind":"lutron"}]}]'
   local props = {

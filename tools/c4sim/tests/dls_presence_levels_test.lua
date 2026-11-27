@@ -41,7 +41,7 @@ end
 
 local function start(at, lux)
   local rooms = '[{"name":"Laundry","key":"Laundry","on":"06:30","off":"23:00",' ..
-    '"presence":{"follow":true,"manualHold":"level","offDelaySec":60,"fadeOutSec":5,"nightLevel":10,' ..
+    '"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true,"manualHold":"level","offDelaySec":60,"fadeOutSec":5,"nightLevel":10,' ..
     '"levels":[{"at":"06:30","level":80},{"at":"21:00","level":20}],"sources":["esp"]},' ..
     (lux and '"lux":{"dev":602,"var":1015,"target":4},' or '') ..
     '"lights":[{"id":101,"kind":"lutron"}]}]'
