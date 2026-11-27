@@ -199,11 +199,6 @@
         "id": 337,
         "kind": "lutron",
         "max_level": 30
-      },
-      {
-        "id": 482,
-        "kind": "lifx",
-        "max_level": 40
       }
     ],
     "wake": {
@@ -211,7 +206,7 @@
       "at": "06:15",
       "stop": "07:15",
       "ramp_min": 30,
-      "level": 35,
+      "level": 15,
       "days": [
         "mon",
         "tue",
@@ -220,6 +215,21 @@
         "fri"
       ]
     }
+  },
+  {
+    "name": "Guest Bedroom",
+    "type": "mixed",
+    "window_gain": 0.5,
+    "max_level": 40,
+    "on_daylight": 0.3,
+    "off": "22:30",
+    "lights": [
+      {
+        "id": 482,
+        "kind": "lifx",
+        "max_level": 40
+      }
+    ]
   },
   {
     "name": "Laundry",
