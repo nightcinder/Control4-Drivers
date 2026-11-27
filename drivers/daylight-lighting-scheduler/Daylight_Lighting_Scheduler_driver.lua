@@ -5,6 +5,8 @@
   1.17.8 (2026-11-26): version beacon. Remote log line "dls loaded version <v> xml v<n>" on load and
     "dls daily version ..." once per local day after 12:00 (on the existing heartbeat timer, no new timer).
     The Loki push stream now carries a "version" label, so an import is confirmed by querying Loki.
+    - Every LAST_ON_EDGE / LAST_OFF_EDGE / OFF_RAMP_DONE write is also sent as "dls var <NAME> <time> <room>",
+      so per-room edges survive when several rooms edge in one pass (the variable keeps only the last room).
 
   1.17.7 (2026-11-26): lux loop windup fix. Living Room jumped 30 -> 100 in 2 s when per-light holds expired.
     - Bumpless hand-back: hold expiry (all lights held), Away->Home / release, reload, gate reconcile and the
@@ -410,7 +412,11 @@ local function setDlsVar(name, value)
 end
 
 local function setDlsEvent(name, roomName, t)
-  setDlsVar(name, isoTime(t) .. " " .. tostring(roomName or ""))
+  local v = isoTime(t) .. " " .. tostring(roomName or "")
+  setDlsVar(name, v)
+  -- 1.17.8: every edge also goes to the remote log, so per-room edges survive when several rooms edge in
+  -- the same pass (the variable only keeps the last room). The outcome check reads these from Loki.
+  remoteLog("dls var " .. tostring(name) .. " " .. v)
 end
 
 local function setDlsError(msg)
