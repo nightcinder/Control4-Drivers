@@ -1,6 +1,10 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.17.13
+  DRIVER_VERSION: 1.17.14
+
+  1.17.14 (2026-11-27): wake ramp started once per window. Lutron lights get one Fade Dimmer (the LEAP dimmer
+    driver command, run by the processor) for the whole ramp; LIFX lights glide in 30 s steps. Lights may set
+    "dev" (Lutron dimmer device id, default proxy id - 1).
 
   1.17.13 (2026-11-27): wake ramp is continuous. Each Update pass fades to the level due at the next pass over the
     whole Update interval (was: a 60 s fade to the current level, then flat until the next pass, which read as
@@ -331,7 +335,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.17.13"
+DRIVER_VERSION = "1.17.14"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 PR_VACANT_HOLD_SEC = 7 * 86400    -- 1.17.10: "until vacant" manual hold in follow presence rooms (vacancy clears it)
 OFF_HOLD_CAP_SEC = 36 * 3600      -- 1.17.10: safety cap on an Off-scene hold (it normally ends at a window start)
@@ -1103,6 +1107,33 @@ local function sendLevel(light, level, ms)
     light.pending = { level = lvl, deadline = os.time() + math.max(timeout, rampSec + 10) + queueSec }
   end
   dbg("level", tostring(light.id), tostring(math.floor(level + 0.5)), "ms", tostring(ms))
+end
+
+-- 1.17.14: a long fade done by the Lutron processor itself. The Lutron LEAP dimmer driver's own "Fade Dimmer"
+-- command (Intensity + Fade Hours/Minutes/Seconds) goes to the dimmer device (proxy id - 1 unless the light has
+-- "dev"); Lutron runs the whole fade, like its own wake schedule did. A plain RAMP_TO_LEVEL with a TIME of
+-- minutes is not trusted end to end on this project (see the off fade note). Bookkeeping matches sendLevel, so
+-- a hand on the dimmer during the fade still reads as a manual change.
+local function sendLutronFade(light, level, sec)
+  local lvl = math.floor(level + 0.5)
+  sec = math.max(1, math.floor(sec + 0.5))
+  local dev = light.dev or (light.id - 1)
+  local h, m, s = math.floor(sec / 3600), math.floor((sec % 3600) / 60), sec % 60
+  enqueue(function()
+    C4:SendToDevice(dev, "Fade Dimmer", { ["Intensity"] = lvl, ["Fade Hours"] = h, ["Fade Minutes"] = m,
+      ["Fade Seconds"] = s, ["Delay Hours"] = 0, ["Delay Minutes"] = 0, ["Delay Seconds"] = 0 })
+  end)
+  light.rampFrom = tonumber(C4:GetDeviceVariable(light.id, LIGHT_LEVEL_VAR)) or 0
+  light.rampTo = lvl
+  light.settled = nil
+  light.lastLevel = level
+  light.lastCmd = os.time()
+  light.rampEnd = os.time() + sec
+  light.fbLast = light.rampFrom
+  light.ignoreUntil = os.time() + sec + 10
+  local timeout = tonumber(Properties["Light Timeout (sec)"]) or 90
+  light.pending = { level = lvl, deadline = os.time() + math.max(timeout, sec + 10) + math.ceil(#sendQ * 0.25) }
+  dbg("lutron fade", tostring(light.id), "dev " .. tostring(dev), tostring(lvl), "sec", tostring(sec))
 end
 
 local function sendCCT(light, kelvin, ms)
@@ -2254,6 +2285,76 @@ local function startOffFade(room, sec, floor)
   return true
 end
 
+-- 1.17.14: wake ramp. Started once per wake window (room.wakeDay). Lutron lights: one Fade Dimmer for the
+-- whole ramp. LIFX lights: every WAKE_STEP_MS the level due one step ahead goes out with a fade of one step,
+-- so the bulb glides continuously. A hand on a light (overrideUntil) takes it out of the ramp.
+WAKE_STEP_MS = 30000
+local wakeFades = {}                -- room.name -> { startAt, sec, from = {id -> level}, to = {id -> level}, timer }
+
+function wakeLevel(l, wl)
+  local v = clamp(wl * l.scale, 1, 100)
+  if l.max_level then v = clamp(math.min(v, l.max_level), 1, 100) end   -- 1.17.11: N2, per-light cap
+  return v
+end
+
+function wakeFadeRunning(room) return wakeFades[room.name] ~= nil end
+
+function cancelWakeFade(room, reason)
+  local f = wakeFades[room.name]
+  if not f then return end
+  if f.timer then pcall(function() f.timer:Cancel() end) end
+  wakeFades[room.name] = nil
+  dbg("wake fade cancel", room.name, "reason " .. tostring(reason))
+end
+
+local function wakeFadeStep(room)
+  local f = wakeFades[room.name]
+  if not f then return end
+  local p = clamp((os.time() - f.startAt + WAKE_STEP_MS / 1000) / f.sec, 0, 1)
+  for _, l in ipairs(room.lights) do
+    local from, to = f.from[l.id], f.to[l.id]
+    if from then
+      if l.overrideUntil or l.offHold then
+        f.from[l.id] = nil
+        dbg("wake fade light held, left out", room.name, tostring(l.id))
+      else
+        local v = math.max(1, from + (to - from) * p)
+        if not l.lastLevel or math.abs(v - l.lastLevel) >= 0.5 or p >= 1 then
+          dbg("wake ramp step", room.name, tostring(l.id), "level " .. string.format("%.1f", v))
+          sendLevel(l, v, WAKE_STEP_MS)
+        end
+      end
+    end
+  end
+  if p >= 1 or next(f.from) == nil then cancelWakeFade(room, "done") end
+end
+
+function startWakeFade(room, wl, sec)
+  cancelWakeFade(room, "restart")
+  sec = math.max(60, math.floor(sec))
+  local f = { startAt = os.time(), sec = sec, from = {}, to = {}, timer = nil }
+  for _, l in ipairs(room.lights) do
+    if not l.overrideUntil and not l.offHold then
+      local to = wakeLevel(l, wl)
+      if l.kind == "lutron" then
+        dbg("wake fade lutron", room.name, tostring(l.id), "to " .. tostring(to), "over " .. tostring(sec) .. " s")
+        sendLutronFade(l, to, sec)
+      elseif curLevel(l) < to then
+        f.from[l.id], f.to[l.id] = curLevel(l), to
+      end
+    end
+  end
+  dbg("wake fade start", room.name, "level " .. tostring(wl), "over " .. tostring(sec) .. " s")
+  if next(f.from) == nil then return end
+  wakeFades[room.name] = f
+  f.timer = C4:SetTimer(WAKE_STEP_MS, function(t)
+    if wakeFades[room.name] ~= f then pcall(function() t:Cancel() end) return end
+    local ok, err = pcall(wakeFadeStep, room)
+    if not ok then dbg("wake fade step error", room.name, tostring(err)) end
+  end, true)
+  wakeFadeStep(room)
+end
+
 -- 1.17.0: morning window latch. The window opens inside [start, stop) when the morning lux reads below its target
 -- and the gating room (presence_room key, else the room's own presence) is OCCUPIED. It closes at stop, when the
 -- presence_room goes vacant, or when the lux sits at off_factor x target with the loop already at min_level (daylight
@@ -2592,26 +2693,31 @@ function Update()
         if inWake and not room.wasInWake then dbg("wake window start", room.name, "hold " .. tostring(room.overrideUntil ~= nil), "ws " .. tostring(ws), "we " .. tostring(we)) end
         if inWake then cancelOffFade(room) end      -- 1.16.13: never step an off down under a wake ramp
         if inWake and not room.overrideUntil then
-          -- 1.17.13: continuous ramp. Each Update pass fades to the level due at the NEXT pass, over the whole
-          -- interval, so the light never jumps then sits flat (1.17.12 stepped 1-7-13-19-25 % with 60 s fades
-          -- every 5 min). The first pass starts from off at 1 %.
-          local stepMin = tonumber(Properties["Update Interval (min)"]) or 5
+          -- 1.17.14: one smooth ramp per wake, started once. Lutron dimmers get one Fade Dimmer for the whole
+          -- ramp (the processor runs it, like Lutron's own wake). LIFX bulbs step every WAKE_STEP_MS with a fade
+          -- of one step (a long RAMP_TO_LEVEL is not honoured by LIFX here). After the ramp the level is held.
           local rampLen = math.max(1, tonumber(w.ramp_min) or 30)
-          local frac = clamp((minNow + stepMin - ws) / rampLen, 0, 1)
-          local lvl = math.max(1, (tonumber(w.level) or 40) * frac)
-          local fadeMs = math.floor(stepMin * 60000)
-          for _, l in ipairs(room.lights) do
-            if not l.overrideUntil then
-              local v = clamp(lvl * l.scale, 1, 100)
-              if l.max_level then v = clamp(math.min(v, l.max_level), 1, 100) end   -- 1.17.11: N2, per-light cap
-              if not l.lastLevel or math.abs(v - l.lastLevel) >= 1 then dbg("wake ramp step", room.name, l.id, "level " .. tostring(v), "fade ms " .. tostring(fadeMs)); sendLevel(l, v, fadeMs) end
-              n = n + 1
+          local wl = tonumber(w.level) or 40
+          local endMin = ws + rampLen
+          local today = os.date("%Y%m%d", now)
+          if room.wakeDay ~= today and minNow < endMin then
+            room.wakeDay = today
+            startWakeFade(room, wl, math.max(60, (endMin - minNow) * 60))
+          elseif not wakeFadeRunning(room) then
+            for _, l in ipairs(room.lights) do       -- after the ramp (or a reload past it): hold the wake level
+              if not l.overrideUntil then
+                local v = wakeLevel(l, wl)
+                if not l.lastLevel or math.abs(v - l.lastLevel) >= 1 then dbg("wake hold", room.name, l.id, "level " .. tostring(v)); sendLevel(l, v, rampMs) end
+              end
             end
           end
+          n = n + #room.lights
         elseif (not inWake) and room.wasInWake and not room.overrideUntil then
+          cancelWakeFade(room, "window end")
           for _, l in ipairs(room.lights) do if not l.overrideUntil then sendLevel(l, 0, rampMs) end end
           dbg("wake window ended", room.name)
         end
+        if inWake and room.overrideUntil then cancelWakeFade(room, "room hold") end
       end
     end
     room.wasInWake = inWake
@@ -3094,7 +3200,8 @@ local function loadRooms(closeGate)
     for _, l in ipairs(r.lights or {}) do
       local id = tonumber(l.id) or 0
       if id > 0 then
-        local light = { id = id, kind = l.kind or "lutron", scale = clamp(tonumber(l.scale) or 1, 0.05, 1), max_level = tonumber(l.max_level), window_gain = tonumber(l.window_gain), facing_deg = tonumber(l.facing_deg), windows = parseWindows(l.windows), cct_min = tonumber(l.cct_min) or 1500, cct_max = tonumber(l.cct_max) or 4000, ignore_room_off = (l.ignore_room_off == true) }
+        local light = { id = id, kind = l.kind or "lutron", scale = clamp(tonumber(l.scale) or 1, 0.05, 1), max_level = tonumber(l.max_level), window_gain = tonumber(l.window_gain), facing_deg = tonumber(l.facing_deg), windows = parseWindows(l.windows), cct_min = tonumber(l.cct_min) or 1500, cct_max = tonumber(l.cct_max) or 4000, ignore_room_off = (l.ignore_room_off == true),
+      dev = tonumber(l.dev) }   -- 1.17.14: Lutron dimmer device id for Fade Dimmer (default: proxy id - 1)
         light.initLevel = curLevel(light)
         local sh = type(savedHolds) == "table" and savedHolds[tostring(id)] or nil
         if type(sh) == "table" then

@@ -1,11 +1,11 @@
 <devicedata>
-  <version>86</version>
+  <version>87</version>
   <manufacturer>Nick Adamany</manufacturer>
   <name>Daylight Lighting Scheduler</name>
   <model>DLS</model>
   <creator>Nick Adamany</creator>
   <created>10/19/2026 7:30 PM</created>
-  <modified>11/27/2026 06:49 AM</modified>
+  <modified>11/27/2026 07:02 AM</modified>
   <control>lua_gen</control>
   <controlmethod>other</controlmethod>
   <driver>DriverWorks</driver>
@@ -18,7 +18,7 @@
       <property>
         <name>Driver Version</name>
         <type>STRING</type>
-        <default>1.17.13</default>
+        <default>1.17.14</default>
         <readonly>true</readonly>
       </property>
       <property>

@@ -39,6 +39,8 @@ local function levels(id)
   local out = {}
   for _, s in ipairs(sim.sent) do
     if s.id == id and s.cmd == "RAMP_TO_LEVEL" then out[#out + 1] = { level = tonumber(s.params.LEVEL), ms = tonumber(s.params.TIME) } end
+    -- 1.17.14: a Lutron wake ramp is one Fade Dimmer to the dimmer device (proxy id - 1)
+    if s.id == id - 1 and s.cmd == "Fade Dimmer" then out[#out + 1] = { level = tonumber(s.params["Intensity"]), ms = (tonumber(s.params["Fade Minutes"]) * 60 + tonumber(s.params["Fade Seconds"])) * 1000 } end
   end
   return out
 end

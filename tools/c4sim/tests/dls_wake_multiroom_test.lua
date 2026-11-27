@@ -46,10 +46,12 @@ local function load(rooms)
   sim.sent = {}
 end
 
+-- 1.17.14: a Lutron wake ramp is one Fade Dimmer, so one command counts as a ramp
 local function wakeLevels(id)
   local n = 0
   for _, s in ipairs(sim.sent) do
     if s.id == id and s.cmd == "RAMP_TO_LEVEL" and s.params.LEVEL > 0 then n = n + 1 end
+    if s.id == id - 1 and s.cmd == "Fade Dimmer" and tonumber(s.params["Intensity"]) > 0 then n = n + 1 end   -- 1.17.14
   end
   return n
 end
@@ -58,6 +60,7 @@ local function highest(id)
   local top = 0
   for _, s in ipairs(sim.sent) do
     if s.id == id and s.cmd == "RAMP_TO_LEVEL" and s.params.LEVEL > top then top = s.params.LEVEL end
+    if s.id == id - 1 and s.cmd == "Fade Dimmer" and tonumber(s.params["Intensity"]) > top then top = tonumber(s.params["Intensity"]) end   -- 1.17.14
   end
   return top
 end
@@ -77,8 +80,8 @@ t.test("1: two rooms with wake ramps both ramp in the same window", function()
   sim.reset(1)
   load(TWO)
   sim.advance(60 * MIN)                        -- 07:05 -> 08:05, wake window is about 07:10 to 07:55
-  t.ok(wakeLevels(337) >= 3, "room Main ramped (" .. wakeLevels(337) .. " levels)")
-  t.ok(wakeLevels(338) >= 3, "room Second ramped (" .. wakeLevels(338) .. " levels)")
+  t.ok(wakeLevels(337) >= 1, "room Main ramped (" .. wakeLevels(337) .. " levels)")
+  t.ok(wakeLevels(338) >= 1, "room Second ramped (" .. wakeLevels(338) .. " levels)")
   t.ok(highest(337) >= 10 and highest(338) >= 10, "both rooms climbed to a real level")
   t.ok(sentZero(337) and sentZero(338), "both rooms went off when their wake window ended")
   t.eq(#sim.errors, 0, "no Lua errors")
@@ -88,7 +91,7 @@ t.test("2: a room whose wake spec cannot be resolved does not block the other ro
   sim.reset(1)
   load(BROKEN)
   sim.advance(60 * MIN)
-  t.ok(wakeLevels(337) >= 3, "the healthy room still ramped")
+  t.ok(wakeLevels(337) >= 1, "the healthy room still ramped")
   t.eq(wakeLevels(338), 0, "the room with the broken wake window stayed put")
   t.eq(#sim.errors, 0, "the broken spec raised nothing")
   -- 1.17.11 (N5): the bad spec is now named in Status ("Rooms JSON warning: ... | OK ...")
@@ -105,7 +108,7 @@ t.test("3: a held room does not block another room's wake ramp", function()
   sim.sent = {}
   sim.advance(60 * MIN)
   t.eq(wakeLevels(339), 0, "the held room did not ramp")
-  t.ok(wakeLevels(337) >= 3, "the other room still ramped")
+  t.ok(wakeLevels(337) >= 1, "the other room still ramped")
   t.eq(#sim.errors, 0, "no Lua errors")
 end)
 

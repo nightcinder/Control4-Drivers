@@ -54,26 +54,35 @@ t.test("wake ramp runs inside its window and goes off when it ends", function()
   load('[{"name":"Upstairs","off":"22:30","wake":{"enabled":true,"at":"sunrise-15","stop":"sunrise+30","ramp_min":30,"level":35,"days":["thu"]},"lights":[{"id":337,"kind":"lutron"}]}]', 7, 5, { [U] = 0 })
   sim.advance(60 * 60 * SEC)                   -- 07:05 -> 08:05; sunrise is 07:25
   local n = 0
-  for _, s in ipairs(sim.sent) do if s.id == U and s.cmd == "RAMP_TO_LEVEL" and s.params.LEVEL > 0 then n = n + 1 end end
+  for _, s in ipairs(sim.sent) do if (s.id == U and s.cmd == "RAMP_TO_LEVEL" and s.params.LEVEL > 0) or (s.id == U - 1 and s.cmd == "Fade Dimmer") then n = n + 1 end end
   t.ok(n >= 1, "wake levels sent")
   t.ok(sent(U, "RAMP_TO_LEVEL", 0), "wake end sent 0")
 end)
 
-t.test("1.17.13 wake ramp is continuous: each step fades over the whole Update interval to the next step", function()
+t.test("1.17.14 wake: Lutron gets one Fade Dimmer for the whole ramp; LIFX glides in 30 s steps", function()
   sim.reset(1)
-  load('[{"name":"Upstairs","off":"22:30","wake":{"enabled":true,"at":"06:15","stop":"07:15","ramp_min":30,"level":15,"days":["thu"]},"lights":[{"id":337,"kind":"lutron"}]}]',
-    6, 10, { [U] = 0 }, { ["Update Interval (min)"] = "5" })
-  sim.advance(45 * 60 * SEC)                   -- 06:10 -> 06:55
-  local steps = {}
+  load('[{"name":"Upstairs","off":"22:30","wake":{"enabled":true,"at":"06:15","stop":"07:15","ramp_min":30,"level":15,"days":["thu"]},"lights":[{"id":337,"kind":"lutron"},{"id":482,"kind":"lifx"}]}]',
+    6, 10, { [U] = 0, [482] = 0 }, { ["Update Interval (min)"] = "5" })
+  sim.advance(50 * 60 * SEC)                   -- 06:10 -> 07:00
+  local fades, lutronRamps, lifx = {}, 0, {}
   for _, s in ipairs(sim.sent) do
-    if s.id == U and s.cmd == "RAMP_TO_LEVEL" and tonumber(s.params.LEVEL) > 0 then steps[#steps + 1] = s end
+    if s.id == 336 and s.cmd == "Fade Dimmer" then fades[#fades + 1] = s end
+    if s.id == U and s.cmd == "RAMP_TO_LEVEL" and tonumber(s.params.LEVEL) > 0 then lutronRamps = lutronRamps + 1 end
+    if s.id == 482 and s.cmd == "RAMP_TO_LEVEL" and tonumber(s.params.LEVEL) > 0 then lifx[#lifx + 1] = s end
   end
-  t.ok(#steps >= 5, "several wake steps (" .. #steps .. ")")
-  for _, s in ipairs(steps) do
-    t.eq(tonumber(s.params.TIME), 300000, "fade spans the 5 min Update interval")
+  t.eq(#fades, 1, "one Fade Dimmer to the dimmer device 336")
+  t.eq(tonumber(fades[1].params["Intensity"]), 15, "Fade Dimmer intensity")
+  local fsec = tonumber(fades[1].params["Fade Hours"]) * 3600 + tonumber(fades[1].params["Fade Minutes"]) * 60 + tonumber(fades[1].params["Fade Seconds"])
+  t.ok(fsec >= 25 * 60 and fsec <= 30 * 60, "fade spans the ramp (" .. fsec .. " s)")
+  t.eq(lutronRamps, 0, "no RAMP_TO_LEVEL steps for the Lutron light")
+  t.ok(#lifx >= 20, "LIFX glides in many small steps (" .. #lifx .. ")")
+  local prev = 0
+  for _, s in ipairs(lifx) do
+    t.eq(tonumber(s.params.TIME), 30000, "LIFX step fade 30 s")
+    t.ok(tonumber(s.params.LEVEL) >= prev and tonumber(s.params.LEVEL) <= 15, "LIFX rises, capped at 15")
+    prev = tonumber(s.params.LEVEL)
   end
-  t.ok(tonumber(steps[1].params.LEVEL) <= 3, "first step is gentle (" .. tostring(steps[1].params.LEVEL) .. ")")
-  t.ok(tonumber(steps[#steps].params.LEVEL) <= 15, "never above the wake level")
+  t.eq(prev, 15, "LIFX ends at the wake level")
 end)
 
 t.test("wake is skipped on a day not in its days list", function()
@@ -164,7 +173,7 @@ t.test("DST changeover: the wake ramp uses local clock minutes", function()
   t.eq(#sim.sent, 0, "no wake before the local sunrise window")
   sim.advance(2 * 60 * 60 * SEC)
   local n = 0
-  for _, s in ipairs(sim.sent) do if s.id == U and s.cmd == "RAMP_TO_LEVEL" and s.params.LEVEL > 0 then n = n + 1 end end
+  for _, s in ipairs(sim.sent) do if (s.id == U and s.cmd == "RAMP_TO_LEVEL" and s.params.LEVEL > 0) or (s.id == U - 1 and s.cmd == "Fade Dimmer") then n = n + 1 end end
   t.ok(n >= 1, "wake levels during the window")
 end)
 
