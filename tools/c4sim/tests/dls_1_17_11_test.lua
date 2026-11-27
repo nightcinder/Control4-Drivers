@@ -130,9 +130,9 @@ local function keepLR(minutes, base)
   wiggle(minutes, base or 0, function() send(ln("OCC", "LivingRoom", "1", "esp", TOK)) mirror(331) end)
 end
 
-t.test("version 1.17.11", function()
+t.test("version 1.17.11 or later", function()
   start({ at = local_sec(12, 0), rooms = HALL })
-  t.eq(sim.env.DRIVER_VERSION, "1.17.11", "DRIVER_VERSION")
+  t.ok(tostring(sim.env.DRIVER_VERSION):match("^1%.17%.1%d$") ~= nil, "DRIVER_VERSION " .. tostring(sim.env.DRIVER_VERSION))
 end)
 
 -- -------------------------------------------------------------------------------------------------------------

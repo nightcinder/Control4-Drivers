@@ -1,6 +1,14 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.17.11
+  DRIVER_VERSION: 1.17.12
+
+  1.17.12 (2026-11-26): remote log resend loop. After the 23:33 off edge on 2026-11-26 every post reached Loki
+    (Alloy answered 204) but the post callback still counted as failed, so the whole buffer was posted again
+    every 15 s: Loki showed the off edge and step 1 of both fades 70+ times, which looked like the off edge
+    re-firing. The lighting itself ran once and finished (one off edge, both fades stepped to the end).
+    - A 2xx response code counts as delivered even when the callback's error string carries text.
+    - A line is posted at most 1 + 3 times (REMOTE_LOG_RETRIES), then dropped, whatever the failure.
+    - The failure reason (error string and code) is sent to the remote log once per change.
 
   1.17.11 (2026-11-26): audit fixes.
     - Daylight trigger follows lux ("rooms follow lux, consistency"). A room with a fresh lux sensor (a reading
@@ -319,7 +327,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.17.11"
+DRIVER_VERSION = "1.17.12"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 PR_VACANT_HOLD_SEC = 7 * 86400    -- 1.17.10: "until vacant" manual hold in follow presence rooms (vacancy clears it)
 OFF_HOLD_CAP_SEC = 36 * 3600      -- 1.17.10: safety cap on an Off-scene hold (it normally ends at a window start)
@@ -363,9 +371,17 @@ local remoteInflight, remoteInflightId, remotePostId = nil, 0, 0
 
 -- 1.17.10: a failed post puts the batch back in front of the newer lines (oldest dropped past REMOTE_LOG_MAX)
 -- 1.17.11: module level, so the busy-slot timeout can requeue a lost batch too
+-- 1.17.12: a line is posted at most 1 + REMOTE_LOG_RETRIES times. On 2026-11-26 every post after 23:33 reached
+-- Loki (Alloy answered 204 to each) but the callback still counted as failed, so the whole buffer was posted again
+-- every 15 s and Loki showed the 23:33 off edge 70+ times (Alloy stamps receive time, so copies do not dedupe).
+REMOTE_LOG_RETRIES = 3
+local remoteFailWhy = nil         -- 1.17.12: last failure reason, sent once to the remote log when it changes
 local function remoteRequeue(batch)
   local merged = {}
-  for _, v in ipairs(batch) do merged[#merged + 1] = v end
+  for _, v in ipairs(batch) do
+    v[3] = (v[3] or 0) + 1
+    if v[3] <= REMOTE_LOG_RETRIES then merged[#merged + 1] = v end
+  end
   for _, v in ipairs(remoteBuf) do merged[#merged + 1] = v end
   while #merged > REMOTE_LOG_MAX do table.remove(merged, 1) end
   remoteBuf = merged
@@ -400,26 +416,39 @@ local function flushRemoteLog()
   remotePostId = remotePostId + 1
   local myId = remotePostId
   remoteInflight, remoteInflightId = batch, myId
-  local ok = pcall(function()
+  local ok, perr = pcall(function()
     C4:urlPost(url, body, { ["Content-Type"] = "application/json" }, false,
       function(_, _, responseCode, _, strError)
         if remoteInflightId ~= myId then return end   -- 1.17.11: late callback of a batch already requeued
         remoteBusy, remoteInflight, remoteInflightId = false, nil, 0
         local code = tonumber(responseCode) or 0
-        if (strError and strError ~= "") or code < 200 or code >= 300 then
+        -- 1.17.12: a 2xx code means the batch was taken, even when strError carries text
+        if code < 200 or code >= 300 then
           -- 1.17.11: requeue only on a transport error, 5xx or 429; any other 4xx is a bad batch: drop it
           if not (strError and strError ~= "") and code >= 400 and code < 500 and code ~= 429 then
             print("[DLS] remote log post rejected " .. tostring(code) .. ", " .. tostring(#batch) .. " lines dropped")
           else
             requeue()
+            local why = tostring(strError) .. " " .. tostring(responseCode)
+            if why ~= remoteFailWhy then                 -- 1.17.12: the reason reaches Loki once per change
+              remoteFailWhy = why
+              remoteLog("remote log post failed " .. why)
+            end
             if Properties["Debug"] == "On" then
-              print("[DLS] remote log post failed " .. tostring(strError) .. " " .. tostring(responseCode))
+              print("[DLS] remote log post failed " .. why)
             end
           end
+        else
+          remoteFailWhy = nil
         end
       end)
   end)
-  if not ok then remoteBusy, remoteInflight, remoteInflightId = false, nil, 0 requeue() end
+  if not ok then
+    remoteBusy, remoteInflight, remoteInflightId = false, nil, 0
+    requeue()
+    local why = "urlPost error " .. tostring(perr)
+    if why ~= remoteFailWhy then remoteFailWhy = why remoteLog("remote log post failed " .. why) end   -- 1.17.12
+  end
 end
 
 local function dbg(...)
