@@ -64,7 +64,7 @@ local DOWNSTAIRS_SCENE = '[{"name":"Downstairs","type":"mixed","follow":true,"on
   '"scenes":{"Evening":{"levels":{"476":50}}},"lights":[{"id":331,"kind":"lutron","scale":0.55},{"id":476,"kind":"lifx"}]}]'
 
 local DEN_NONFOLLOW = '[{"name":"Den","key":"Den","on":"18:00","off":"23:45","off_ramp_min":30,' ..
-  '"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":false,"offDelaySec":180,"fadeInSec":2,"fadeOutSec":30,"sources":["robot"]},' ..
+  '"presence":{"graceSec":0,"arrival":false,"follow":false,"offDelaySec":180,"fadeInSec":2,"fadeOutSec":30,"sources":["robot"]},' ..
   '"lights":[{"id":476,"kind":"lifx"}]}]'
 
 t.test("1: pre-first-command feedback on already-lit lights does not latch a hold or drop 23:45 off", function()

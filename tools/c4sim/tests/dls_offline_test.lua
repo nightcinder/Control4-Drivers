@@ -26,7 +26,7 @@ os.date = function(fmt, when)
 end
 
 local ROOMS = '[{"name":"Kitchen","key":"Kitchen","min_level":60,"max_level":60,' ..
-  '"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5,"nightLevel":20,"sources":["esp"]},' ..
+  '"presence":{"graceSec":0,"arrival":false,"follow":true,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5,"nightLevel":20,"sources":["esp"]},' ..
   '"lights":[{"id":101,"kind":"lutron"}]}]'
 
 local replies = {}

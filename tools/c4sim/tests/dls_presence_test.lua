@@ -31,7 +31,7 @@ os.date = function(fmt, when)
   return realdate(fmt, when)
 end
 
-local ROOMS = '[{"name":"Kitchen","key":"Kitchen","min_level":60,"max_level":60,"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true,"offDelaySec":180,"robotOffDelaySec":90,"fadeInSec":2,"fadeOutSec":30,"nightLevel":20,"sources":["esp","robot"]},"lights":[{"id":101,"kind":"lutron"}]},{"name":"MasterBed","key":"MasterBed","presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":false},"lights":[{"id":201,"kind":"lutron"}]}]'
+local ROOMS = '[{"name":"Kitchen","key":"Kitchen","min_level":60,"max_level":60,"presence":{"graceSec":0,"arrival":false,"follow":true,"offDelaySec":180,"robotOffDelaySec":90,"fadeInSec":2,"fadeOutSec":30,"nightLevel":20,"sources":["esp","robot"]},"lights":[{"id":101,"kind":"lutron"}]},{"name":"MasterBed","key":"MasterBed","presence":{"graceSec":0,"arrival":false,"follow":false},"lights":[{"id":201,"kind":"lutron"}]}]'
 
 -- Server hooks: the driver answers each line with C4:ServerSend and then C4:ServerCloseClient.
 local replies = {}
@@ -354,36 +354,54 @@ t.test("c17 manual change during FADING holds the light and goes OCCUPIED", func
   t.ok(not any_ramp(K), "no further ramp for light 101")
 end)
 
-t.test("c18 AWAY filter: esp ignored, robot counts; HOME rule via src", function()
+-- 1.17.10: room occupancy wins over house AWAY (the robot-only AWAY filter is gone).
+t.test("c18 AWAY: esp occupancy still lights the room; vacancy gives the normal off; robot keeps its delay", function()
   start()
   t.eq(send(ln("PRESENCE", "AWAY", TOK)), "OK\r\n", "AWAY")
   clear()
   t.eq(send(ln("OCC", "Kitchen", "1", "esp", TOK)), "OK\r\n", "reply")
-  t.ok(not any_ramp(K), "no ramp for esp while AWAY")
-  t.eq(state_of("Kitchen"), "VACANT", "VACANT")
-  t.eq(send(ln("OCC", "Kitchen", "1", "esp,robot", TOK)), "OK\r\n", "reply robot")
-  t.ok(ramp(K, 60, 2000), "robot ramps on")
+  t.ok(ramp(K, 60, 2000), "esp ramps on while AWAY")
+  t.eq(state_of("Kitchen"), "OCCUPIED", "OCCUPIED")
+  send(ln("OCC", "Kitchen", "0", "clear", TOK))
   clear()
-  send(ln("OCC", "Kitchen", "1", "esp", TOK))
+  adv(170)
+  t.ok(not ramp(K, 0), "no off before the 180 s vacancy delay")
+  adv(11)
+  t.ok(ramp(K, 0, 30000), "normal vacancy off fade at 180 s")
+  adv(40)
+  clear()
+  send(ln("OCC", "Kitchen", "1", "robot", TOK))
+  t.ok(ramp(K, 60, 2000), "robot ramps on")
+  send(ln("OCC", "Kitchen", "0", "clear", TOK))
+  clear()
   adv(91)
   t.ok(ramp(K, 0, 30000), "fade at 91 s (robot delay)")
 end)
 
-t.test("c19 PRESENCE AWAY ends occupancy at once when no robot is present", function()
+t.test("c19 PRESENCE AWAY does not fade an occupied room; it fades once the room goes vacant", function()
   start()
   send(ln("OCC", "Kitchen", "1", "esp", TOK))
+  feed(K, 60)
   clear()
   send(ln("PRESENCE", "AWAY", TOK))
-  t.ok(ramp(K, 0, 30000), "fade starts with no 180 s wait")
+  adv(5)
+  t.ok(not ramp(K, 0), "occupied room is not faded at the AWAY edge")
+  t.eq(state_of("Kitchen"), "OCCUPIED", "still OCCUPIED")
+  send(ln("OCC", "Kitchen", "0", "clear", TOK))
+  adv(181)
+  t.ok(ramp(K, 0, 30000), "vacancy off after the delay while Away")
 end)
 
-t.test("c20 PRESENCE HOME re-evaluates the last src without a new OCC line", function()
+t.test("c20 PRESENCE HOME after an occupied Away keeps the room lit", function()
   start()
   send(ln("PRESENCE", "AWAY", TOK))
   send(ln("OCC", "Kitchen", "1", "esp", TOK))
+  t.ok(ramp(K, 60, 2000), "lit while AWAY")
+  feed(K, 60)
   clear()
   send(ln("PRESENCE", "HOME", TOK))
-  t.ok(ramp(K, 60, 2000), "ramp on at HOME")
+  t.ok(not ramp(K, 0), "no off at HOME")
+  t.eq(state_of("Kitchen"), "OCCUPIED", "OCCUPIED")
 end)
 
 t.test("c21 occupied inside the off window uses nightLevel; 0 keeps it dark", function()
@@ -411,7 +429,7 @@ t.test("c22 daytime target 0 keeps lights off; raising the target ramps on", fun
 end)
 
 t.test("c23 bad values fall back to defaults; duplicate key disables the later room", function()
-  local rooms23 = '[{"name":"Kitchen","key":"kitchen","min_level":60,"max_level":60,"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"offDelaySec":"x","fadeOutSec":999,"follow":true},"lights":[{"id":101,"kind":"lutron"}]},{"name":"Kitchen2","key":"Kitchen","presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true},"lights":[{"id":201,"kind":"lutron"}]}]'
+  local rooms23 = '[{"name":"Kitchen","key":"kitchen","min_level":60,"max_level":60,"presence":{"graceSec":0,"arrival":false,"offDelaySec":"x","fadeOutSec":999,"follow":true},"lights":[{"id":101,"kind":"lutron"}]},{"name":"Kitchen2","key":"Kitchen","presence":{"graceSec":0,"arrival":false,"follow":true},"lights":[{"id":201,"kind":"lutron"}]}]'
   start({ rooms = rooms23, nosnap = true })
   send(ln("HELLO", "1", "0", TOK))
   clear()

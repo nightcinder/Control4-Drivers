@@ -1,4 +1,4 @@
--- DLS 1.17.9: dim-to-warn before the vacancy off fade, grace restore after it, and arrival lighting.
+-- DLS 1.17.9: grace restore after the vacancy off fade, and arrival lighting. 1.17.10: dim-to-warn removed.
 -- Run: python tools/c4sim/run.py test dls_warn_arrival
 local sim = require("c4sim")
 local t = require("t")
@@ -24,7 +24,7 @@ os.date = function(fmt, when)
   return realdate(fmt, when)
 end
 
--- Defaults on purpose: warnLevelPct 50, warnSec 60, graceSec 120, arrival on (follow room without levels).
+-- Defaults on purpose: graceSec 120, arrival on (follow room without levels).
 local ROOMS = '[{"name":"Kitchen","key":"Kitchen","min_level":60,"max_level":60,' ..
   '"presence":{"follow":true,"offDelaySec":180,"fadeInSec":2,"fadeOutSec":30,"nightLevel":20,"sources":["esp"]},' ..
   '"lights":[{"id":101,"kind":"lutron"}]}]'
@@ -86,41 +86,30 @@ local function occupy_then_leave()
   adv(181)
 end
 
-t.test("w1 vacancy delay ends with a dim to 50% for 60 s, then the off fade", function()
+-- 1.17.10: the dim-to-warn is gone. The vacancy delay ends with the off fade at once; the grace stays.
+t.test("w1 vacancy delay ends with the off fade at once (no dim-to-warn)", function()
   start()
   occupy_then_leave()
-  t.ok(ramp(K, 30, 1000), "dim to 30 (50% of 60) over 1 s")
-  t.ok(not ramp(K, 0), "no off yet")
-  t.eq(state_of("Kitchen"), "FADING", "FADING during the warn")
-  feed(30)
-  clear()
-  adv(58)
-  t.ok(not any_ramp(K), "nothing during the warn")
-  adv(3)
-  t.ok(ramp(K, 0, 30000), "off fade over 30 s after the warn")
+  t.ok(ramp(K, 0, 30000), "off fade over 30 s right after the delay")
+  t.ok(not ramp(K, 30, 1000), "no dim to 50%")
+  t.eq(state_of("Kitchen"), "FADING", "FADING")
   adv(33)
   t.eq(state_of("Kitchen"), "VACANT", "VACANT after the fade")
 end)
 
-t.test("w2 occupancy during the warn restores the previous level at once", function()
+t.test("w2 occupancy during the off fade brings the room back (T6)", function()
   start()
   occupy_then_leave()
-  feed(30)
   clear()
-  adv(20)
+  adv(10)
   send(ln("OCC", "Kitchen", "1", "esp", TOK))
-  t.ok(ramp(K, 60, 500), "back to 60 over 0.5 s")
   t.eq(state_of("Kitchen"), "OCCUPIED", "OCCUPIED again")
-  clear()
-  adv(120)
-  t.ok(not ramp(K, 0), "no off fade after the restore")
+  t.ok(ramp(K, 60), "back to 60")
 end)
 
 t.test("w3 occupancy within the 120 s grace restores the previous level", function()
   start()
   occupy_then_leave()
-  feed(30)
-  adv(61)
   adv(33)
   feed(0)
   t.eq(state_of("Kitchen"), "VACANT", "VACANT")
@@ -134,8 +123,6 @@ end)
 t.test("w4 after the grace a walk-in is a normal walk-in ramp", function()
   start()
   occupy_then_leave()
-  feed(30)
-  adv(61)
   adv(33)
   feed(0)
   adv(125)
@@ -145,12 +132,12 @@ t.test("w4 after the grace a walk-in is a normal walk-in ramp", function()
   t.ok(not ramp(K, 60, 500), "not the grace restore")
 end)
 
-t.test("w5 warnLevelPct 0 turns the warn off", function()
-  start(nil, ROOMS:gsub('"follow":true', '"follow":true,"warnLevelPct":0'))
+t.test("w5 a leftover warnLevelPct / warnSec in Rooms JSON is ignored (no warning, no dim)", function()
+  start(nil, ROOMS:gsub('"follow":true', '"follow":true,"warnLevelPct":50,"warnSec":60'))
+  t.ok(not tostring(sim.props and sim.props["Status"] or ""):find("warn", 1, true), "no Rooms JSON warning")
   occupy_then_leave()
   t.ok(ramp(K, 0, 30000), "straight to the off fade")
 end)
-
 -- Arrival: Kitchen with an on window 06:00-23:00, so 23:45 is outside it (late level, held for the off delay).
 local ROOMS_WIN = ROOMS:gsub('"key":"Kitchen","min_level"', '"key":"Kitchen","on":"06:00","off":"23:00","min_level"')
 
@@ -166,7 +153,7 @@ local function printed(s)
   return false
 end
 
-t.test("a1 dark late arrival lights the room at nightLevel, holds it, then warns after the off delay", function()
+t.test("a1 dark late arrival lights the room at nightLevel, holds it, then fades after the off delay", function()
   start(local_sec(23, 45), ROOMS_WIN, "0", SUN_LON)
   arrive()
   t.ok(ramp(K, 20, 2000), "arrival: night level 20 after the 23:00 off time")
@@ -177,7 +164,7 @@ t.test("a1 dark late arrival lights the room at nightLevel, holds it, then warns
   adv(170)
   t.ok(not ramp(K, 60), "the arrival level is held, not replaced by the schedule")
   adv(11)
-  t.ok(ramp(K, 10, 1000), "nobody seen: dim-to-warn (50% of 20) after the off delay")
+  t.ok(ramp(K, 0, 30000), "nobody seen: off fade after the off delay (no dim-to-warn)")
 end)
 
 t.test("a2 arrival with the sun up does nothing", function()

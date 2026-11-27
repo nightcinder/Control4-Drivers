@@ -63,7 +63,7 @@ end
 
 local ROOMS = '[{"name":"Living Room","key":"LivingRoom","type":"lutron","on_daylight":0.3,"off":"23:30",' ..
   '"off_ramp_min":30,"window_gain":0.4,"scenes":{"Off":{"off":true}},' ..
-  '"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true,"offDelaySec":1200,"fadeInSec":2,"fadeOutSec":30,"nightLevel":5,' ..
+  '"presence":{"graceSec":0,"arrival":false,"follow":true,"offDelaySec":1200,"fadeInSec":2,"fadeOutSec":30,"nightLevel":5,' ..
   '"nightAfterDark":true,"sources":["esp"]},' ..
   '"lux":{"dev":603,"var":1048,"target":5},' ..
   '"lights":[{"id":331,"kind":"lutron"},{"id":332,"kind":"lutron"}]}]'

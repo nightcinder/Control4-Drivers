@@ -59,7 +59,7 @@ end
 
 local function start(at, extra, before, persist)
   local rooms = '[{"name":"Kitchen","key":"Kitchen","on":"18:00","off":"22:00","min_level":60,"max_level":60,' ..
-    '"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":false,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5},' ..
+    '"presence":{"graceSec":0,"arrival":false,"follow":false,"offDelaySec":10,"fadeInSec":2,"fadeOutSec":5},' ..
     '"lights":[{"id":101,"kind":"lutron"}]}]'
   local props = {
     ["Enabled"] = "On", ["Update Interval (min)"] = "1", ["Ramp Time (sec)"] = "90",

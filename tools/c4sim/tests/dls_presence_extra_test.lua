@@ -31,7 +31,7 @@ os.date = function(fmt, when)
   return realdate(fmt, when)
 end
 
-local ROOMS = '[{"name":"Kitchen","key":"Kitchen","min_level":60,"max_level":60,"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true,"offDelaySec":180,"robotOffDelaySec":90,"fadeInSec":2,"fadeOutSec":30,"nightLevel":20,"sources":["esp","robot"]},"lights":[{"id":101,"kind":"lutron"}]},{"name":"MasterBed","key":"MasterBed","presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":false},"lights":[{"id":201,"kind":"lutron"}]}]'
+local ROOMS = '[{"name":"Kitchen","key":"Kitchen","min_level":60,"max_level":60,"presence":{"graceSec":0,"arrival":false,"follow":true,"offDelaySec":180,"robotOffDelaySec":90,"fadeInSec":2,"fadeOutSec":30,"nightLevel":20,"sources":["esp","robot"]},"lights":[{"id":101,"kind":"lutron"}]},{"name":"MasterBed","key":"MasterBed","presence":{"graceSec":0,"arrival":false,"follow":false},"lights":[{"id":201,"kind":"lutron"}]}]'
 
 -- Server hooks: the driver answers each line with C4:ServerSend and then C4:ServerCloseClient.
 local replies = {}

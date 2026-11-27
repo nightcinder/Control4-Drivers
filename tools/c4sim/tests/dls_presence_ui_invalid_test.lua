@@ -12,7 +12,7 @@ local XML = "drivers/daylight-lighting-scheduler/Daylight_Lighting_Scheduler_dri
 local SEC = 1000
 
 local ROOMS = '[{"name":"Kitchen","key":"Kitchen","min_level":60,"max_level":60,' ..
-  '"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true,"offDelaySec":180,"sources":["esp"]},"lights":[{"id":101,"kind":"lutron"}]}]'
+  '"presence":{"graceSec":0,"arrival":false,"follow":true,"offDelaySec":180,"sources":["esp"]},"lights":[{"id":101,"kind":"lutron"}]}]'
 
 C4.ServerSend = function() end
 C4.ServerCloseClient = function() end

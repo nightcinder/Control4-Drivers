@@ -82,7 +82,7 @@ end
 
 local ROOMS = '[{"name":"Living Room","key":"LivingRoom","type":"lutron","on_daylight":0.3,"off":"23:30",' ..
   '"off_ramp_min":30,"window_gain":0.4,"scenes":{"Off":{"off":true}},' ..
-  '"presence":{"warnLevelPct":0,"graceSec":0,"arrival":false,"follow":true,"offDelaySec":1200,"fadeInSec":2,"fadeOutSec":30,"nightLevel":5,' ..
+  '"presence":{"graceSec":0,"arrival":false,"follow":true,"offDelaySec":1200,"fadeInSec":2,"fadeOutSec":30,"nightLevel":5,' ..
   '"nightAfterDark":true,"sources":["esp"]},' ..
   '"lux":{"dev":603,"var":1048,"target":5,"targets":[{"at":"12:00","target":5},{"at":"21:00","target":3}]},' ..
   '"morning":{"target":3},' ..
@@ -111,14 +111,15 @@ local function keepOccupied(minutes)        -- the bridge keeps reporting occupi
   for _ = 1, minutes do send(ln("OCC", "LivingRoom", "1", "esp", TOK)); sim.advance(MIN); mirror() end
 end
 
+-- 1.17.10: the lux path only counts while the model D is under 0.6, so these start at 15:30 (D about 0.56).
 t.test("A1+C+D: dark room lux fires before the model; no history seeds 25 (not model, not floor+2), 90 s ramp", function()
-  start(local_sec(14, 0), 0.3)
+  start(local_sec(15, 30), 0.3)
   occupy()
-  t.eq(firstOn(331), nil, "14:00 walk-in in daylight stays dark (nightAfterDark)")
+  t.eq(firstOn(331), nil, "15:30 walk-in in daylight stays dark (nightAfterDark)")
   keepOccupied(12)
   local on = firstOn(331)
-  t.ok(on ~= nil, "lux trigger turned the room on by 14:12")
-  local model, D = modelLevel(EPOCH + local_sec(14, 10))
+  t.ok(on ~= nil, "lux trigger turned the room on by 15:42")
+  local model, D = modelLevel(EPOCH + local_sec(15, 40))
   t.ok(D > 0.3, string.format("the model alone would not fire yet (D=%.2f)", D))
   t.ok(model > 25, string.format("model level %.1f is above the default seed", model))
   if on then
@@ -130,7 +131,7 @@ t.test("A1+C+D: dark room lux fires before the model; no history seeds 25 (not m
 end)
 
 t.test("C1: the loop saves its converged level once lux is near target", function()
-  start(local_sec(14, 0), 0.3)
+  start(local_sec(15, 30), 0.3)
   occupy()
   keepOccupied(12)
   t.ok(firstOn(331) ~= nil, "on")
@@ -143,7 +144,7 @@ t.test("C1: the loop saves its converged level once lux is near target", functio
 end)
 
 t.test("C2: a stored converged level of 18 caps the seed, and survives a reload", function()
-  start(local_sec(14, 0), 0.3, { luxConverged = { ["Living Room"] = 18 } })
+  start(local_sec(15, 30), 0.3, { luxConverged = { ["Living Room"] = 18 } })
   occupy()
   keepOccupied(12)
   local on = firstOn(331)
@@ -151,7 +152,7 @@ t.test("C2: a stored converged level of 18 caps the seed, and survives a reload"
   t.ok(on ~= nil and math.abs(on.level - 18) < 0.5, "dusk seed is 18, got " .. tostring(on and on.level))
   local saved = sim.persist
   t.eq(saved.luxConverged and saved.luxConverged["Living Room"], 18, "18 still stored")
-  start(local_sec(15, 0), 0.3, saved)        -- driver reload; lights off, trigger already fired today
+  start(local_sec(16, 30), 0.3, saved)        -- driver reload; lights off, trigger already fired today
   occupy()
   local on2 = firstOn(331)
   print("  C2 after reload seed level " .. tostring(on2 and on2.level))
@@ -168,10 +169,12 @@ t.test("A2: a single dark sample (passing cloud) does not fire the trigger", fun
 end)
 
 t.test("B1: an Off pressed after noon before the trigger is released when the trigger fires", function()
-  start(local_sec(13, 0), 50)
+  start(local_sec(15, 30), 50)
   occupy()
   sim.exec("ApplyScene", { ROOM = "Living Room", SCENE = "Off" })
-  t.eq(sim.persist.roomHoldKinds and sim.persist.roomHoldKinds["Living Room"], "offTrig", "hold kind offTrig")
+  t.eq(sim.persist.roomHoldKinds and sim.persist.roomHoldKinds["Living Room"], "off", "hold kind off (1.17.10)")
+  local hu = sim.persist.roomHolds and sim.persist.roomHolds["Living Room"]
+  t.ok(hu ~= nil and hu - (EPOCH + local_sec(15, 30)) <= 36 * 3600 + 60, "no next-noon hold: only the 36 h cap")
   keepOccupied(10)
   t.eq(firstOn(331), nil, "still bright: held and dark")
   sim.set_var(LUXDEV, LUXVAR, "0.3")         -- the afternoon goes dark
