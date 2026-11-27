@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DLS presence bridge v1.5.0 - feeds the Daylight Lighting Scheduler (Control4 EA-1) Home/Away and per-room occupancy.
+"""DLS presence bridge v1.6.0 - feeds the Daylight Lighting Scheduler (Control4 EA-1) Home/Away and per-room occupancy.
 
 Household (PRESENCE, v1.3.0 behaviour):
   unifi   - phone present in UniFi Poller metrics in Prometheus (stdlib only)
@@ -35,12 +35,15 @@ Env:  PROM_URL (default http://localhost:9090)  EA1_HOST  EA1_PORT (8730)  DLS_T
       ROBOT_URL (roborock-bridge, e.g. http://liesa:8788 or .../state; empty = no robot source)  ROBOT_POLL_SEC (15)
   GET /health  -> JSON per source: seconds since last successful poll, poll interval, stale flag.
                   HTTP 200 when all sources are fresh, 503 if any is stale (older than 3x its poll interval).
+  GET /metrics -> v1.6.0 Prometheus gauges: dls_presence_lux{room,sensor,entity} (ESPHome sensors with unit lx),
+                  dls_presence_occupancy / dls_presence_motion{room,sensor,entity}, dls_presence_room_occupancy{room},
+                  dls_presence_sensor_up{sensor}, dls_presence_home. Unknown values are left out.
 """
 import csv, json, math, os, re, smtplib, socket, sys, threading, time, urllib.parse, urllib.request
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 PROM = os.environ.get("PROM_URL", "http://localhost:9090").rstrip("/")
 HOST = os.environ.get("EA1_HOST", "")
 PORT = int(os.environ.get("EA1_PORT", "8730"))
@@ -460,6 +463,26 @@ def _status_html(snap):
 </body></html>"""
 
 
+_esp_watcher = None  # v1.6.0: the running EsphomeWatcher, for GET /metrics
+
+
+def _prom_esc(v):
+    return str(v).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def metrics_text(esp=None):
+    """v1.6.0: Prometheus exposition for GET /metrics (lux, occupancy, sensor links, household state)."""
+    esp = esp if esp is not None else _esp_watcher
+    lines = ["# HELP dls_presence_up 1 while dls_presence is running.", "# TYPE dls_presence_up gauge",
+             f'dls_presence_up{{version="{VERSION}"}} 1']
+    if _last_state in ("HOME", "AWAY"):
+        lines += ["# HELP dls_presence_home Household presence last sent to DLS (1 HOME, 0 AWAY).",
+                  "# TYPE dls_presence_home gauge", f"dls_presence_home {int(_last_state == 'HOME')}"]
+    if esp is not None:
+        lines += esp.metrics()
+    return "\n".join(lines) + "\n"
+
+
 class _FreshHandler(BaseHTTPRequestHandler):
     def _token_ok(self):
         if not ARRIVAL_TOKEN:
@@ -494,6 +517,14 @@ class _FreshHandler(BaseHTTPRequestHandler):
             return
         if path == "/status.json":
             self._json(200, _status_snapshot())
+            return
+        if path == "/metrics":
+            body = metrics_text().encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         if path.rstrip("/") == "/status":
             body = _status_html(_status_snapshot()).encode()
@@ -835,6 +866,8 @@ class EsphomeWatcher:
         self.port, self.log = port, log
         self.lock = threading.Lock()
         self.state = {}      # (host, object_id) -> True / False / None
+        self.lux = {}        # v1.6.0: (host, object_id) -> float lux / None (sensors with unit "lx"), for /metrics only
+        self.up = {}         # v1.6.0: host -> True while the native API connection is up
         self.room_devs = {}  # roomKey -> [(host, entity, pir)]
         self.devs = {}       # host -> {"key": str, "objs": set}
         for key, devs in room_esp.items():
@@ -857,6 +890,10 @@ class EsphomeWatcher:
             for (h, oid) in list(self.state):
                 if h == host:
                     self.state[(h, oid)] = value
+            for (h, oid) in list(self.lux):
+                if h == host:
+                    self.lux[(h, oid)] = None
+            self.up[host] = False
 
     async def _device_loop(self, host, dev):
         import asyncio
@@ -883,8 +920,20 @@ class EsphomeWatcher:
                     self.log(f"esp {host}: no binary_sensor {sorted(missing)}; device has {have}")
                     missing_reason = f"esp:{host} missing binary_sensor: {', '.join(sorted(missing))}"
 
-                def on_state(st, keys=keys):
-                    oid = keys.get(getattr(st, "key", None))
+                # v1.6.0: illuminance sensors (unit lx) are read too, only for the Prometheus /metrics endpoint
+                lux_keys = {e.key: e.object_id for e in entities
+                            if type(e).__name__ == "SensorInfo" and getattr(e, "unit_of_measurement", "") == "lx"}
+
+                def on_state(st, keys=keys, lux_keys=lux_keys):
+                    k = getattr(st, "key", None)
+                    loid = lux_keys.get(k)
+                    if loid is not None:
+                        v = getattr(st, "state", None)
+                        ok = not getattr(st, "missing_state", False) and isinstance(v, (int, float)) and math.isfinite(v)
+                        with self.lock:
+                            self.lux[(host, loid)] = float(v) if ok else None
+                        return
+                    oid = keys.get(k)
                     if oid is None:
                         return
                     val = None if getattr(st, "missing_state", False) else bool(getattr(st, "state", False))
@@ -894,6 +943,9 @@ class EsphomeWatcher:
                 with self.lock:
                     for oid in dev["objs"]:
                         self.state.setdefault((host, oid), None)
+                    for loid in lux_keys.values():
+                        self.lux.setdefault((host, loid), None)
+                    self.up[host] = True
                 res = cli.subscribe_states(on_state)
                 if asyncio.iscoroutine(res):
                     await res
@@ -933,6 +985,45 @@ class EsphomeWatcher:
                 pir_vals = [self.state.get((h, p)) for h, _e, p in devs if p]
                 out[key] = (esp, combine(pir_vals))
         return out
+
+    def metrics(self):
+        """v1.6.0: Prometheus text lines. Unknown values (no connection, missing state) are left out."""
+        def lbl(**kw):
+            return "{" + ",".join(f'{k}="{_prom_esc(v)}"' for k, v in kw.items()) + "}"
+
+        lines = [
+            "# HELP dls_presence_lux ESPHome illuminance sensor reading (lx) per room and sensor.",
+            "# TYPE dls_presence_lux gauge",
+        ]
+        occ, pir, room_occ = [], [], []
+        with self.lock:
+            for room, devs in sorted(self.room_devs.items()):
+                for host in sorted({h for h, _e, _p in devs}):
+                    for (h, oid), v in sorted(self.lux.items()):
+                        if h == host and v is not None:
+                            lines.append(f"dls_presence_lux{lbl(room=room, sensor=host, entity=oid)} {v:g}")
+                for host, ent, p in devs:
+                    v = self.state.get((host, ent))
+                    if v is not None:
+                        occ.append(f"dls_presence_occupancy{lbl(room=room, sensor=host, entity=ent)} {int(v)}")
+                    if p:
+                        v = self.state.get((host, p))
+                        if v is not None:
+                            pir.append(f"dls_presence_motion{lbl(room=room, sensor=host, entity=p)} {int(v)}")
+            up = sorted(self.up.items())
+        for room, (esp, _pir) in sorted(self.readings().items()):
+            if esp is not None:
+                room_occ.append(f"dls_presence_room_occupancy{lbl(room=room)} {int(esp)}")
+        lines += ["# HELP dls_presence_occupancy ESPHome occupancy binary_sensor (1 occupied) per room and sensor.",
+                  "# TYPE dls_presence_occupancy gauge"] + occ
+        lines += ["# HELP dls_presence_motion ESPHome PIR binary_sensor (1 motion) per room and sensor.",
+                  "# TYPE dls_presence_motion gauge"] + pir
+        lines += ["# HELP dls_presence_room_occupancy ESPHome room occupancy as combined for DLS (any sensor 1).",
+                  "# TYPE dls_presence_room_occupancy gauge"] + room_occ
+        lines += ["# HELP dls_presence_sensor_up 1 while the ESPHome native API connection is up.",
+                  "# TYPE dls_presence_sensor_up gauge"]
+        lines += [f"dls_presence_sensor_up{lbl(sensor=h)} {int(bool(v))}" for h, v in up]
+        return lines
 
 
 # ---------------------------------------------------------------- OCC poller
@@ -1149,10 +1240,12 @@ def presence_loop(poller):
 
 
 def run_rooms(rooms):
+    global _esp_watcher
     esp_rooms = {k: c.esp for k, c in rooms.items() if c.esp}
     esp = EsphomeWatcher(esp_rooms, log=print) if esp_rooms else None
     if esp is not None:
         esp.start()
+    _esp_watcher = esp
     robot = None
     if ROBOT_URL and any("robot" in c.sources and c.robot for c in rooms.values()):
         robot = RobotSource()
