@@ -1,6 +1,10 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.17.7
+  DRIVER_VERSION: 1.17.8
+
+  1.17.8 (2026-11-26): version beacon. Remote log line "dls loaded version <v> xml v<n>" on load and
+    "dls daily version ..." once per local day after 12:00 (on the existing heartbeat timer, no new timer).
+    The Loki push stream now carries a "version" label, so an import is confirmed by querying Loki.
 
   1.17.7 (2026-11-26): lux loop windup fix. Living Room jumped 30 -> 100 in 2 s when per-light holds expired.
     - Bumpless hand-back: hold expiry (all lights held), Away->Home / release, reload, gate reconcile and the
@@ -232,7 +236,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.17.7"
+DRIVER_VERSION = "1.17.8"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -287,7 +291,7 @@ local function flushRemoteLog()
   end
   local vals = {}
   for i, v in ipairs(batch) do vals[i] = "[" .. jstr(v[1]) .. "," .. jstr(v[2]) .. "]" end
-  local body = '{"streams":[{"stream":{"job":"control4","driver":"dls"},"values":[' .. table.concat(vals, ",") .. ']}]}'
+  local body = '{"streams":[{"stream":{"job":"control4","driver":"dls","version":' .. jstr(DRIVER_VERSION) .. '},"values":[' .. table.concat(vals, ",") .. ']}]}'
   remoteBusy = os.time()
   local ok = pcall(function()
     C4:urlPost(url, body, { ["Content-Type"] = "application/json" }, false,
@@ -417,7 +421,27 @@ local function setDlsError(msg)
   setDlsVar("LAST_ERROR", isoTime() .. " " .. msg)
 end
 
-local function heartbeat() setDlsVar("HEARTBEAT", isoTime()) end
+-- 1.17.8: version beacon. One remote-log line on load and one per local day after 12:00, so an import can be
+-- confirmed from Loki ({job="control4",driver="dls",version="..."}). Rides the existing heartbeat timer.
+local versionBeaconDay = nil
+local function xmlVersion()
+  local ok, v = pcall(function() return C4:GetDriverConfigInfo("version") end)
+  if ok and v and tostring(v) ~= "" then return tostring(v) end
+  return "?"
+end
+local function versionBeacon(kind)
+  remoteLog(string.format("dls %s version %s xml v%s", kind, DRIVER_VERSION, xmlVersion()))
+end
+
+local function heartbeat()
+  setDlsVar("HEARTBEAT", isoTime())
+  local d = os.date("*t")
+  local today = os.date("%Y-%m-%d")
+  if d.hour >= 12 and versionBeaconDay ~= today then
+    versionBeaconDay = today
+    versionBeacon("daily")
+  end
+end
 
 local function startHeartbeat()
   if heartbeatTimer then pcall(function() heartbeatTimer:Cancel() end) heartbeatTimer = nil end
@@ -2635,6 +2659,10 @@ function OnDriverLateInit()
     setDlsError("load: " .. tostring(err))         -- 1.16.23
   end
   pcall(startTimers)
+  pcall(function()                                 -- 1.17.8: load beacon; after noon it also counts as today's daily one
+    versionBeacon("loaded")
+    if os.date("*t").hour >= 12 then versionBeaconDay = os.date("%Y-%m-%d") end
+  end)
   pcall(startHeartbeat)                            -- 1.16.23
   if remoteLogTimer then pcall(function() remoteLogTimer:Cancel() end) end   -- 1.17.4
   pcall(function() remoteLogTimer = C4:SetTimer(15000, function() pcall(flushRemoteLog) end, true) end)
