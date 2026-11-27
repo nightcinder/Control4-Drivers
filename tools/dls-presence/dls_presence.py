@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DLS presence bridge v1.6.1 - feeds the Daylight Lighting Scheduler (Control4 EA-1) Home/Away and per-room occupancy.
+"""DLS presence bridge v1.6.2 - feeds the Daylight Lighting Scheduler (Control4 EA-1) Home/Away and per-room occupancy.
 
 Household (PRESENCE, v1.3.0 behaviour):
   unifi   - phone present in UniFi Poller metrics in Prometheus (stdlib only)
@@ -43,7 +43,8 @@ import csv, json, math, os, re, smtplib, socket, sys, threading, time, urllib.pa
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "1.6.1"  # v1.6.1: UniFi with no client series is unknown (None), not away; _last_ok only on data
+VERSION = "1.6.2"  # v1.6.2: tracking entity counts as motion; night stuck rule (rooms.json "night")
+# was 1.6.1:  # v1.6.1: UniFi with no client series is unknown (None), not away; _last_ok only on data
 PROM = os.environ.get("PROM_URL", "http://localhost:9090").rstrip("/")
 HOST = os.environ.get("EA1_HOST", "")
 PORT = int(os.environ.get("EA1_PORT", "8730"))
@@ -616,12 +617,35 @@ def ea1_batch(lines):
 
 # ---------------------------------------------------------------- per-room config
 class RoomCfg:
-    def __init__(self, key, sources, stuck_min, esp, robot):
+    def __init__(self, key, sources, stuck_min, esp, robot, night=None):
         self.key = key
+        # v1.6.2: optional night rule (from_min, to_min, stuck_min): inside the window an occupancy sensor that
+        # reads 1 with no motion (PIR or tracking) for stuck_min counts as vacant. Static mmWave alone held the
+        # Living Room "occupied" all night on 2026-11-26/27 with nobody there.
+        self.night = night
         self.sources = list(sources)       # priority order, allow-list
         self.stuck_min = float(stuck_min)  # 0 = never time out
         self.esp = list(esp)               # [{"host", "key", "entity", "pir"}]
         self.robot = list(robot)           # robot room names mapped to this room
+
+
+def _hhmm(v):
+    """v1.6.2: "HH:MM" -> minutes after midnight."""
+    h, m = str(v).split(":")
+    h, m = int(h), int(m)
+    if not (0 <= h < 24 and 0 <= m < 60):
+        raise ValueError(f"bad time {v!r}")
+    return h * 60 + m
+
+
+def in_night(cfg, now):
+    """v1.6.2: is local time inside the room's night window (may wrap midnight)?"""
+    if not getattr(cfg, "night", None):
+        return False
+    lt = time.localtime(now)
+    m = lt.tm_hour * 60 + lt.tm_min
+    fm, tm, _ = cfg.night
+    return (fm <= m < tm) if fm <= tm else (m >= fm or m < tm)
 
 
 def load_rooms(path, log=print):
@@ -670,7 +694,8 @@ def load_rooms(path, log=print):
                     if (isinstance(d, dict) and isinstance(d.get("host"), str) and d["host"].strip()
                             and isinstance(d.get("entity"), str) and d["entity"].strip()
                             and (d.get("key") is None or isinstance(d.get("key"), str))
-                            and (d.get("pir") is None or isinstance(d.get("pir"), str))):
+                            and (d.get("pir") is None or isinstance(d.get("pir"), str))
+                            and (d.get("track") is None or isinstance(d.get("track"), str))):
                         esp.append(d)
                     else:
                         log(f"rooms: {key}.esp entry invalid, ignored")
@@ -686,7 +711,18 @@ def load_rooms(path, log=print):
         if not src or (("esp" in c or "robot" in c) and not (has_esp or has_robot)):
             log(f"rooms: skipped {key!r} (no usable sources)")
             continue
-        out[key] = RoomCfg(key, src, stuck, esp, robot)
+        night = None
+        raw_night = c.get("night")
+        if raw_night is not None:
+            try:
+                fm, tm = _hhmm(raw_night["from"]), _hhmm(raw_night["to"])
+                ns = float(raw_night.get("stuckOnMin", 10))
+                if ns <= 0:
+                    raise ValueError("stuckOnMin must be > 0")
+                night = (fm, tm, ns)
+            except Exception as e:
+                log(f"rooms: {key}.night invalid ({e}), ignored")
+        out[key] = RoomCfg(key, src, stuck, esp, robot, night)
     return out
 
 
@@ -717,6 +753,8 @@ class RoomTracker:
         # other evidence (PIR rising edge, any robot edge in this room) restores a stuck sensor and resets the stuck timer
         if pir is True and self.last_pir is not True:
             self.evidence, self.tripped = now, False
+        elif pir is True and in_night(self.cfg, now):
+            self.evidence = now   # v1.6.2: at night, ongoing motion/tracking keeps the stuck timer reset
         if robot is not None and self.last_robot is not None and robot != self.last_robot:
             self.evidence, self.tripped = now, False
         self.last_esp = esp
@@ -725,9 +763,11 @@ class RoomTracker:
         if robot is not None:
             self.last_robot = robot
 
-        if self.cfg.stuck_min > 0 and esp is True and not self.tripped and self.on_since is not None:
+        night = in_night(self.cfg, now)
+        limit = self.cfg.night[2] if night else self.cfg.stuck_min   # v1.6.2
+        if limit > 0 and esp is True and not self.tripped and self.on_since is not None:
             base = max(self.on_since, self.evidence or 0.0)
-            if now - base >= self.cfg.stuck_min * 60:
+            if now - base >= limit * 60:
                 self.tripped = True
                 stuck_event = True
         esp_eff = None if self.tripped else esp
@@ -761,7 +801,7 @@ class RoomTracker:
             else:
                 out = (0, "clear")
         self.last_out = out
-        return {"state": out[0], "src": out[1], "stuck": stuck_event}
+        return {"state": out[0], "src": out[1], "stuck": stuck_event, "night": night}
 
 
 def robot_state_url(url):
@@ -876,6 +916,7 @@ class EsphomeWatcher:
         self.lux = {}        # v1.6.0: (host, object_id) -> float lux / None (sensors with unit "lx"), for /metrics only
         self.up = {}         # v1.6.0: host -> True while the native API connection is up
         self.room_devs = {}  # roomKey -> [(host, entity, pir)]
+        self.room_tracks = {}  # v1.6.2: roomKey -> [(host, track entity)], combined with PIR as motion evidence
         self.devs = {}       # host -> {"key": str, "objs": set}
         for key, devs in room_esp.items():
             self.room_devs[key] = []
@@ -886,6 +927,9 @@ class EsphomeWatcher:
                 dev["objs"].add(d["entity"])
                 if d.get("pir"):
                     dev["objs"].add(d["pir"])
+                if d.get("track"):
+                    dev["objs"].add(d["track"])
+                    self.room_tracks.setdefault(key, []).append((host, d["track"]))
 
     def start(self):
         import asyncio
@@ -990,6 +1034,7 @@ class EsphomeWatcher:
             for key, devs in self.room_devs.items():
                 esp = combine([self.state.get((h, e)) for h, e, _p in devs])
                 pir_vals = [self.state.get((h, p)) for h, _e, p in devs if p]
+                pir_vals += [self.state.get(t) for t in self.room_tracks.get(key, [])]   # v1.6.2
                 out[key] = (esp, combine(pir_vals))
         return out
 
@@ -1098,7 +1143,9 @@ class Poller:
                 rob = self.robot.room_value(now, cfg.robot)
                 docked = self.robot.docked(now)
             r = tr.evaluate(now, esp, pir, rob, docked)
-            if r["stuck"]:
+            if r["stuck"] and r.get("night"):   # v1.6.2: expected at night, log only (no alert)
+                self.log(f"{key}: night rule, esp read 1 for {cfg.night[2]:g} min with no motion; sending 0 stuck")
+            elif r["stuck"]:
                 self.log(f"{key}: esp read 1 for {cfg.stuck_min:g} min with no motion; sending 0 stuck")
                 self.notify("DLS presence: sensor stuck on",
                             f"{key}: occupancy sensor read 1 for {cfg.stuck_min:g} min with no PIR motion or other "

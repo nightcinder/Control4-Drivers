@@ -1,6 +1,10 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.17.12
+  DRIVER_VERSION: 1.17.13
+
+  1.17.13 (2026-11-27): wake ramp is continuous. Each Update pass fades to the level due at the next pass over the
+    whole Update interval (was: a 60 s fade to the current level, then flat until the next pass, which read as
+    1-7-13-19-25 % jumps every 5 min on 2026-11-27).
 
   1.17.12 (2026-11-26): remote log resend loop. After the 23:33 off edge on 2026-11-26 every post reached Loki
     (Alloy answered 204) but the post callback still counted as failed, so the whole buffer was posted again
@@ -204,8 +208,8 @@
 
   1.16.17 (2026-11-23): stepped off-fade no longer stalls at the floor. A fade stopped by presence away now sends the final 0 to lights still above 0 and not held by hand; a scene hold still wins with no forced off. Adds dbg lines for each fade step, final 0, cancel (reason overrideUntil / presenceAway / disabled / restart / done / all / other), held light and step error.
   1.16.16 (2026-11-21): trigger Update on non-follow presence VACANT -> OCCUPIED and gate-open reconcile, cancel stepped off-fade on presence fade-out, wrap sendQ callbacks in pcall with safe timer cancel, clear sendTimer/sendQ in OnDriverDestroyed, and call safeUpdate in startVacancyTimer.
-  1.16.15 (2026-11-20): fix 23:45 off-edge failures — compare pre-first-command feedback against initial load level instead of 0, check l.rampTo == 0 in offEnforce instead of l.lastLevel <= OWN_BAND to stop infinite re-hold loops, track wasInWindow while a scene hold is active across reload, and keep scheduled off active for vacant non-follow presence rooms.
-  1.16.14 (2026-11-19): audit fixes — preserve pending confirmations during own ramps, include ramp and queue time in light timeout, keep vacant non-follow presence rooms dark, clear/persist presence HOLD on release, honour manual dimmer changes before first command, re-read occ sensors when Presence Lighting toggles, and guard nil Latitude/Longitude in sun helpers/LogStatus/ApplyScene.
+  1.16.15 (2026-11-20): fix 23:45 off-edge failures â€” compare pre-first-command feedback against initial load level instead of 0, check l.rampTo == 0 in offEnforce instead of l.lastLevel <= OWN_BAND to stop infinite re-hold loops, track wasInWindow while a scene hold is active across reload, and keep scheduled off active for vacant non-follow presence rooms.
+  1.16.14 (2026-11-19): audit fixes â€” preserve pending confirmations during own ramps, include ramp and queue time in light timeout, keep vacant non-follow presence rooms dark, clear/persist presence HOLD on release, honour manual dimmer changes before first command, re-read occ sensors when Presence Lighting toggles, and guard nil Latitude/Longitude in sun helpers/LogStatus/ApplyScene.
   1.16.13: a long scheduled off really fades. One RAMP_TO_LEVEL 0 with a TIME of minutes is not honoured
   end to end: on 2026-11-18 the Den's 30-minute off (off_ramp_min 30) reached the Chair Lamp as an instant
   power-off (trace: on 20% at 23:47:15, off 20% at 23:47:30, brightness never moved). An off longer than
@@ -254,8 +258,8 @@
   1.16.0: Presence Lighting Off now releases presence-driven rooms back to the schedule (see
   docs/presence-lighting-off.md). Manual holds and per-light holds survive; a Room Vacant event fires for each
   room released, so automation sees the hand-back.
-  1.15.0: vacation pattern. "Vacation Pattern" (Off/On) shifts each room's scheduled off time — including the
-  Away off window — by a deterministic per-day jitter of up to "Vacation Jitter (min)", so an empty house does
+  1.15.0: vacation pattern. "Vacation Pattern" (Off/On) shifts each room's scheduled off time â€” including the
+  Away off window â€” by a deterministic per-day jitter of up to "Vacation Jitter (min)", so an empty house does
   not switch off at the same minute nightly. Clamped so it never crosses noon.
   1.14.0: offline-light alert. Every level command is confirmed against the light's reported level; a light that
   does not reach it inside "Light Timeout (sec)" fires Light Not Responding once, appears in the read-only
@@ -327,7 +331,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.17.12"
+DRIVER_VERSION = "1.17.13"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 PR_VACANT_HOLD_SEC = 7 * 86400    -- 1.17.10: "until vacant" manual hold in follow presence rooms (vacancy clears it)
 OFF_HOLD_CAP_SEC = 36 * 3600      -- 1.17.10: safety cap on an Off-scene hold (it normally ends at a window start)
@@ -2588,13 +2592,19 @@ function Update()
         if inWake and not room.wasInWake then dbg("wake window start", room.name, "hold " .. tostring(room.overrideUntil ~= nil), "ws " .. tostring(ws), "we " .. tostring(we)) end
         if inWake then cancelOffFade(room) end      -- 1.16.13: never step an off down under a wake ramp
         if inWake and not room.overrideUntil then
-          local frac = clamp((minNow - ws) / math.max(1, tonumber(w.ramp_min) or 30), 0, 1)
+          -- 1.17.13: continuous ramp. Each Update pass fades to the level due at the NEXT pass, over the whole
+          -- interval, so the light never jumps then sits flat (1.17.12 stepped 1-7-13-19-25 % with 60 s fades
+          -- every 5 min). The first pass starts from off at 1 %.
+          local stepMin = tonumber(Properties["Update Interval (min)"]) or 5
+          local rampLen = math.max(1, tonumber(w.ramp_min) or 30)
+          local frac = clamp((minNow + stepMin - ws) / rampLen, 0, 1)
           local lvl = math.max(1, (tonumber(w.level) or 40) * frac)
+          local fadeMs = math.floor(stepMin * 60000)
           for _, l in ipairs(room.lights) do
             if not l.overrideUntil then
               local v = clamp(lvl * l.scale, 1, 100)
               if l.max_level then v = clamp(math.min(v, l.max_level), 1, 100) end   -- 1.17.11: N2, per-light cap
-              if not l.lastLevel or math.abs(v - l.lastLevel) >= 2 then dbg("wake ramp step", room.name, l.id, "level " .. tostring(v)); sendLevel(l, v, 60000) end
+              if not l.lastLevel or math.abs(v - l.lastLevel) >= 1 then dbg("wake ramp step", room.name, l.id, "level " .. tostring(v), "fade ms " .. tostring(fadeMs)); sendLevel(l, v, fadeMs) end
               n = n + 1
             end
           end

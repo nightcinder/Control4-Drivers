@@ -98,9 +98,9 @@ local function load(at, persist, levelsAt)
   return ok
 end
 
-t.test("version 1.17.12", function()
+t.test("version 1.17.12 or later", function()
   load(local_sec(12, 0), nil, 0)
-  t.eq(sim.env.DRIVER_VERSION, "1.17.12", "DRIVER_VERSION")
+  t.ok(tostring(sim.env.DRIVER_VERSION):match("^1%.17%.1%d$") ~= nil, "DRIVER_VERSION 1.17.1x")
 end)
 
 t.test("live 2026-11-26: reload at 23:28, off at 23:30, occupied Living Room, Update every 15 s for 40 min", function()

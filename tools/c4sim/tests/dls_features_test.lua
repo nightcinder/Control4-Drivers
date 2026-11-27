@@ -59,6 +59,23 @@ t.test("wake ramp runs inside its window and goes off when it ends", function()
   t.ok(sent(U, "RAMP_TO_LEVEL", 0), "wake end sent 0")
 end)
 
+t.test("1.17.13 wake ramp is continuous: each step fades over the whole Update interval to the next step", function()
+  sim.reset(1)
+  load('[{"name":"Upstairs","off":"22:30","wake":{"enabled":true,"at":"06:15","stop":"07:15","ramp_min":30,"level":15,"days":["thu"]},"lights":[{"id":337,"kind":"lutron"}]}]',
+    6, 10, { [U] = 0 }, { ["Update Interval (min)"] = "5" })
+  sim.advance(45 * 60 * SEC)                   -- 06:10 -> 06:55
+  local steps = {}
+  for _, s in ipairs(sim.sent) do
+    if s.id == U and s.cmd == "RAMP_TO_LEVEL" and tonumber(s.params.LEVEL) > 0 then steps[#steps + 1] = s end
+  end
+  t.ok(#steps >= 5, "several wake steps (" .. #steps .. ")")
+  for _, s in ipairs(steps) do
+    t.eq(tonumber(s.params.TIME), 300000, "fade spans the 5 min Update interval")
+  end
+  t.ok(tonumber(steps[1].params.LEVEL) <= 3, "first step is gentle (" .. tostring(steps[1].params.LEVEL) .. ")")
+  t.ok(tonumber(steps[#steps].params.LEVEL) <= 15, "never above the wake level")
+end)
+
 t.test("wake is skipped on a day not in its days list", function()
   sim.reset(1)
   load('[{"name":"Upstairs","off":"22:30","wake":{"enabled":true,"at":"sunrise-15","stop":"sunrise+30","ramp_min":30,"level":35,"days":["mon"]},"lights":[{"id":337,"kind":"lutron"}]}]', 7, 5, { [U] = 0 })

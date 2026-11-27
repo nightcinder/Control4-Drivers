@@ -52,7 +52,7 @@ class B9UnifiEmptyExporter(unittest.TestCase):
         self.assertIsNone(st, "no AWAY from a dead exporter")
 
     def test_b9_version(self):
-        self.assertEqual(dp.VERSION, "1.6.1")
+        self.assertTrue(dp.VERSION.startswith("1.6."))  # 1.6.1 or later
 
 
 if __name__ == "__main__":
