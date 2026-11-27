@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DLS presence bridge v1.6.0 - feeds the Daylight Lighting Scheduler (Control4 EA-1) Home/Away and per-room occupancy.
+"""DLS presence bridge v1.6.1 - feeds the Daylight Lighting Scheduler (Control4 EA-1) Home/Away and per-room occupancy.
 
 Household (PRESENCE, v1.3.0 behaviour):
   unifi   - phone present in UniFi Poller metrics in Prometheus (stdlib only)
@@ -43,7 +43,7 @@ import csv, json, math, os, re, smtplib, socket, sys, threading, time, urllib.pa
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "1.6.0"
+VERSION = "1.6.1"  # v1.6.1: UniFi with no client series is unknown (None), not away; _last_ok only on data
 PROM = os.environ.get("PROM_URL", "http://localhost:9090").rstrip("/")
 HOST = os.environ.get("EA1_HOST", "")
 PORT = int(os.environ.get("EA1_PORT", "8730"))
@@ -154,10 +154,17 @@ def prom(query):
 
 def unifi_present(phone):
     try:
+        # v1.6.1: an exporter with no client series at all (unpoller down, scrape failing) is unknown, not "away".
+        # Before, the empty per-phone result returned False and stamped _last_ok, so the house read AWAY and
+        # /health stayed green. _last_ok is stamped only when the exporter really answered with data.
+        total = prom("count(unpoller_client_uptime_seconds)")
+        if not total or float(total[0]["value"][1]) <= 0:
+            warn_once("unifi-empty", "prometheus: no unpoller_client_uptime_seconds series; UniFi presence unknown")
+            return None
+        _last_ok["unifi"] = time.time()
         for lab in LABELS:
             q = f'count(unpoller_client_uptime_seconds{{{lab}=~"(?i){phone}"}})'
             res = prom(q)
-            _last_ok["unifi"] = time.time()
             if res and float(res[0]["value"][1]) > 0:
                 return True
         return False

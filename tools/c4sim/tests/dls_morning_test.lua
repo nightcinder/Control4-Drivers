@@ -96,8 +96,8 @@ t.test("M4: daylight takes over and the room fades off, no re-latch", function()
   start(local_sec(8, 0), 1)
   sim.advance(3 * 60 * SEC)
   t.ok(ons(101) >= 1, "on first")
-  sim.set_var(LUXDEV, LUXVAR, "50")
-  sim.advance(80 * 60 * SEC)
+  -- 1.17.11: a live sensor (value moves a little); a bit-identical value for 30 min is stale and freezes the loop
+  for i = 1, 80 do sim.set_var(LUXDEV, LUXVAR, (i % 2 == 0) and "50" or "50.5") sim.advance(60 * SEC) end
   t.ok(offs(101) >= 1, "faded off once lux is high and the loop is at min_level")
   sim.set_var(LUXDEV, LUXVAR, "1")
   sim.sent = {}

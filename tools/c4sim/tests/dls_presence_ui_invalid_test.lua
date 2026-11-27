@@ -39,11 +39,13 @@ t.test("remembered confirmations are pruned for lights that no longer exist", fu
   t.eq(seen["999"], nil, "the removed id is forgotten")
 end)
 
-t.test("an invalid Rooms JSON empties the picker and says why", function()
+-- 1.17.11 (B10): a Rooms JSON edit that does not decode keeps the previous rooms running (the picker still names
+-- a loaded room) and Status says why. The 1.16.6 "empty the picker" rule still holds at load with no rooms.
+t.test("an invalid Rooms JSON keeps the previous rooms and says why", function()
   start()
   setprop("Rooms JSON", "{not json")
-  t.eq(sim._store["Presence Room State"], "Rooms JSON invalid", "the state names the problem")
-  t.eq(sim._store["Presence Room"], "", "the picker no longer points at a room that is not loaded")
+  t.ok(tostring(sim._store["Status"]):find("Rooms JSON error: invalid JSON", 1, true) ~= nil, "Status names the problem")
+  t.eq(sim._store["Presence Room"], "Kitchen", "the picker points at the room that is still loaded")
 end)
 
 t.finish("dls-presence-ui-invalid")

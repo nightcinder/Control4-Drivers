@@ -91,7 +91,9 @@ t.test("2: a room whose wake spec cannot be resolved does not block the other ro
   t.ok(wakeLevels(337) >= 3, "the healthy room still ramped")
   t.eq(wakeLevels(338), 0, "the room with the broken wake window stayed put")
   t.eq(#sim.errors, 0, "the broken spec raised nothing")
-  t.ok(tostring(sim._store["Status"]):find("OK ", 1, true) == 1, "the driver kept running")
+  -- 1.17.11 (N5): the bad spec is now named in Status ("Rooms JSON warning: ... | OK ...")
+  t.ok(tostring(sim._store["Status"]):find("OK ", 1, true) ~= nil, "the driver kept running")
+  t.ok(tostring(sim._store["Status"]):find("Spare.wake.at (bad time", 1, true) ~= nil, "the bad spec is warned")
 end)
 
 t.test("3: a held room does not block another room's wake ramp", function()

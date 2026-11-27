@@ -28,6 +28,7 @@ Nothing moves until the master property **Curtain Automation** is set to On (def
 
 - Before `open_at`, at or after `close_at`, or with the sun below the horizon: closed.
 - Direct-sun index = max(0, cos(sun azimuth - facing)) x sin(sun elevation) x cloud transmittance. At or above the threshold: `glare_position`.
+- 1.17.11: for a vertical window the index uses cos(sun elevation) instead of sin, and is 0 unless the sun is at least 3 degrees up and in front of the window. Hysteresis: glare trips at the threshold and releases only under 0.8 x threshold, so a cloud-poll change cannot flip the curtain every 15 minutes. The last target is saved when the command is actually sent. "curtain held" is logged once per hold.
 - Otherwise: open.
 - Evaluated while presence is Away too (1.11.10): curtains still close at sunset and open in the morning.
 - `times` do not wrap past midnight. `close_at` must be later than `open_at` on the same day.

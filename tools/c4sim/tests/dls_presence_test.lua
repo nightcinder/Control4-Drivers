@@ -177,7 +177,7 @@ t.test("c4 re-entry during FADING ramps back up", function()
   t.eq(state_of("Kitchen"), "FADING", "FADING at +185 s")
   clear()
   send(ln("OCC", "Kitchen", "1", "esp", TOK))
-  t.ok(ramp(K, 60, 2000), "ramp back to 60")
+  t.ok(ramp(K, 60, 500), "ramp back to 60 (1.17.11: pre-fade restore, 500 ms)")
   t.eq(state_of("Kitchen"), "OCCUPIED", "OCCUPIED")
 end)
 
