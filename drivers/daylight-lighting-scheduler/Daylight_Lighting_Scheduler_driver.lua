@@ -1,6 +1,16 @@
 --[[
   Daylight Lighting Scheduler (DLS)
-  DRIVER_VERSION: 1.17.6
+  DRIVER_VERSION: 1.17.7
+
+  1.17.7 (2026-11-26): lux loop windup fix. Living Room jumped 30 -> 100 in 2 s when per-light holds expired.
+    - Bumpless hand-back: hold expiry (all lights held), Away->Home / release, reload, gate reconcile and the
+      morning window end restart the loop from the average lit level (per-light scale undone).
+    - The loop level is persisted (PersistData.luxLevel) and restored on reload when under 6 h old.
+    - Anti-windup: no integration while every light is held or an off fade runs; no push past the clamps.
+    - Optional per-room lux.max caps the loop. Night saturation latch: 3 upward passes with lux rising under
+      10% of target hold a sane level (converged or 25, or the level before the climb). "lux loop saturated".
+    - Sensor nil keeps the loop level; a lux value unchanged for 30 min freezes the loop.
+    - Follow-room schedule passes always ramp over Ramp Time (sec); fadeInSec is only for occupancy edges.
 
   1.17.6 (2026-11-26): remote log fix. Loki answered 400 to every post: C4:JsonEncode writes Lua arrays as
     objects ({"1":...}). The push body is now built by hand.
@@ -222,7 +232,7 @@
   and override detection on ramp feedback. Turn Debug on for the first run.
 ]]
 
-DRIVER_VERSION = "1.17.6"
+DRIVER_VERSION = "1.17.7"
 LIGHT_LEVEL_VAR = 1001            -- light proxy LIGHT_LEVEL variable id
 
 local rooms = {}                  -- parsed rooms
@@ -707,6 +717,9 @@ local function parseMorning(m, lux)
 end
 
 LUX_SEED_DEFAULT = 25             -- 1.17.5: dusk seed with no converged history (%)
+LUX_STALE_SEC = 1800              -- 1.17.7: a lux value unchanged this long is stale: the loop freezes
+LUX_SAT_PASSES = 3                -- 1.17.7: upward passes without a lux rise before the saturation latch
+LUX_RESTORE_SEC = 6 * 3600        -- 1.17.7: a persisted loop level older than this is not restored
 
 function ComputeRoomTarget(room, now, lat, lon, light)
   local el, az = SunPositionCached(now, lat, lon)
@@ -738,26 +751,75 @@ function ComputeRoomTarget(room, now, lat, lon, light)
     room.luxSeed = nil
   end
   if lx and not light then
-    local lux = tonumber(C4:GetDeviceVariable(lx.dev, lx.var))
+    local raw = C4:GetDeviceVariable(lx.dev, lx.var)
+    local lux = tonumber(raw)
     if lux then
+      -- 1.17.7: no loop level yet but lights already on (night level, manual): start from the lit level
+      if not room.luxLevel and not seed and LuxHandBack then LuxHandBack(room, now, "loop start") end
       local prev = room.luxLevel or level
       local tgt = luxTargetFor(lx, now, minNow, lat, lon)
       room.luxOkAt = nil
+      -- 1.17.7: stale sensor: a value bit-identical for more than LUX_STALE_SEC freezes the loop
+      if raw ~= room.luxRaw then room.luxRaw, room.luxRawAt = raw, now end
+      local stale = room.luxRawAt ~= nil and now - room.luxRawAt > LUX_STALE_SEC
+      -- 1.17.7: optional lux.max caps the loop's upper clamp (a target the lights cannot reach)
+      local upper = base
+      if lx.max then upper = math.max(room.min_level, math.min(upper, lx.max)) end
+      local floor = room.min_level
+      if room.luxLatch and (lux >= 0.9 * tgt or room.luxLatch.tgt ~= tgt) then
+        dbg("lux loop unlatched", room.name, string.format("lux=%.2f target %.2f", lux, tgt))
+        room.luxLatch = nil
+      end
       if seed then
         -- the seed is the lower of the model level and the last converged evening level (25 with no history);
         -- the seed pass sends it as is, the loop corrects from the next pass
         local s = math.min(rawLevel, room.luxConv or LUX_SEED_DEFAULT)
         room.luxLevel = clamp(s, room.min_level, base)
+        room.luxSat, room.luxLatch = nil, nil
         dbg("lux loop seeded", room.name, string.format("%.1f", room.luxLevel), string.format("model %.1f", rawLevel),
           "converged " .. tostring(room.luxConv), "was " .. tostring(prev and string.format("%.1f", prev)))
+      elseif room.luxLatch then
+        room.luxLevel = room.luxLatch.v                    -- 1.17.7: saturated: hold the latched level
+      elseif room.luxLevel and LuxFrozen and LuxFrozen(room, now) then
+        -- 1.17.7 anti-windup: every light held or an off fade running: do not integrate
+        room.luxSat = nil
       else
         local err = (tgt - lux) / tgt
         local maxStep = lx.step or 2                -- 1.16.21: gentle correction, at most this many levels per update
         local move = clamp((lx.gain or 10) * err, -maxStep, maxStep)
-        room.luxLevel = clamp(prev + move, room.min_level, base)
+        -- 1.17.7: conditional integration: no push past the clamps. A stale sensor blocks upward moves (the
+        -- windup direction); dimming on a stale bright reading is still allowed.
+        if (move > 0 and prev >= upper) or (move < 0 and prev <= floor) then move = 0 end
+        if stale and move > 0 and room.luxLevel then move = 0 end
+        room.luxLevel = clamp(prev + move, floor, upper)
         if lx == room.lux and math.abs(lux - tgt) <= 0.3 * tgt then room.luxOkAt = now end   -- 1.17.5: near target
+        -- 1.17.7: saturation latch (night only, D <= 0): the loop drives up for LUX_SAT_PASSES passes (or sits
+        -- at its upper clamp) and lux rises less than 10% of target: the lights cannot reach it. Hold a sane level.
+        if lx == room.lux and err > 0 and D <= 0 then
+          local s = room.luxSat
+          if not s then s = { n = 0, lux = lux, lvl = prev }; room.luxSat = s end
+          s.n = s.n + 1
+          if s.n >= LUX_SAT_PASSES then
+            if lux - s.lux < 0.1 * tgt and (room.luxLevel >= upper - 0.01 or room.luxLevel - s.lvl >= 4) then
+              local v
+              if s.lvl >= upper - 0.01 then v = room.luxConv or LUX_SEED_DEFAULT      -- pegged: back to a sane level
+              else v = math.max(room.luxConv or LUX_SEED_DEFAULT, s.lvl) end
+              v = clamp(math.min(v, upper), floor, upper)
+              room.luxLatch = { v = v, tgt = tgt }
+              room.luxLevel = v
+              dbg("lux loop saturated", room.name, string.format("%.1f", v),
+                string.format("lux %.2f -> %.2f target %.2f", s.lux, lux, tgt))
+            end
+            room.luxSat = nil
+          end
+        else
+          room.luxSat = nil
+        end
       end
       level = room.luxLevel
+      if LuxPersist and room.luxLevel ~= prev then LuxPersist(room, now) end
+    elseif room.luxLevel then
+      level = room.luxLevel                          -- 1.17.7: sensor nil: keep the loop level, not the model
     end
     room.luxScale = (rawLevel > 0) and (level / rawLevel) or nil
   elseif lx and light and room.luxScale then
@@ -999,6 +1061,45 @@ local function noteLuxConverged(room, now)
   end
   dbg("lux loop converged level saved", room.name, tostring(v))
 end
+-- 1.17.7: the lux loop level survives a reload (PersistData.luxLevel, restored when under LUX_RESTORE_SEC old).
+function LuxPersist(room, now)
+  if type(PersistData) ~= "table" then return end
+  if type(PersistData.luxLevel) ~= "table" then PersistData.luxLevel = {} end
+  PersistData.luxLevel[room.name] = room.luxLevel
+    and { v = math.floor(room.luxLevel * 10 + 0.5) / 10, t = now or os.time() } or nil
+end
+-- 1.17.7 anti-windup: true when no light in the room can follow the loop (room hold, every light held or
+-- off-held, or an off fade running). ComputeRoomTarget does not integrate then.
+function LuxFrozen(room, now)
+  if offFadeRunning and offFadeRunning(room) then return true end
+  if room.overrideUntil and now < room.overrideUntil then return true end
+  local any = false
+  for _, l in ipairs(room.lights or {}) do
+    any = true
+    if not ((l.overrideUntil and now < l.overrideUntil) or l.offHold) then return false end
+  end
+  return any
+end
+-- 1.17.7: bumpless hand-back. The loop restarts from what the room shows now (average level of the lit lights,
+-- per-light scale undone) after a hold expiry, Away->Home / release, reload, gate reconcile or morning end, so
+-- the next correction moves from there and does not jump to the open-loop model.
+function LuxHandBack(room, now, why)
+  if not room.lux then return end
+  local sum, n = 0, 0
+  for _, l in ipairs(room.lights or {}) do
+    local v = curLevel(l)
+    if v <= 0 then v = l.lastLevel or 0 end
+    if v > 0 then
+      sum = sum + v / ((l.scale and l.scale > 0) and l.scale or 1)
+      n = n + 1
+    end
+  end
+  if n == 0 then return end
+  room.luxLevel = clamp(sum / n, room.min_level, 100)
+  room.luxSat, room.luxLatch = nil, nil
+  LuxPersist(room, now)
+  dbg("lux loop hand-back", room.name, string.format("%.1f", room.luxLevel), tostring(why))
+end
 local function prUnconfirmed(src) return src == "unknown" or src == "stuck" end
 local function presenceStatusPrefix()
   local s = ""
@@ -1116,9 +1217,13 @@ local function presenceDrive(room, now, inWindow, fromSchedule)
   elseif pr.nightAfterDark and (SunPositionCached(now, lat, lon) or -1) > 0 then
     lvl = 0          -- 1.17.3: off window in daylight (before the evening trigger): no walk-in light
   else lvl = pr.nightLevel end
+  if allOff then room.luxLatch = nil end                           -- 1.17.7: all-off ends the saturation latch
   local fadeMs = math.floor(pr.fadeInSec * 1000 + 0.5)
-  if allOff and fromSchedule then
-    fadeMs = (tonumber(Properties["Ramp Time (sec)"]) or 90) * 1000   -- 1.17.5: dusk / window-open turn-on
+  if fromSchedule or not allOff then
+    -- 1.17.5: dusk / window-open turn-on; 1.17.7: every schedule pass (hold expiry, lux correction) and any
+    -- drive of a room whose lights are already on (e.g. Away->Home) uses Ramp Time too. fadeInSec is only for
+    -- turning a dark room on at an occupancy edge.
+    fadeMs = (tonumber(Properties["Ramp Time (sec)"]) or 90) * 1000
   end
   for _, l in ipairs(room.lights) do
     if not l.overrideUntil and not l.offHold then
@@ -1255,6 +1360,7 @@ local function prReconcile(now)
         if pr.state ~= PR_HOLD then
           pr.state = PR_OCCUPIED
           if pr.follow then
+            if anyOn(room) then LuxHandBack(room, now, "reconcile") end   -- 1.17.7
             presenceDrive(room, now)
           elseif gateOpen and Properties["Presence Lighting"] == "On" then
             needUpdate = true
@@ -1801,6 +1907,7 @@ local function morningTick(room, now, minNow, lat, lon)
     end
     if why then
       room.morningOn, room.luxLevel = nil, nil
+      LuxHandBack(room, now, "morning end")          -- 1.17.7: evening loop starts from the lit level
       dbg("morning off", room.name, why, "lux " .. tostring(lux))
     end
   elseif inRange and not room.morningDone and lux and lux < m.target and occOk then
@@ -1925,6 +2032,11 @@ function Update()
     local prevWin = room.wasInWindow                 -- 1.16.23: edge variables, compared after the branches
     local rampHandled, skipWhy = false, nil          -- 1.16.24: did this pass's off edge start a ramp, or why not
     local holdsChanged = false
+    local wasAllHeld = room.overrideUntil ~= nil                 -- 1.17.7: loop was not driving any light
+    if not wasAllHeld and #room.lights > 0 then
+      wasAllHeld = true
+      for _, l in ipairs(room.lights) do if not (l.overrideUntil or l.offHold) then wasAllHeld = false break end end
+    end
     if room.overrideUntil and now >= room.overrideUntil then
       room.overrideUntil = nil
       holdsChanged = true
@@ -1938,7 +2050,10 @@ function Update()
       end
       if l.overrideUntil then lightsHeld = lightsHeld + 1 end
     end
-    if holdsChanged then saveHolds() end
+    if holdsChanged then
+      saveHolds()
+      if wasAllHeld then LuxHandBack(room, now, "hold expired") end   -- 1.17.7: bumpless hand-back
+    end
     -- reset each morning; 1.11.3: an on_daylight room whose off time is after midnight keeps its trigger until that time
     -- 1.11.6: the scheduled-off latch is cleared at the next on edge, not at midnight, so a light turned on again
     -- after midnight is still put back off
@@ -2355,7 +2470,7 @@ local function loadRooms(closeGate)
       daylight_off = (tonumber(r.daylight_off) and clamp(tonumber(r.daylight_off), 0, 1)) or nil,
       max_level = tonumber(r.max_level) or 100,
       away = r.away, on = r.on, off = r.off, off_ramp_min = tonumber(r.off_ramp_min), scenes = r.scenes, days = r.days, windows = parseWindows(r.windows), follow = (r.follow == true), on_daylight = tonumber(r.on_daylight), wake = r.wake,
-      lux = (r.lux and r.lux.dev and r.lux.dev > 0) and { dev = r.lux.dev, var = r.lux.var or 1000, target = tonumber(r.lux.target) or 200, gain = tonumber(r.lux.gain), step = tonumber(r.lux.step), targets = parseLuxTargets(r.lux.targets) } or nil,
+      lux = (r.lux and r.lux.dev and r.lux.dev > 0) and { dev = r.lux.dev, var = r.lux.var or 1000, target = tonumber(r.lux.target) or 200, gain = tonumber(r.lux.gain), step = tonumber(r.lux.step), max = tonumber(r.lux.max), targets = parseLuxTargets(r.lux.targets) } or nil,
       morning = parseMorning(r.morning, r.lux),
       occ = (r.occ and r.occ.dev and r.occ.dev > 0) and {
         dev = r.occ.dev, var = r.occ.var or 1000,
@@ -2395,6 +2510,13 @@ local function loadRooms(closeGate)
         C4:UnregisterVariableListener(id, LIGHT_LEVEL_VAR)
         C4:RegisterVariableListener(id, LIGHT_LEVEL_VAR)
       end
+    end
+    if room.lux then                                    -- 1.17.7: restore the loop level, then hand back
+      local pl = type(PersistData) == "table" and type(PersistData.luxLevel) == "table"
+        and PersistData.luxLevel[room.name] or nil
+      local v, at = type(pl) == "table" and tonumber(pl.v), type(pl) == "table" and tonumber(pl.t)
+      if v and at and v > 0 and v <= 100 and os.time() - at < LUX_RESTORE_SEC then room.luxLevel = v end
+      LuxHandBack(room, os.time(), "reload")
     end
     if #room.lights > 0 then table.insert(rooms, room) end
     -- 1.11.4: restore the daylight trigger after a restart or Rooms JSON save. Valid only if it fired today, or
@@ -2649,6 +2771,7 @@ local function releaseAll()
   cancelAllOffFades()
   for _, r in ipairs(rooms) do r.overrideUntil = nil end
   for _, r in ipairs(rooms) do for _, l in ipairs(r.lights) do l.overrideUntil, l.offHold, l.lastLevel, l.lastCCT, l.initLevel = nil, nil, nil, nil, curLevel(l) end end
+  for _, r in ipairs(rooms) do LuxHandBack(r, os.time(), "release") end   -- 1.17.7: bumpless hand-back
   for _, r in ipairs(rooms) do
     if r.pr and r.pr.state == PR_HOLD then
       r.pr.state = r.pr.occIn and PR_OCCUPIED or PR_VACANT
