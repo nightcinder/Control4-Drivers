@@ -1,6 +1,7 @@
 --[[
   SwitchBot Cloud (parent) driver for Control4 (OS 3.4.x)
-  Version: 2.1.3
+  Version: 2.1.4
+  Changelog 2.1.4: retry a failed command (network error, 429, 5xx, offline or busy device) up to 2 more times; stagger the motors of a paired window by 500 ms
   Changelog 2.1.3: mask Token/Secret in XML (<password>true</password>); optional auto-create child drivers
   Changelog 2.1.1: descriptions show device name and parameter values in Composer programming
   Holds the SwitchBot Token and Secret, talks to the cloud API v1.1, polls status, and serves any number of
@@ -12,7 +13,7 @@
                      SB_DEVICES {LIST}, SB_CONFIGURE {DEVICE, LIST}
 ]]
 
-local DRIVER_VERSION = "2.1.3"
+local DRIVER_VERSION = "2.1.4"
 local API_BASE = "https://api.switch-bot.com/v1.1"
 local CLOUD_BINDING = 1
 local SUPPORTED_TYPES = { ["Curtain"] = true, ["Curtain3"] = true, ["Blind Tilt"] = true }
@@ -24,6 +25,9 @@ local CHILD_BINDING_CLASS = "SWITCHBOT_CLOUD"
 local AUTO_CREATE_GRACE_SECONDS = 60
 local PENDING_CREATE_SECONDS = 120
 local CONFIGURE_DELAY_MS = 10000
+local COMMAND_MAX_ATTEMPTS = 3
+local COMMAND_RETRY_MS = { 3000, 8000 }
+local COMMAND_STAGGER_MS = 500
 local floor = math.floor
 
 
@@ -544,13 +548,41 @@ pollAll = function()
   pollIds(ids)
 end
 
+-- A command that fails in transit (network error, 429, 5xx, device busy or briefly offline) is retried,
+-- because nothing else resends it and the curtain would stay where it was.
+local function commandRetryable(code, strData)
+  if not code or code == 0 or code == 429 or code >= 500 then return true end
+  local ok, obj = pcall(JSON.decode, strData or "")
+  if ok and type(obj) == "table" and (obj.statusCode == 161 or obj.statusCode == 171 or obj.statusCode == 190) then
+    return true
+  end
+  return false
+end
+
+local function postCommand(id, body, attempt)
+  apiRequest("POST", "/devices/" .. id .. "/commands", body, function(code, strData, strError)
+    if attempt < COMMAND_MAX_ATTEMPTS and commandRetryable(code, strData) then
+      print("SwitchBot " .. stamp() .. ": command to " .. id .. " failed (HTTP " .. tostring(code)
+        .. "), retry " .. attempt .. " of " .. (COMMAND_MAX_ATTEMPTS - 1))
+      startTimer(COMMAND_RETRY_MS[attempt] or COMMAND_RETRY_MS[#COMMAND_RETRY_MS], function()
+        postCommand(id, body, attempt + 1)
+      end)
+      return
+    end
+    handleCommon(code, strData, strError, function() end)
+  end)
+end
+
 local function sendCommand(ids, command, parameter)
   local body = '{"command":"' .. command .. '","parameter":"' .. (parameter or "default") ..
     '","commandType":"command"}'
-  for _, id in ipairs(ids) do
-    apiRequest("POST", "/devices/" .. id .. "/commands", body, function(code, strData, strError)
-      handleCommon(code, strData, strError, function() end)
-    end)
+  for i, id in ipairs(ids) do
+    if i == 1 then
+      postCommand(id, body, 1)
+    else
+      -- Space out the motors of a paired window so the cloud does not see a burst.
+      startTimer((i - 1) * COMMAND_STAGGER_MS, function() postCommand(id, body, 1) end)
+    end
   end
 end
 

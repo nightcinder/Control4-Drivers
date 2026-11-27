@@ -294,4 +294,52 @@ t.test("SwitchBot Curtain handles SB_CONFIGURE without breaking manual children"
   t.eq(#sim.errors, 0, "no Lua errors")
 end)
 
+local function count_posts(pattern)
+  local n = 0
+  for _, r in ipairs(sim.http) do
+    if r.method == "POST" and r.url:find(pattern) then n = n + 1 end
+  end
+  return n
+end
+
+t.test("failed SB_COMMAND is retried and the paired motors are staggered", function()
+  start_parent()
+  local okBody = '{"statusCode":100,"message":"success","body":{}}'
+  sim.queue_http("SB%-LOUNGE%-M/commands$", "", 500)
+  sim.queue_http("SB%-LOUNGE%-M/commands$", okBody, 200)
+  sim.queue_http("SB%-LOUNGE%-S/commands$", okBody, 200)
+  local m0, s0 = count_posts("SB%-LOUNGE%-M/commands$"), count_posts("SB%-LOUNGE%-S/commands$")
+  sim.exec("SB_COMMAND", { IDS = "SB-LOUNGE-M,SB-LOUNGE-S", COMMAND = "setPosition", PARAMETER = "0,ff,0" })
+  sim.advance(0)
+  t.eq(count_posts("SB%-LOUNGE%-M/commands$") - m0, 1, "master motor posted at once")
+  t.eq(count_posts("SB%-LOUNGE%-S/commands$") - s0, 0, "second motor waits for the stagger")
+  sim.advance(500)
+  t.eq(count_posts("SB%-LOUNGE%-S/commands$") - s0, 1, "second motor posted after 500 ms")
+  sim.advance(3000)
+  t.eq(count_posts("SB%-LOUNGE%-M/commands$") - m0, 2, "master motor retried after the 500 error")
+  sim.advance(30000)
+  t.eq(count_posts("SB%-LOUNGE%-M/commands$") - m0, 2, "no more retries once it succeeds")
+  t.eq(count_posts("SB%-LOUNGE%-S/commands$") - s0, 1, "second motor not repeated")
+  t.eq(#sim.errors, 0, "no Lua errors")
+end)
+
+t.test("SB_COMMAND gives up after three attempts and does not retry auth errors", function()
+  start_parent()
+  local d0 = count_posts("SB%-DEN%-WEST/commands$")
+  for _ = 1, 3 do sim.queue_http("SB%-DEN%-WEST/commands$", "", 429) end
+  sim.exec("SB_COMMAND", { IDS = "SB-DEN-WEST", COMMAND = "setPosition", PARAMETER = "0,ff,0" })
+  sim.advance(0)
+  sim.advance(3000)
+  sim.advance(8000)
+  sim.advance(60000)
+  t.eq(count_posts("SB%-DEN%-WEST/commands$") - d0, 3, "three attempts then stop")
+  local b0 = count_posts("SB%-BEDROOM/commands$")
+  sim.queue_http("SB%-BEDROOM/commands$", "", 401)
+  sim.exec("SB_COMMAND", { IDS = "SB-BEDROOM", COMMAND = "setPosition", PARAMETER = "0,ff,0" })
+  sim.advance(0)
+  sim.advance(60000)
+  t.eq(count_posts("SB%-BEDROOM/commands$") - b0, 1, "401 is not retried")
+  t.eq(#sim.errors, 0, "no Lua errors")
+end)
+
 t.finish("switchbot")

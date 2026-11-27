@@ -6,8 +6,8 @@
 	<name>SwitchBot Cloud</name>
 	<model>SwitchBot Cloud (API v1.1 parent)</model>
 	<created>11/04/2026 10:50 PM</created>
-	<modified>11/21/2026 12:04 PM</modified>
-	<version>8</version>
+	<modified>11/27/2026 5:51 PM</modified>
+	<version>10</version>
 	<small image_source="c4z">icons/device_sm.png</small>
 	<large image_source="c4z">icons/device_lg.png</large>
 	<control>lua_gen</control>
@@ -119,7 +119,7 @@
 				<name>Driver Version</name>
 				<type>STRING</type>
 				<readonly>true</readonly>
-				<default>2.1.3</default>
+				<default>2.1.4</default>
 			</property>
 		</properties>
 	</config>
