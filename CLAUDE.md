@@ -14,7 +14,7 @@ This repo is public. Never add secrets, tokens, hostnames, IP addresses or perso
 Checks you can run on their own:
 - `python tools/check_c4z.py --all` (pre-flight: Lua 5.1 syntax, sandbox APIs, duplicate handlers, command and event params, and that the committed `.c4z` matches the source at HEAD).
 - `python tools/test_check_c4z.py`, `python tools/test_check_public.py`.
-- `python tools/c4sim/run.py smoke|commands|props|test all` (see `docs/c4sim.md`). Needs `lua` and `luac5.1` on PATH. Without them the build prints "skipped" and does not refuse. `C4SIM_SKIP=1` bypasses the hook.
+- `python tools/c4sim/run.py smoke|commands|props|test all` (see `docs/c4sim.md`). c4sim needs `lua` on PATH; the syntax check needs `luac` (`luac5.1` is also used when present). Without them the build prints "c4sim skipped" / a `luac is not on PATH` warning and does not refuse, so a local pass without Lua is not a full pass. `C4SIM_SKIP=1` bypasses the c4sim hook.
 - CI (`.github/workflows/ci.yml`) runs all of the above plus the bridge helper tests on every push and PR, with `TZ=America/New_York` (the DLS tests pin local-clock times). On Windows do NOT set `TZ` yourself: the C runtime misreads it and DLS tests fail. The Windows clock is already Eastern.
 
 ## Driver conventions
@@ -28,7 +28,7 @@ Checks you can run on their own:
 - Say plainly what is untested (not imported in Composer, no hardware test, simulator only). Commit messages say "untested" when it applies.
 
 ## Git
-- Tested code and its built `.c4z` go to `main` (`git push origin HEAD:main`) or merge by PR.
+- Only tested code with its rebuilt `.c4z` goes to `main` (`git push origin HEAD:main`) or merges by PR. Never force-push or rewrite `main`.
 - Unfinished or untested code goes to a branch (`wip/<topic>`). Keep `main` clean.
 - Commit only files you changed on purpose.
 
